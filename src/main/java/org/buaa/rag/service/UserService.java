@@ -16,6 +16,16 @@ import jakarta.servlet.ServletRequest;
 public interface UserService extends IService<UserDO> {
 
     /**
+     * 注册用户
+     */
+    void register(UserRegisterReqDTO requestParam);
+
+    /**
+     * 注册时候获得验证码
+     */
+    Boolean sendCode(String mail);
+
+    /**
      * 根据邮箱查询用户信息
      */
     UserRespDTO getUserByMail(String mail);
@@ -24,16 +34,6 @@ public interface UserService extends IService<UserDO> {
      *  查询邮箱是否已注册
      */
     Boolean hasMail(String email);
-
-    /**
-     * 发送验证码
-     */
-    Boolean sendCode(String mail);
-
-    /**
-     * 注册用户
-     */
-    void register(UserRegisterReqDTO requestParam);
 
     /**
      * 用户登录
@@ -46,7 +46,7 @@ public interface UserService extends IService<UserDO> {
     Boolean checkLogin(String username, String token);
 
     /**
-     * 退出登录
+     * 用户退出登录
      */
     void logout(String username, String token);
 

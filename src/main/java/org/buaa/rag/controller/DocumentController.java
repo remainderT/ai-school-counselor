@@ -32,15 +32,7 @@ public class DocumentController {
                                                         @RequestParam(required = false) String docType,
                                                         @RequestParam(required = false) String policyYear,
                                                         @RequestParam(required = false) String tags) {
-        return documentService.upload(
-            uploadedFile,
-            userId,
-            visibility,
-            department,
-            docType,
-            policyYear,
-            tags
-        );
+        return documentService.upload(uploadedFile, userId, visibility, department, docType, policyYear, tags);
     }
 
     @GetMapping("/list")

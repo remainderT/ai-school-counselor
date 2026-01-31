@@ -34,11 +34,12 @@ public class UserController {
     private final UserService userService;
 
     /**
-     * 根据邮箱查找用户信息
+     * 注册用户
      */
-    @GetMapping("/{mail}")
-    public Result<UserRespDTO> getUserByMail(@PathVariable("mail") String mail) {
-        return Results.success(userService.getUserByMail(mail));
+    @PostMapping("/")
+    public Result<Void> register(@RequestBody UserRegisterReqDTO requestParam) {
+        userService.register(requestParam);
+        return Results.success();
     }
 
     /**
@@ -49,13 +50,13 @@ public class UserController {
         return Results.success(userService.sendCode(mail));
     }
 
+
     /**
-     * 注册用户
+     * 根据邮箱查找用户信息
      */
-    @PostMapping("/")
-    public Result<Void> register(@RequestBody UserRegisterReqDTO requestParam) {
-        userService.register(requestParam);
-        return Results.success();
+    @GetMapping("/{mail}")
+    public Result<UserRespDTO> getUserByMail(@PathVariable("mail") String mail) {
+        return Results.success(userService.getUserByMail(mail));
     }
 
     /**
