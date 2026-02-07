@@ -1,85 +1,62 @@
 package org.buaa.rag.common.convention.result;
 
+import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
 import org.buaa.rag.common.convention.errorcode.IErrorCode;
-import org.buaa.rag.common.convention.errorcode.RagErrorCode;
 import org.buaa.rag.common.convention.exception.AbstractException;
 
 import java.util.Optional;
 
+
 /**
- * 返回对象构造工具类
- * 提供便捷的方法来创建统一格式的响应对象
+ * 全局返回对象构造器
  */
 public final class Results {
 
-    private Results() {
-        // 工具类不允许实例化
-    }
-
     /**
-     * 构造成功响应（无数据）
+     * 构造成功响应
      */
     public static Result<Void> success() {
         return new Result<Void>()
-                .setCode(Result.SUCCESS_CODE)
-                .setMessage("操作成功");
+                .setCode(Result.SUCCESS_CODE);
     }
 
     /**
-     * 构造成功响应（带数据）
-     *
-     * @param data 响应数据
-     * @param <T> 数据类型
+     * 构造带返回数据的成功响应
      */
     public static <T> Result<T> success(T data) {
         return new Result<T>()
                 .setCode(Result.SUCCESS_CODE)
-                .setMessage("操作成功")
                 .setData(data);
     }
 
     /**
-     * 构造失败响应（使用默认服务端错误）
+     * 构建服务端失败响应
      */
     public static Result<Void> failure() {
         return new Result<Void>()
-                .setCode(RagErrorCode.SERVICE_ERROR.code())
-                .setMessage(RagErrorCode.SERVICE_ERROR.message());
+                .setCode(BaseErrorCode.SERVICE_ERROR.code())
+                .setMessage(BaseErrorCode.SERVICE_ERROR.message());
     }
 
     /**
-     * 构造失败响应（从业务异常）
-     *
-     * @param exception 业务异常
+     * 通过 {@link AbstractException} 构建失败响应
      */
-    public static Result<Void> failure(AbstractException exception) {
-        return new Result<Void>()
-                .setCode(Optional.ofNullable(exception.getErrorCode())
-                        .orElse(RagErrorCode.SERVICE_ERROR.code()))
-                .setMessage(Optional.ofNullable(exception.getErrorMessage())
-                        .orElse(RagErrorCode.SERVICE_ERROR.message()));
-    }
-
-    /**
-     * 构造失败响应（使用错误码和自定义消息）
-     *
-     * @param errorCode 错误码
-     * @param errorMessage 错误消息
-     */
-    public static Result<Void> failure(String errorCode, String errorMessage) {
+    public static Result<Void> failure(AbstractException abstractException) {
+        String errorCode = Optional.ofNullable(abstractException.getErrorCode())
+                .orElse(BaseErrorCode.SERVICE_ERROR.code());
+        String errorMessage = Optional.ofNullable(abstractException.getErrorMessage())
+                .orElse(BaseErrorCode.SERVICE_ERROR.message());
         return new Result<Void>()
                 .setCode(errorCode)
                 .setMessage(errorMessage);
     }
 
     /**
-     * 构造失败响应（使用错误码枚举）
-     *
-     * @param errorCode 错误码枚举
+     * 通过 errorCode、errorMessage 构建失败响应
      */
-    public static Result<Void> failure(IErrorCode errorCode) {
+    public static Result<Void> failure(String errorCode, String errorMessage) {
         return new Result<Void>()
-                .setCode(errorCode.code())
-                .setMessage(errorCode.message());
+                .setCode(errorCode)
+                .setMessage(errorMessage);
     }
 }

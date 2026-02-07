@@ -1,6 +1,7 @@
 package org.buaa.rag.controller;
 
 import org.buaa.rag.common.convention.result.Result;
+import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.service.DocumentService;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -25,32 +26,24 @@ public class DocumentController {
     private final DocumentService documentService;
 
     @PostMapping("/upload")
-    public Result<Map<String, Object>> handleFileUpload(@RequestParam("file") MultipartFile uploadedFile,
-                                                        @RequestParam(defaultValue = "anonymous") String userId,
+    public Result<Void> upload(@RequestParam("file") MultipartFile uploadedFile,
                                                         @RequestParam(defaultValue = "PRIVATE") String visibility,
                                                         @RequestParam(required = false) String department,
                                                         @RequestParam(required = false) String docType,
                                                         @RequestParam(required = false) String policyYear,
                                                         @RequestParam(required = false) String tags) {
-        return documentService.upload(
-            uploadedFile,
-            userId,
-            visibility,
-            department,
-            docType,
-            policyYear,
-            tags
-        );
+        documentService.upload(uploadedFile, visibility, department, docType, policyYear, tags);
+        return Results.success();
     }
 
     @GetMapping("/list")
-    public Result<List<DocumentDO>> listDocuments(@RequestParam String userId) {
-        return documentService.listDocuments(userId);
+    public Result<List<DocumentDO>> list() {
+        return Results.success(documentService.list());
     }
 
-    @DeleteMapping("/{md5Hash}")
-    public Result<Map<String, Object>> deleteDocument(@PathVariable String md5Hash,
-                                                      @RequestParam String userId) {
-        return documentService.deleteDocument(md5Hash, userId);
+    @DeleteMapping("/id}")
+    public Result<Void> delete(@PathVariable String id) {
+        documentService.delete(id);
+        return Results.success();
     }
 }

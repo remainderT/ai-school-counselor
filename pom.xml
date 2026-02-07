@@ -10,7 +10,7 @@
     </parent>
 
     <groupId>org.buaa</groupId>
-    <artifactId>rag</artifactId>
+    <artifactId>myRag</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 
     <properties>
@@ -161,6 +161,12 @@
             <version>${kaptcha.version}</version>
         </dependency>
 
+        <!-- Netty macOS DNS 原生解析器，解决 macOS 上 DNS 解析警告 -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver-dns-native-macos</artifactId>
+            <classifier>osx-aarch_64</classifier>
+        </dependency>
     </dependencies>
 
     <build>

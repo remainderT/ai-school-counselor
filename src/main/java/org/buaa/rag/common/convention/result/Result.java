@@ -7,26 +7,22 @@ import java.io.Serial;
 import java.io.Serializable;
 
 /**
- * 统一返回对象
- * 所有API响应都应使用此类封装
- *
- * @param <T> 响应数据类型
+ * 全局返回对象
  */
 @Data
 @Accessors(chain = true)
 public class Result<T> implements Serializable {
 
     @Serial
-    private static final long serialVersionUID = 1L;
+    private static final long serialVersionUID = 5679018624309023727L;
 
     /**
-     * 成功状态码
+     * 正确返回码
      */
     public static final String SUCCESS_CODE = "0";
 
     /**
      * 返回码
-     * "0" 表示成功，其他值表示错误（格式：A0xxx/B0xxx/C0xxx）
      */
     private String code;
 
@@ -39,4 +35,9 @@ public class Result<T> implements Serializable {
      * 响应数据
      */
     private T data;
+
+
+    public boolean isSuccess() {
+        return SUCCESS_CODE.equals(code);
+    }
 }

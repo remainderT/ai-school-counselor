@@ -23,10 +23,6 @@ public class TextSegmentDO {
 
     private Integer fragmentIndex;
 
-    /**
-     * 文本片段内容。
-     * 使用 LONGTEXT 避免超长文本导致数据库截断。
-     */
     private String textData;
 
     private String encodingModel;

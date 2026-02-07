@@ -1,6 +1,9 @@
 package org.buaa.rag.service.impl;
 
-import org.buaa.rag.common.convention.errorcode.RagErrorCode;
+import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.MESSAGE_EMPTY;
+import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.MESSAGE_ID_REQUIRED;
+import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.SCORE_OUT_OF_RANGE;
+
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
@@ -84,7 +87,7 @@ public class ChatServiceImpl implements ChatService {
         String userId = payload == null ? DEFAULT_USER_ID : payload.getOrDefault("userId", DEFAULT_USER_ID);
 
         if (isBlankString(userMessage)) {
-            throw new ClientException(RagErrorCode.MESSAGE_EMPTY);
+            throw new ClientException(MESSAGE_EMPTY);
         }
 
         ChatRespDTO aiResponse = handleMessage(userId, userMessage);
@@ -101,7 +104,7 @@ public class ChatServiceImpl implements ChatService {
         if (isBlankString(message)) {
             try {
                 emitter.send(SseEmitter.event().name("error")
-                    .data(RagErrorCode.MESSAGE_EMPTY.message()));
+                    .data(MESSAGE_EMPTY.message()));
             } catch (Exception ignored) {
             } finally {
                 emitter.complete();
@@ -162,9 +165,6 @@ public class ChatServiceImpl implements ChatService {
                                                             String docType,
                                                             String policyYear,
                                                             String tags) {
-        if (isBlankString(query)) {
-            throw new ClientException(RagErrorCode.QUERY_EMPTY);
-        }
 
         MetadataFilter filter = buildMetadataFilter(department, docType, policyYear, tags);
         List<RetrievalMatch> results = retrieverService.retrieve(query, topK, userId, filter);
@@ -175,12 +175,12 @@ public class ChatServiceImpl implements ChatService {
     @Override
     public Result<Map<String, Object>> handleFeedback(FeedbackRequest request) {
         if (request == null || request.getMessageId() == null) {
-            throw new ClientException(RagErrorCode.MESSAGE_ID_REQUIRED);
+            throw new ClientException(MESSAGE_ID_REQUIRED);
         }
 
         int score = request.getScore() == null ? 0 : request.getScore();
         if (score < 1 || score > 5) {
-            throw new ClientException(RagErrorCode.SCORE_OUT_OF_RANGE);
+            throw new ClientException(SCORE_OUT_OF_RANGE);
         }
 
         String userId = request.getUserId();

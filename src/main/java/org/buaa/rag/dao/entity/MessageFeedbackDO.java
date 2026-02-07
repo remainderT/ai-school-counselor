@@ -22,7 +22,7 @@ public class MessageFeedbackDO {
 
     private Long messageId;
 
-    private String userId;
+    private Long userId;
 
     private Integer score;
 

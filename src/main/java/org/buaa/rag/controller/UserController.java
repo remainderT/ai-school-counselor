@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import jakarta.servlet.ServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -34,11 +35,12 @@ public class UserController {
     private final UserService userService;
 
     /**
-     * 根据邮箱查找用户信息
+     * 注册用户
      */
-    @GetMapping("/{mail}")
-    public Result<UserRespDTO> getUserByMail(@PathVariable("mail") String mail) {
-        return Results.success(userService.getUserByMail(mail));
+    @PostMapping("")
+    public Result<Void> register(@RequestBody UserRegisterReqDTO requestParam) {
+        userService.register(requestParam);
+        return Results.success();
     }
 
     /**
@@ -50,12 +52,11 @@ public class UserController {
     }
 
     /**
-     * 注册用户
+     * 根据邮箱查找用户信息
      */
-    @PostMapping("/")
-    public Result<Void> register(@RequestBody UserRegisterReqDTO requestParam) {
-        userService.register(requestParam);
-        return Results.success();
+    @GetMapping("/{mail}")
+    public Result<UserRespDTO> getUserByMail(@PathVariable("mail") String mail) {
+        return Results.success(userService.getUserByMail(mail));
     }
 
     /**
@@ -64,6 +65,14 @@ public class UserController {
     @PostMapping("/login")
     public Result<UserLoginRespDTO> login(@RequestBody UserLoginReqDTO requestParam, ServletRequest request) {
         return Results.success(userService.login(requestParam, request));
+    }
+
+    /**
+     * 登陆时候获取验证码
+     */
+    @GetMapping("/kaptcha/")
+    public void getKaptcha(HttpServletResponse response) {
+        userService.getKaptcha(response);
     }
 
     /**
@@ -86,7 +95,7 @@ public class UserController {
     /**
      * 更新用户信息
      */
-    @PutMapping("/")
+    @PutMapping("")
     public Result<Void> update(@RequestBody UserUpdateReqDTO requestParam) {
         userService.update(requestParam);
         return Results.success();

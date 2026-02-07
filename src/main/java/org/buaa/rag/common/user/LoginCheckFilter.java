@@ -29,11 +29,11 @@ import lombok.SneakyThrows;
 public class LoginCheckFilter implements Filter {
 
     private static final List<String> IGNORE_URI = Lists.newArrayList(
-            "/api/answerly/v1/user/login", //登录
-            "/api/answerly/v1/user/send-code", //注册时发送验证码
-            "/api/answerly/v1/user/forget-username", //忘记用户名
-            "/api/answerly/v1/user/send-reset-password-code", //忘记密码发送验证码
-            "/api/answerly/v1/user/reset-password"//忘记密码重置密码
+            "/api/rag/user/login", //登录
+            "/api/rag/user/send-code", //注册时发送验证码
+            "/api/rag/user/forget-username", //忘记用户名
+            "/api/rag/user/send-reset-password-code", //忘记密码发送验证码
+            "/api/rag/user/reset-password"//忘记密码重置密码
     );
 
     private boolean requireLogin(String URI, String method) {
@@ -41,17 +41,10 @@ public class LoginCheckFilter implements Filter {
             return false;
         }
         // 注册用户
-        if (URI.equals("/api/answerly/v1/user") && method.equals("POST")) {
-            return false;
-        }
-        // 查看所有主题
-        if (URI.equals("/api/answerly/v1/category") && method.equals("GET")) {
+        if (URI.equals("/api/rag/user") && method.equals("POST")) {
             return false;
         }
         // 查询题目详情
-        if (URI.matches("/api/answerly/v1/question/\\d+")) {
-            return false;
-        }
         return true;
     }
 

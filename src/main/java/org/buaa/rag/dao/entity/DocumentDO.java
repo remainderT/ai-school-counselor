@@ -12,8 +12,7 @@ import org.buaa.rag.common.database.BaseDO;
 
 /**
  * 文档记录实体
- * 存储上传文档的元数据信息
- */
+ * */
 @Data
 @Builder
 @NoArgsConstructor
@@ -31,7 +30,7 @@ public class DocumentDO extends BaseDO {
 
     private int processingStatus; // 0-处理中 1-已完成
 
-    private String ownerId;
+    private Long userId;
 
     private String visibility;
 

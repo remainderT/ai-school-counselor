@@ -28,6 +28,4 @@ public class UserDO extends BaseDO {
 
     private String salt;
 
-    private String introduction;
-
 }

@@ -15,8 +15,7 @@ public interface DocumentService {
     /**
      * 上传文档
      */
-    Result<Map<String, Object>> upload(MultipartFile file,
-                                       String userId,
+    void upload(MultipartFile file,
                                        String visibility,
                                        String department,
                                        String docType,
@@ -26,12 +25,12 @@ public interface DocumentService {
     /**
      * 列出用户的文档
      */
-    Result<List<DocumentDO>> listDocuments(String userId);
+    List<DocumentDO> list();
 
     /**
      * 删除文档
      */
-    Result<Map<String, Object>> deleteDocument(String md5Hash, String userId);
+    void delete(String id);
 
     /**
      * 异步摄取文档

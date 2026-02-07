@@ -1,7 +1,6 @@
 DROP DATABASE IF EXISTS rag;
 CREATE DATABASE rag  DEFAULT CHARACTER SET utf8mb4;
 
-
 DROP TABLE IF EXISTS `user`;
 CREATE TABLE `user` (
                         `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'ID',
@@ -24,8 +23,8 @@ CREATE TABLE document (
                         original_file_name  VARCHAR(255)     NOT NULL COMMENT '原始文件名',
                         file_size_bytes     BIGINT           NOT NULL COMMENT '文件大小（字节）',
                         processing_status   TINYINT          NOT NULL DEFAULT 0 COMMENT '处理状态：0-处理中，1-已完成',
-                        owner_id            VARCHAR(64)      NOT NULL DEFAULT 'anonymous' COMMENT '上传用户标识',
-                        visibility          VARCHAR(16)      NOT NULL DEFAULT 'PRIVATE' COMMENT '可见性：PRIVATE/PUBLIC',
+                        user_id             bigint(20)      NOT NULL COMMENT '上传用户标识',
+                        visibility          ENUM('private', 'public') NOT NULL COMMENT '可见性',
                         doc_type            VARCHAR(64)      NULL COMMENT '文档类型：综测/请假/评奖等',
                         department          VARCHAR(64)      NULL COMMENT '所属学院/部门',
                         policy_year         VARCHAR(16)      NULL COMMENT '制度/政策年份',
@@ -39,7 +38,7 @@ CREATE TABLE document (
 
 DROP TABLE IF EXISTS text_segments;
 CREATE TABLE text_segments (
-                        segment_id      BIGINT           NOT NULL AUTO_INCREMENT COMMENT '片段唯一标识',
+                        segment_id      BIGINT(20)          NOT NULL AUTO_INCREMENT COMMENT '片段唯一标识',
                         document_md5    VARCHAR(32)      NOT NULL COMMENT '关联文档的MD5值',
                         fragment_index  INT              NOT NULL COMMENT '片段序号',
                         text_data       TEXT             COMMENT '文本内容',
@@ -53,7 +52,7 @@ DROP TABLE IF EXISTS messages;
 CREATE TABLE messages (
                         id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
                         session_id  VARCHAR(64)  NOT NULL COMMENT '会话标识',
-                        user_id     VARCHAR(64)  NOT NULL COMMENT '用户标识',
+                        user_id     bigint(20)  NOT NULL COMMENT '用户标识',
                         role        VARCHAR(16)  NOT NULL COMMENT '角色：user/assistant',
                         content     LONGTEXT     NOT NULL COMMENT '消息内容',
                         created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
