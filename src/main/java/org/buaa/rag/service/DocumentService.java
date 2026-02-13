@@ -16,7 +16,6 @@ public interface DocumentService {
      * 上传文档
      */
     Result<Map<String, Object>> upload(MultipartFile file,
-                                       String userId,
                                        String visibility,
                                        String department,
                                        String docType,

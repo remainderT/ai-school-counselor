@@ -26,13 +26,20 @@ public class DocumentController {
 
     @PostMapping("/upload")
     public Result<Map<String, Object>> handleFileUpload(@RequestParam("file") MultipartFile uploadedFile,
-                                                        @RequestParam(defaultValue = "anonymous") String userId,
                                                         @RequestParam(defaultValue = "PRIVATE") String visibility,
                                                         @RequestParam(required = false) String department,
                                                         @RequestParam(required = false) String docType,
                                                         @RequestParam(required = false) String policyYear,
                                                         @RequestParam(required = false) String tags) {
-        return documentService.upload(uploadedFile, userId, visibility, department, docType, policyYear, tags);
+        return documentService.upload(
+            uploadedFile,
+            userId,
+            visibility,
+            department,
+            docType,
+            policyYear,
+            tags
+        );
     }
 
     @GetMapping("/list")

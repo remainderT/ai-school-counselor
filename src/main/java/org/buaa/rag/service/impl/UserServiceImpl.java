@@ -7,6 +7,7 @@ import static org.buaa.rag.common.consts.CacheConstants.USER_LOGIN_KEY;
 import static org.buaa.rag.common.consts.CacheConstants.USER_REGISTER_CODE_EXPIRE_KEY;
 import static org.buaa.rag.common.consts.CacheConstants.USER_REGISTER_CODE_KEY;
 import static org.buaa.rag.common.consts.SystemConstants.MAIL_SUFFIX;
+import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.IMAGE_UPLOAD_ERROR;
 import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.MAIL_SEND_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_CODE_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_LOGIN_KAPTCHA_ERROR;
@@ -14,9 +15,13 @@ import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_MAIL_EXIST;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_PASSWORD_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_TOKEN_NULL;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+
+import javax.imageio.ImageIO;
 
 import org.buaa.rag.common.consts.SystemConstants;
 import org.buaa.rag.common.convention.exception.ClientException;
@@ -46,13 +51,16 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.google.code.kaptcha.Producer;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.StrUtil;
+import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -63,8 +71,8 @@ import lombok.RequiredArgsConstructor;
 public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements UserService {
 
     private final JavaMailSender mailSender;
-
     private final StringRedisTemplate stringRedisTemplate;
+    private final Producer kapchaProducer;
 
     @Value("${spring.mail.username}")
     private String from;
@@ -104,6 +112,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
             stringRedisTemplate.opsForValue().set(key, code, USER_REGISTER_CODE_EXPIRE_KEY, TimeUnit.MINUTES);
             return true;
         } catch (Exception e) {
+            System.out.println(e);
             throw new ServiceException(MAIL_SEND_ERROR);
         }
     }
@@ -205,5 +214,27 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
         UserDO newUserDO = baseMapper.selectOne(Wrappers.lambdaQuery(UserDO.class)
                 .eq(UserDO::getUsername, requestParam.getNewUsername()));
         stringRedisTemplate.opsForValue().set(USER_INFO_KEY + requestParam.getNewUsername(), JSON.toJSONString(newUserDO));
+    }
+
+    @Override
+    public void getKaptcha(HttpServletResponse response) {
+        String text = kapchaProducer.createText();
+        BufferedImage image = kapchaProducer.createImage(text);
+
+        String CaptchaOwner = UUID.randomUUID().toString();
+        Cookie cookie = new Cookie("CaptchaOwner", CaptchaOwner);
+        cookie.setMaxAge(60);
+        response.addCookie(cookie);
+
+        String redisKey = USER_LOGIN_KAPTCHA_KEY + CaptchaOwner;
+        stringRedisTemplate.opsForValue().set(redisKey, text, 60, TimeUnit.SECONDS);
+
+        response.setContentType("image/png");
+        try {
+            ServletOutputStream os = response.getOutputStream();
+            ImageIO.write(image, "png", os);
+        } catch (IOException e) {
+            throw new ServiceException(IMAGE_UPLOAD_ERROR);
+        }
     }
 }

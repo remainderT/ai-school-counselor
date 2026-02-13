@@ -31,7 +31,7 @@ public class DocumentDO extends BaseDO {
 
     private int processingStatus; // 0-处理中 1-已完成
 
-    private String ownerId;
+    private String userId;
 
     private String visibility;
 

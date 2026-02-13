@@ -37,12 +37,12 @@ spring:
 
   mail:
     protocol: smtps
-    host: smtp.163.com
+    host: smtp.126.com
     port: 465
-    username: buaa_smart_tutor@163.com
-    password:
+    username: buaa_smart_tutor@126.com
+    password: UEkZ7Cm92AxcEUHu
     default-encoding: UTF-8
-    from: buaa_smart_tutor@163.com
+    from: buaa_smart_tutor@126.com
     properties:
       mail.smtp.socketFactoryClass: javax.net.ssl.SSLSocketFactory
 
@@ -52,7 +52,6 @@ minio:
   secretKey: minioadmin
   bucketName: uploads
   publicUrl: http://localhost:9000
-
 
 file:
   parsing:

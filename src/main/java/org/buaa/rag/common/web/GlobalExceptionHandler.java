@@ -1,87 +1,80 @@
 package org.buaa.rag.common.web;
 
-import org.buaa.rag.common.convention.errorcode.RagErrorCode;
+import cn.hutool.core.collection.CollectionUtil;
+import cn.hutool.core.util.ReflectUtil;
+import cn.hutool.core.util.StrUtil;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
+import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
 import org.buaa.rag.common.convention.exception.AbstractException;
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
-import jakarta.servlet.http.HttpServletRequest;
-import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+import org.springframework.validation.BindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.util.Objects;
+import java.util.Optional;
+
 /**
  * 全局异常处理器
- * 统一捕获并处理所有Controller抛出的异常
  */
+@Component("globalExceptionHandlerByAdmin")
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     /**
-     * 处理参数校验异常（Bean Validation）
+     * 拦截参数验证异常
      */
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public Result<Void> handleValidationException(MethodArgumentNotValidException ex, HttpServletRequest request) {
-        FieldError firstError = ex.getBindingResult().getFieldError();
-        String errorMessage = firstError != null ? firstError.getDefaultMessage() : "参数校验失败";
-
-        log.error("[{}] {} - 参数校验失败: {}",
-                request.getMethod(),
-                getFullRequestUrl(request),
-                errorMessage);
-
-        return Results.failure(RagErrorCode.PARAM_INVALID.code(), errorMessage);
+    @SneakyThrows
+    @ExceptionHandler(value = MethodArgumentNotValidException.class)
+    public Result validExceptionHandler(HttpServletRequest request, MethodArgumentNotValidException ex) {
+        BindingResult bindingResult = ex.getBindingResult();
+        FieldError firstFieldError = CollectionUtil.getFirst(bindingResult.getFieldErrors());
+        String exceptionStr = Optional.ofNullable(firstFieldError)
+                .map(FieldError::getDefaultMessage)
+                .orElse(StrUtil.EMPTY);
+        log.error("[{}] {} [ex] {}", request.getMethod(), getUrl(request), exceptionStr);
+        return Results.failure(BaseErrorCode.CLIENT_ERROR.code(), exceptionStr);
     }
 
     /**
-     * 处理业务异常（ClientException / ServiceException）
+     * 拦截应用内抛出的异常
      */
-    @ExceptionHandler(AbstractException.class)
-    public Result<Void> handleAbstractException(AbstractException ex, HttpServletRequest request) {
-        // 如果有原始异常，打印完整堆栈；否则只打印错误信息
+    @ExceptionHandler(value = {AbstractException.class})
+    public Result abstractException(HttpServletRequest request, AbstractException ex) {
         if (ex.getCause() != null) {
-            log.error("[{}] {} - 业务异常: {} ({})",
-                    request.getMethod(),
-                    getFullRequestUrl(request),
-                    ex.getErrorMessage(),
-                    ex.getErrorCode(),
-                    ex);
-        } else {
-            log.error("[{}] {} - 业务异常: {} ({})",
-                    request.getMethod(),
-                    getFullRequestUrl(request),
-                    ex.getErrorMessage(),
-                    ex.getErrorCode());
+            log.error("[{}] {} [ex] {}", request.getMethod(), request.getRequestURL().toString(), ex.toString(), ex.getCause());
+            return Results.failure(ex);
         }
-
+        log.error("[{}] {} [ex] {}", request.getMethod(), request.getRequestURL().toString(), ex.toString());
         return Results.failure(ex);
     }
 
     /**
-     * 处理未捕获的异常（兜底处理）
+     * 拦截未捕获异常
      */
-    @ExceptionHandler(Throwable.class)
-    public Result<Void> handleThrowable(Throwable throwable, HttpServletRequest request) {
-        log.error("[{}] {} - 系统异常",
-                request.getMethod(),
-                getFullRequestUrl(request),
-                throwable);
-
-        // 返回通用服务端错误，避免暴露内部异常细节
-        String errorCode = RagErrorCode.SERVICE_ERROR.code();
-        String errorMessage = RagErrorCode.SERVICE_ERROR.message();
-
-        return Results.failure(errorCode, errorMessage);
+    @ExceptionHandler(value = Throwable.class)
+    public Result defaultErrorHandler(HttpServletRequest request, Throwable throwable) {
+        log.error("[{}] {} ", request.getMethod(), getUrl(request), throwable);
+        if (Objects.equals(throwable.getClass().getSuperclass().getSimpleName(), AbstractException.class.getSimpleName())) {
+            String errorCode = ReflectUtil.getFieldValue(throwable, "errorCode").toString();
+            String errorMessage = ReflectUtil.getFieldValue(throwable, "errorMessage").toString();
+            return Results.failure(errorCode, errorMessage);
+        }
+        return Results.failure();
     }
 
-    /**
-     * 获取完整请求URL（包含查询参数）
-     */
-    private String getFullRequestUrl(HttpServletRequest request) {
-        String queryString = request.getQueryString();
-        return request.getRequestURI() +
-                (queryString != null ? "?" + queryString : "");
+    private String getUrl(HttpServletRequest request) {
+        if (StringUtils.isEmpty(request.getQueryString())) {
+            return request.getRequestURL().toString();
+        }
+        return request.getRequestURL().toString() + "?" + request.getQueryString();
     }
 }

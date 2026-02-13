@@ -1,46 +1,10 @@
 package org.buaa.rag.service.impl;
 
-import org.buaa.rag.common.convention.errorcode.RagErrorCode;
-import org.buaa.rag.common.convention.exception.ClientException;
-import org.buaa.rag.common.convention.exception.ServiceException;
-import org.buaa.rag.common.convention.result.Result;
-import org.buaa.rag.common.convention.result.Results;
-import co.elastic.clients.elasticsearch.ElasticsearchClient;
-import co.elastic.clients.elasticsearch.core.BulkRequest;
-import co.elastic.clients.elasticsearch.core.BulkResponse;
-import co.elastic.clients.elasticsearch.core.DeleteByQueryResponse;
-import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
-import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
-import org.buaa.rag.dao.entity.DocumentDO;
-import org.buaa.rag.dao.entity.IndexedContentDO;
-import org.buaa.rag.dao.entity.TextSegmentDO;
-import org.buaa.rag.dao.mapper.DocumentMapper;
-import org.buaa.rag.dao.mapper.TextSegmentMapper;
-import org.buaa.rag.dto.ContentFragment;
-import org.buaa.rag.service.DocumentService;
-import org.buaa.rag.tool.VectorEncoding;
-import com.hankcs.hanlp.seg.common.Term;
-import com.hankcs.hanlp.tokenizer.StandardTokenizer;
-import io.minio.GetObjectArgs;
-import io.minio.MinioClient;
-import io.minio.PutObjectArgs;
-import io.minio.RemoveObjectArgs;
-import org.apache.commons.codec.digest.DigestUtils;
-import org.apache.tika.exception.TikaException;
-import org.apache.tika.metadata.Metadata;
-import org.apache.tika.parser.AutoDetectParser;
-import org.apache.tika.parser.ParseContext;
-import org.apache.tika.sax.BodyContentHandler;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.scheduling.annotation.Async;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.multipart.MultipartFile;
-import org.xml.sax.SAXException;
+import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.DOCUMENT_NOT_FOUND;
+import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.FILE_ACCESS_DENIED;
+import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.FILE_TYPE_NOT_SUPPORTED;
+import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.FILE_UPLOAD_FAILED;
+import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.STORAGE_SERVICE_ERROR;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -56,34 +20,76 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-@Service
-public class DocumentServiceImpl implements DocumentService {
 
-    private static final Logger log = LoggerFactory.getLogger(DocumentServiceImpl.class);
+import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.tika.exception.TikaException;
+import org.apache.tika.metadata.Metadata;
+import org.apache.tika.parser.AutoDetectParser;
+import org.apache.tika.parser.ParseContext;
+import org.apache.tika.sax.BodyContentHandler;
+import org.buaa.rag.common.convention.exception.ClientException;
+import org.buaa.rag.common.convention.exception.ServiceException;
+import org.buaa.rag.common.convention.result.Result;
+import org.buaa.rag.common.convention.result.Results;
+import org.buaa.rag.common.user.UserContext;
+import org.buaa.rag.dao.entity.DocumentDO;
+import org.buaa.rag.dao.entity.IndexedContentDO;
+import org.buaa.rag.dao.entity.TextSegmentDO;
+import org.buaa.rag.dao.mapper.DocumentMapper;
+import org.buaa.rag.dao.mapper.TextSegmentMapper;
+import org.buaa.rag.dto.ContentFragment;
+import org.buaa.rag.service.DocumentService;
+import org.buaa.rag.tool.VectorEncoding;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+import org.xml.sax.SAXException;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hankcs.hanlp.seg.common.Term;
+import com.hankcs.hanlp.tokenizer.StandardTokenizer;
+
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.core.BulkRequest;
+import co.elastic.clients.elasticsearch.core.BulkResponse;
+import co.elastic.clients.elasticsearch.core.DeleteByQueryResponse;
+import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
+import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
+import io.minio.GetObjectArgs;
+import io.minio.MinioClient;
+import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+/**
+ * 文档服务实现层
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO> implements DocumentService {
+
     private static final String DEFAULT_VISIBILITY = "PRIVATE";
     private static final String MODEL_VERSION = "text-embedding-v4";
     private static final Set<String> ALLOWED_FILE_TYPES = Set.of(
-        "pdf", "doc", "docx", "txt", "md", "html", "htm",
-        "xls", "xlsx", "ppt", "pptx", "rtf", "csv"
+            "pdf", "doc", "docx", "txt", "md", "html", "htm",
+            "xls", "xlsx", "ppt", "pptx", "rtf", "csv"
     );
 
-    @Autowired
-    private MinioClient minioClient;
+    private final MinioClient minioClient;
+    private final VectorEncoding encodingService;
+    private final ElasticsearchClient searchClient;
+    private final TextSegmentMapper segmentRepository;
 
-    @Autowired
-    private VectorEncoding encodingService;
-
-    @Autowired
-    private ElasticsearchClient searchClient;
-
-    @Autowired
-    private DocumentMapper documentMapper;
-
-    @Autowired
-    private TextSegmentMapper segmentRepository;
-
-    @Autowired
     @Lazy
+    @Autowired
     private DocumentServiceImpl self;
 
     @Value("${minio.bucketName}")
@@ -97,98 +103,73 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     @Transactional
-    public Result<Map<String, Object>> upload(MultipartFile file,
-                                              String userId,
-                                              String visibility,
-                                              String department,
-                                              String docType,
-                                              String policyYear,
-                                              String tags) {
+    public Result<Map<String, Object>> upload(MultipartFile file, String visibility, String department, String docType, String policyYear, String tags) {
         String originalFilename = file.getOriginalFilename();
+        if (!isValidFileType(originalFilename)) {
+            throw new ClientException(FILE_TYPE_NOT_SUPPORTED);
+        }
+
+        String md5Hash;
+        try {
+            md5Hash = DigestUtils.md5Hex(file.getInputStream());
+        } catch (IOException ex) {
+            throw new ServiceException("文件读取失败: " + ex.getMessage(), ex, FILE_UPLOAD_FAILED);
+        }
+
+        // 检查是否已存在相同文件
+        String currentUserId = String.valueOf(UserContext.getUserId());
+        LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
+                .eq(DocumentDO::getMd5Hash, md5Hash)
+                .eq(DocumentDO::getUserId, currentUserId);
+        DocumentDO existingDoc = baseMapper.selectOne(queryWrapper);
+        if (existingDoc != null) {
+            throw new ClientException("文件已存在，请勿重复上传", FILE_UPLOAD_FAILED);
+        }
 
         try {
-            if (!isValidFileType(originalFilename)) {
-                throw new ClientException("不支持的文件格式: " + originalFilename,  RagErrorCode.FILE_TYPE_NOT_SUPPORTED);
-            }
+            // 存储文件到 MinIO
+            storeFileToMinio(file, originalFilename, md5Hash);
 
-            String fileHash = DigestUtils.md5Hex(file.getInputStream());
-            Optional<DocumentDO> existingRecord = documentMapper.findByMd5Hash(fileHash);
-            if (existingRecord.isPresent()) {
-                DocumentDO record = existingRecord.get();
-                if (!Objects.equals(record.getOwnerId(), userId)) {
-                    throw new ClientException("该文件已存在且归属其他用户",
-                        RagErrorCode.FILE_ACCESS_DENIED);
-                }
+            // 创建文档记录
+            DocumentDO record = new DocumentDO();
+            record.setMd5Hash(md5Hash);
+            record.setOriginalFileName(originalFilename);
+            record.setFileSizeBytes(file.getSize());
+            record.setProcessingStatus(0);
+            record.setVisibility(visibility != null ? visibility : DEFAULT_VISIBILITY);
+            record.setUserId(currentUserId);
+            record.setProcessedAt(null);
+            baseMapper.insert(record);
 
-                String normalizedVisibility = normalizeVisibility(visibility);
-                record.setVisibility(normalizedVisibility);
-                applyMetadata(record, department, docType, policyYear, tags);
-                documentMapper.updateById(record);
+            // 使用代理触发 @Async
+            self.ingestDocumentAsync(md5Hash, originalFilename);
 
-                return Results.success(Map.of(
-                    "fileMd5", fileHash,
-                    "fileName", record.getOriginalFileName(),
-                    "message", "文件已存在，请勿重复上传"
-                ));
-            }
-
-            storeFileToMinio(file, originalFilename, fileHash);
-
-            String normalizedVisibility = normalizeVisibility(visibility);
-            saveDocumentRecord(
-                fileHash,
-                originalFilename,
-                file.getSize(),
-                userId,
-                normalizedVisibility,
-                department,
-                docType,
-                policyYear,
-                tags
-            );
-
-            // Use the proxy to trigger @Async.
-            self.ingestDocumentAsync(fileHash, originalFilename);
-
-            return Results.success(Map.of(
-                "fileMd5", fileHash,
-                "fileName", originalFilename,
-                "size", file.getSize(),
-                "message", "上传成功，后台解析中"
-            ));
+            return Results.success(Map.of("md5Hash", md5Hash, "message", "上传成功"));
 
         } catch (ClientException e) {
             throw e;
         } catch (Exception e) {
-            throw new ServiceException("文件上传失败: " + e.getMessage(), e,
-                RagErrorCode.FILE_UPLOAD_FAILED);
+            throw new ServiceException("文件上传失败: " + e.getMessage(), e, FILE_UPLOAD_FAILED);
         }
     }
 
     @Override
     public Result<List<DocumentDO>> listDocuments(String userId) {
-        if (isBlankString(userId)) {
-            throw new ClientException("用户标识不能为空", RagErrorCode.PARAM_EMPTY);
-        }
-        List<DocumentDO> documentDOS = documentMapper.findByOwnerIdOrderByUploadedAtDesc(userId);
+        List<DocumentDO> documentDOS = baseMapper.findByOwnerIdOrderByUploadedAtDesc(userId);
         return Results.success(documentDOS);
     }
 
     @Override
     @Transactional
     public Result<Map<String, Object>> deleteDocument(String md5Hash, String userId) {
-        if (isBlankString(userId) || isBlankString(md5Hash)) {
-            throw new ClientException("参数不能为空", RagErrorCode.PARAM_EMPTY);
-        }
-
-        Optional<DocumentDO> recordOpt = documentMapper.findByMd5Hash(md5Hash);
+        Optional<DocumentDO> recordOpt = baseMapper.findByMd5Hash(md5Hash);
         if (recordOpt.isEmpty()) {
-            throw new ClientException("文档不存在", RagErrorCode.DOCUMENT_NOT_FOUND);
+            throw new ClientException("文档不存在", DOCUMENT_NOT_FOUND);
         }
 
         DocumentDO record = recordOpt.get();
-        if (!Objects.equals(record.getOwnerId(), userId)) {
-            throw new ClientException("无权限删除该文档", RagErrorCode.FILE_ACCESS_DENIED);
+        if (!Objects.equals(record.getUserId(), userId)) {
+            throw new ClientException("无权限删除该文档", FILE_ACCESS_DENIED);
         }
 
         String objectPath = String.format("uploads/%s/%s", md5Hash, record.getOriginalFileName());
@@ -199,12 +180,12 @@ public class DocumentServiceImpl implements DocumentService {
                 .build());
         } catch (Exception e) {
             throw new ServiceException("对象存储删除失败: " + e.getMessage(), e,
-                RagErrorCode.STORAGE_SERVICE_ERROR);
+                STORAGE_SERVICE_ERROR);
         }
 
         removeDocumentIndex(md5Hash);
         deleteSegments(md5Hash);
-        documentMapper.deleteByMd5Hash(md5Hash);
+        baseMapper.deleteByMd5Hash(md5Hash);
 
         return Results.success(Map.of("fileMd5", md5Hash, "message", "删除成功"));
     }
@@ -366,10 +347,6 @@ public class DocumentServiceImpl implements DocumentService {
         );
     }
 
-    private boolean isBlankString(String str) {
-        return str == null || str.isBlank();
-    }
-
     private boolean isValidFileType(String filename) {
         if (filename == null) {
             return false;
@@ -389,58 +366,6 @@ public class DocumentServiceImpl implements DocumentService {
             .stream(file.getInputStream(), file.getSize(), -1)
             .contentType(file.getContentType())
             .build());
-    }
-
-    private void saveDocumentRecord(String md5Hash,
-                                    String filename,
-                                    long fileSize,
-                                    String ownerId,
-                                    String visibility,
-                                    String department,
-                                    String docType,
-                                    String policyYear,
-                                    String tags) {
-        DocumentDO record = new DocumentDO();
-        record.setMd5Hash(md5Hash);
-        record.setOriginalFileName(filename);
-        record.setFileSizeBytes(fileSize);
-        record.setProcessingStatus(0);
-        record.setOwnerId(ownerId);
-        record.setVisibility(visibility);
-        applyMetadata(record, department, docType, policyYear, tags);
-        record.setProcessedAt(null);
-        documentMapper.insert(record);
-    }
-
-    private String normalizeVisibility(String visibility) {
-        String normalized = visibility == null ? DEFAULT_VISIBILITY : visibility.trim().toUpperCase();
-        if (!Set.of("PRIVATE", "PUBLIC").contains(normalized)) {
-            return DEFAULT_VISIBILITY;
-        }
-        return normalized;
-    }
-
-    private void applyMetadata(DocumentDO record,
-                               String department,
-                               String docType,
-                               String policyYear,
-                               String tags) {
-        if (record == null) {
-            return;
-        }
-        if (department != null && !department.isBlank()) {
-            record.setDepartment(department.trim());
-        }
-        if (docType != null && !docType.isBlank()) {
-            record.setDocType(docType.trim());
-        }
-        if (policyYear != null && !policyYear.isBlank()) {
-            record.setPolicyYear(policyYear.trim());
-        }
-        String normalizedTags = normalizeTags(tags);
-        if (normalizedTags != null) {
-            record.setTags(normalizedTags);
-        }
     }
 
     private String normalizeTags(String tags) {
@@ -474,31 +399,31 @@ public class DocumentServiceImpl implements DocumentService {
     }
 
     private boolean markProcessing(String documentMd5) {
-        Optional<DocumentDO> recordOpt = documentMapper.findByMd5Hash(documentMd5);
+        Optional<DocumentDO> recordOpt = baseMapper.findByMd5Hash(documentMd5);
         if (recordOpt.isEmpty()) {
             return false;
         }
         DocumentDO record = recordOpt.get();
         record.setProcessingStatus(0);
         record.setProcessedAt(null);
-        documentMapper.updateById(record);
+        baseMapper.updateById(record);
         return true;
     }
 
     private void markCompleted(String documentMd5) {
-        documentMapper.findByMd5Hash(documentMd5).ifPresent(record -> {
+        baseMapper.findByMd5Hash(documentMd5).ifPresent(record -> {
             record.setProcessingStatus(1);
             record.setProcessedAt(LocalDateTime.now());
-            documentMapper.updateById(record);
+            baseMapper.updateById(record);
         });
     }
 
     private void markFailed(String documentMd5, String message, Exception error) {
         log.error("{}: {}", message, documentMd5, error);
-        documentMapper.findByMd5Hash(documentMd5).ifPresent(record -> {
+        baseMapper.findByMd5Hash(documentMd5).ifPresent(record -> {
             record.setProcessingStatus(-1);
             record.setProcessedAt(LocalDateTime.now());
-            documentMapper.updateById(record);
+            baseMapper.updateById(record);
         });
     }
 
@@ -561,25 +486,25 @@ public class DocumentServiceImpl implements DocumentService {
 
         for (String paragraph : paragraphs) {
             if (paragraph.length() > maxChunkSize) {
-                if (chunkBuilder.length() > 0) {
+                if (!chunkBuilder.isEmpty()) {
                     resultChunks.add(chunkBuilder.toString().trim());
                     chunkBuilder.setLength(0);
                 }
                 resultChunks.addAll(subdivideOverlongParagraph(paragraph));
             } else if (chunkBuilder.length() + paragraph.length() + 2 > maxChunkSize) {
-                if (chunkBuilder.length() > 0) {
+                if (!chunkBuilder.isEmpty()) {
                     resultChunks.add(chunkBuilder.toString().trim());
                 }
                 chunkBuilder = new StringBuilder(paragraph);
             } else {
-                if (chunkBuilder.length() > 0) {
+                if (!chunkBuilder.isEmpty()) {
                     chunkBuilder.append("\n\n");
                 }
                 chunkBuilder.append(paragraph);
             }
         }
 
-        if (chunkBuilder.length() > 0) {
+        if (!chunkBuilder.isEmpty()) {
             resultChunks.add(chunkBuilder.toString().trim());
         }
 

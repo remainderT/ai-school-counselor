@@ -1,7 +1,6 @@
 DROP DATABASE IF EXISTS rag;
 CREATE DATABASE rag  DEFAULT CHARACTER SET utf8mb4;
 
-
 DROP TABLE IF EXISTS `user`;
 CREATE TABLE `user` (
                         `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'ID',
@@ -24,7 +23,7 @@ CREATE TABLE document (
                         original_file_name  VARCHAR(255)     NOT NULL COMMENT '原始文件名',
                         file_size_bytes     BIGINT           NOT NULL COMMENT '文件大小（字节）',
                         processing_status   TINYINT          NOT NULL DEFAULT 0 COMMENT '处理状态：0-处理中，1-已完成',
-                        owner_id            VARCHAR(64)      NOT NULL DEFAULT 'anonymous' COMMENT '上传用户标识',
+                        user_id            VARCHAR(64)       NOT NULL COMMENT '上传用户标识',
                         visibility          VARCHAR(16)      NOT NULL DEFAULT 'PRIVATE' COMMENT '可见性：PRIVATE/PUBLIC',
                         doc_type            VARCHAR(64)      NULL COMMENT '文档类型：综测/请假/评奖等',
                         department          VARCHAR(64)      NULL COMMENT '所属学院/部门',

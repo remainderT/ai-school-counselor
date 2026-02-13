@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import jakarta.servlet.ServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -36,10 +37,9 @@ public class UserController {
     /**
      * 注册用户
      */
-    @PostMapping("/")
-    public Result<Void> register(@RequestBody UserRegisterReqDTO requestParam) {
-        userService.register(requestParam);
-        return Results.success();
+    @GetMapping("/{mail}")
+    public Result<UserRespDTO> getUserByMail(@PathVariable("mail") String mail) {
+        return Results.success(userService.getUserByMail(mail));
     }
 
     /**
@@ -68,6 +68,14 @@ public class UserController {
     }
 
     /**
+     * 登陆时候获取验证码
+     */
+    @GetMapping("/kaptcha/")
+    public void getKaptcha(HttpServletResponse response) {
+        userService.getKaptcha(response);
+    }
+
+    /**
      * 检查用户是否登录
      */
     @GetMapping("/check-login")
@@ -87,7 +95,7 @@ public class UserController {
     /**
      * 更新用户信息
      */
-    @PutMapping("/")
+    @PutMapping("")
     public Result<Void> update(@RequestBody UserUpdateReqDTO requestParam) {
         userService.update(requestParam);
         return Results.success();

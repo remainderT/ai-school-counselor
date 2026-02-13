@@ -161,7 +161,7 @@ CRAG（Corrective RAG）强调“检索质量评估”，在检索结果不足�
    - `QueryRefiner` 生成重写查询 + HyDE
 
 3. **多路检索**
-   - 原查询检索  
+   - 混合查询检索  
    - 重写查询检索  
    - HyDE 向量检索  
 
@@ -189,28 +189,3 @@ CRAG（Corrective RAG）强调“检索质量评估”，在检索结果不足�
    - 留作反馈闭环使用  
 
 ---
-
-## 4. 对应模块清单（快速索引）
-
-- 检索与排序：`SmartRetrieverService`, `RerankerService`
-- 多路检索与融合：`QueryRefiner`, `ConversationManager`
-- 质量控制：`CragService`
-- 元数据路由：`QueryRoutingService`, `MetadataFilter`
-- 对话与持久化：`ConversationManager`, `MessageRepository`
-- 反馈闭环：`FeedbackService`
-- 评测：`EvalService`
-
----
-
-## 5. 总结
-
-init 阶段你已完成 **召回 + 重排** 的基础流程。  
-当前系统已经扩展为：  
-
-- 多路检索增强召回（Rewrite / HyDE / RRF）  
-- LLM 精排  
-- CRAG 质量控制与兜底  
-- 元数据过滤与权限控制  
-- 反馈闭环 
-
-整体链路已形成“检索、判别、生成、反馈、评测”的完整闭环。
