@@ -33,6 +33,13 @@ interface Document {
   processingStatus?: number
 }
 
+interface User {
+  id: string
+  username?: string
+  email?: string
+  avatar?: string
+}
+
 // --- State ---
 const currentView = ref('chat')
 const userInput = ref('')
@@ -41,7 +48,7 @@ const isSearching = ref(false)
 const searchSteps = ref<string[]>([])
 const messages = ref<Message[]>([])
 const history = ref([{ id: 1, title: '奖学金政策咨询' }, { id: 2, title: '选课系统指南' }])
-const user = ref(null)
+const user = ref<User | null>(null)
 try {
   const savedUser = localStorage.getItem('user')
   if (savedUser && savedUser !== 'undefined') {
@@ -190,7 +197,7 @@ const sendMessage = async () => {
     }
   } catch (error) {
     console.error('Chat error:', error)
-    assistantMsg.content = "抱歉，服务器暂时无法连接。错误：" + error.message
+    assistantMsg.content = "抱歉，服务器暂时无法连接。错误：" + (error instanceof Error ? error.message : String(error))
   } finally {
     isTyping.value = false
     isSearching.value = false
@@ -227,11 +234,20 @@ const deleteDoc = async (md5Hash: string) => {
 const handleLogin = async () => {
   try {
     const res = await axios.post('/api/rag/user/login', loginForm)
-    user.value = res.data.data || res.data
-    localStorage.setItem('user', JSON.stringify(res.data.data || res.data))
-    showLogin.value = false
-    ElMessage.success('欢迎回来，' + (res.data.data?.username || res.data.username))
+    const userData = res.data.data || res.data
+    console.log('登录成功，用户数据:', userData)
+    
+    // 确保数据有效
+    if (userData && typeof userData === 'object') {
+      user.value = userData
+      localStorage.setItem('user', JSON.stringify(userData))
+      showLogin.value = false
+      ElMessage.success('欢迎回来，' + (userData.username || '用户'))
+    } else {
+      throw new Error('无效的用户数据')
+    }
   } catch (err) {
+    console.error('登录失败:', err)
     ElMessage.error('验证码错误或登录失败')
   }
 }
@@ -318,10 +334,10 @@ onMounted(() => {
 
         <div class="sidebar-footer">
           <div v-if="user" class="user-profile">
-            <el-avatar :size="40" :src="user.avatar">{{ user.username[0] }}</el-avatar>
+            <el-avatar :size="40" :src="user.avatar">{{ user.username?.[0] || 'U' }}</el-avatar>
             <div class="user-info">
-              <p class="user-name">{{ user.username }}</p>
-              <p class="user-email">{{ user.email }}</p>
+              <p class="user-name">{{ user.username || '用户' }}</p>
+              <p class="user-email">{{ user.email || '' }}</p>
             </div>
           </div>
           <button v-else @click="showLogin = true" class="login-btn">
