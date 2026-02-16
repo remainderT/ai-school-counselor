@@ -10,7 +10,7 @@
     </parent>
 
     <groupId>org.buaa</groupId>
-    <artifactId>myRag</artifactId>
+    <artifactId>ai-school-counselor</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 
     <properties>
