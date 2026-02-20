@@ -2,8 +2,7 @@ package org.buaa.rag.service.impl;
 
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_ACCESS_CONTROL_ERROR;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_NULL;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_TYPE_NOT_SUPPORTED;
-import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.FILE_TYPE_NOT_SUPPORTED;
+import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.FILE_PARSE_FAILED;
 import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.FILE_UPLOAD_FAILED;
 import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.STORAGE_SERVICE_ERROR;
 
@@ -11,26 +10,22 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.tika.exception.TikaException;
+import org.apache.tika.extractor.EmbeddedDocumentExtractor;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.AutoDetectParser;
 import org.apache.tika.parser.ParseContext;
 import org.apache.tika.sax.BodyContentHandler;
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.exception.ServiceException;
-import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.common.user.UserContext;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.IndexedContentDO;
@@ -38,15 +33,19 @@ import org.buaa.rag.dao.entity.TextSegmentDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.TextSegmentMapper;
 import org.buaa.rag.dto.ContentFragment;
+import org.buaa.rag.service.ContentTypeDetectionService;
 import org.buaa.rag.service.DocumentService;
+import org.buaa.rag.service.FileValidationService;
+import org.buaa.rag.service.TextCleaningService;
+import org.buaa.rag.service.ingestion.DocumentIngestionStreamProducer;
+import org.buaa.rag.tool.RustfsStorage;
 import org.buaa.rag.tool.VectorEncoding;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
+import org.xml.sax.ContentHandler;
 import org.xml.sax.SAXException;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -61,9 +60,6 @@ import co.elastic.clients.elasticsearch.core.BulkResponse;
 import co.elastic.clients.elasticsearch.core.DeleteByQueryResponse;
 import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.core.bulk.BulkResponseItem;
-import io.minio.GetObjectArgs;
-import io.minio.PutObjectArgs;
-import io.minio.RemoveObjectArgs;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -75,36 +71,54 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO> implements DocumentService {
 
-    private static final String DEFAULT_VISIBILITY = "PRIVATE";
+    private static final String DEFAULT_VISIBILITY = "private";
     private static final String MODEL_VERSION = "text-embedding-v4";
-    private static final Set<String> ALLOWED_FILE_TYPES = Set.of(
-            "pdf", "doc", "docx", "txt", "md", "html", "htm",
-            "xls", "xlsx", "ppt", "pptx", "rtf", "csv"
-    );
+
+    private static final int STATUS_PENDING = 0;
+    private static final int STATUS_PROCESSING = 1;
+    private static final int STATUS_COMPLETED = 2;
+    private static final int STATUS_FAILED = -1;
+
+    private static final Set<String> PUBLIC_VISIBILITY = Set.of("public", "private");
 
     private final VectorEncoding encodingService;
     private final ElasticsearchClient searchClient;
     private final TextSegmentMapper segmentRepository;
+    private final RustfsStorage storagePort;
+    private final DocumentIngestionStreamProducer ingestionStreamProducer;
+    private final FileValidationService fileValidationService;
+    private final ContentTypeDetectionService contentTypeDetectionService;
+    private final TextCleaningService textCleaningService;
 
-    @Lazy
-    @Autowired
-    private DocumentServiceImpl self;
-
-    @Value("${minio.bucketName}")
+    @Value("${rustfs.bucketName}")
     private String storageBucket;
 
     @Value("${elasticsearch.index:knowledge_base}")
     private String indexName;
 
-    @Value("${file.parsing.chunk-size}")
+    @Value("${file.parsing.chunk-size:512}")
     private int maxChunkSize;
 
+    @Value("${file.parsing.max-extracted-chars:800000}")
+    private int maxExtractedChars;
+
+    @Value("${file.parsing.max-cleaned-chars:500000}")
+    private int maxCleanedChars;
+
+    @Value("${rag.embedding.batch-size:10}")
+    private int embeddingBatchSize;
+
+    @Value("${rag.embedding.max-retries:2}")
+    private int embeddingMaxRetries;
+
+    @Value("${rag.embedding.retry-backoff-ms:400}")
+    private long embeddingRetryBackoffMs;
+
     @Override
-    public void upload(MultipartFile file, String visibility, String department, String docType, String policyYear, String tags) {
-        String originalFilename = file.getOriginalFilename();
-        if (!isValidFileType(originalFilename)) {
-            throw new ClientException(DOCUMENT_TYPE_NOT_SUPPORTED);
-        }
+    public void upload(MultipartFile file, String visibility) {
+        String originalFilename = file == null ? null : file.getOriginalFilename();
+        String detectedMimeType = contentTypeDetectionService.detect(file, originalFilename);
+        fileValidationService.validate(file, originalFilename, detectedMimeType);
 
         String md5Hash;
         try {
@@ -113,36 +127,32 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw new ServiceException("文件读取失败: " + ex.getMessage(), ex, FILE_UPLOAD_FAILED);
         }
 
-        // 检查是否已存在相同文件
         LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
-                .eq(DocumentDO::getMd5Hash, md5Hash)
-                .eq(DocumentDO::getUserId, UserContext.getUserId());
+            .eq(DocumentDO::getMd5Hash, md5Hash)
+            .eq(DocumentDO::getUserId, UserContext.getUserId());
         DocumentDO existingDoc = baseMapper.selectOne(queryWrapper);
         if (existingDoc != null) {
             throw new ClientException("文件已存在，请勿重复上传", FILE_UPLOAD_FAILED);
         }
 
         try {
-            // 存储文件到 MinIO
-            storeFileToMinio(file, originalFilename, md5Hash);
+            storeFileToRustfs(file, originalFilename, md5Hash, detectedMimeType);
 
-            // 创建文档记录
             DocumentDO record = new DocumentDO();
             record.setMd5Hash(md5Hash);
             record.setOriginalFileName(originalFilename);
             record.setFileSizeBytes(file.getSize());
-            record.setProcessingStatus(0);
-            record.setVisibility(visibility != null ? visibility : DEFAULT_VISIBILITY);
+            record.setProcessingStatus(STATUS_PENDING);
+            record.setVisibility(normalizeVisibility(visibility));
             record.setUserId(UserContext.getUserId());
             record.setProcessedAt(null);
             baseMapper.insert(record);
 
-            // 使用代理触发 @Async
-            self.ingestDocumentAsync(md5Hash, originalFilename);
-
+            ingestionStreamProducer.enqueue(md5Hash, originalFilename, 0);
         } catch (ClientException e) {
             throw e;
         } catch (Exception e) {
+            markFailed(md5Hash, "文件上传失败", e);
             throw new ServiceException("文件上传失败: " + e.getMessage(), e, FILE_UPLOAD_FAILED);
         }
     }
@@ -150,8 +160,8 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     @Override
     public List<DocumentDO> list() {
         LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
-                .eq(DocumentDO::getUserId, UserContext.getUserId())
-                .eq(DocumentDO::getDelFlag, 0);
+            .eq(DocumentDO::getUserId, UserContext.getUserId())
+            .eq(DocumentDO::getDelFlag, 0);
         return baseMapper.selectList(queryWrapper);
     }
 
@@ -165,12 +175,10 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw new ClientException(DOCUMENT_ACCESS_CONTROL_ERROR);
         }
 
-        String objectPath = String.format("uploads/%s/%s", md5Hash, record.getOriginalFileName());
+        String md5Hash = documentDO.getMd5Hash();
+        String objectPath = String.format("uploads/%s/%s", md5Hash, documentDO.getOriginalFileName());
         try {
-            minioClient.removeObject(RemoveObjectArgs.builder()
-                .bucket(resolveBucketName())
-                .object(objectPath)
-                .build());
+            storagePort.delete(resolveBucketName(), objectPath);
         } catch (Exception e) {
             throw new ServiceException("对象存储删除失败: " + e.getMessage(), e,
                 STORAGE_SERVICE_ERROR);
@@ -178,15 +186,12 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
 
         removeDocumentIndex(md5Hash);
         deleteSegments(md5Hash);
-        baseMapper.deleteByMd5Hash(md5Hash);
-
-        return Results.success(Map.of("fileMd5", md5Hash, "message", "删除成功"));
+        baseMapper.deleteById(id);
     }
 
     @Override
-    @Async("documentIngestionExecutor")
     @Transactional
-    public void ingestDocumentAsync(String documentMd5, String originalFileName) {
+    public void ingestDocumentTask(String documentMd5, String originalFileName) {
         String objectPath = String.format("uploads/%s/%s", documentMd5, originalFileName);
         log.info("异步摄取开始: {} -> {}", documentMd5, objectPath);
 
@@ -195,24 +200,14 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             return;
         }
 
-        try (InputStream inputStream = minioClient.getObject(
-            GetObjectArgs.builder()
-                .bucket(resolveBucketName())
-                .object(objectPath)
-                .build()
-        )) {
+        try (InputStream inputStream = storagePort.download(resolveBucketName(), objectPath)) {
             processAndStore(documentMd5, inputStream);
-        } catch (Exception e) {
-            markFailed(documentMd5, "文档解析失败", e);
-            return;
-        }
-
-        try {
             indexDocument(documentMd5);
             markCompleted(documentMd5);
             log.info("文档摄取完成: {}", documentMd5);
         } catch (Exception e) {
-            markFailed(documentMd5, "向量索引失败", e);
+            markFailed(documentMd5, "文档摄取失败", e);
+            throw new ServiceException("文档摄取失败: " + e.getMessage(), e, FILE_PARSE_FAILED);
         }
     }
 
@@ -227,7 +222,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             }
 
             List<String> textContents = extractTextContents(fragments);
-            List<float[]> vectorEmbeddings = encodingService.encode(textContents);
+            List<float[]> vectorEmbeddings = encodeInBatchesWithRetry(textContents);
 
             List<IndexedContentDO> indexDocuments = buildIndexedDocuments(
                 documentMd5,
@@ -298,12 +293,15 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
                 continue;
             }
             log.error("索引失败 - 文档ID: {}, 原因: {}",
-                     item.id(), error.reason());
+                item.id(), error.reason());
         }
     }
 
     private List<ContentFragment> loadTextFragments(String documentMd5) {
-        List<TextSegmentDO> segments = segmentRepository.findByDocumentMd5(documentMd5);
+        LambdaQueryWrapper<TextSegmentDO> queryWrapper = Wrappers.lambdaQuery(TextSegmentDO.class)
+            .eq(TextSegmentDO::getDocumentMd5, documentMd5)
+            .orderByAsc(TextSegmentDO::getFragmentIndex);
+        List<TextSegmentDO> segments = segmentRepository.selectList(queryWrapper);
         return segments.stream()
             .map(seg -> new ContentFragment(seg.getFragmentIndex(), seg.getTextData()))
             .collect(Collectors.toList());
@@ -315,9 +313,69 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             .collect(Collectors.toList());
     }
 
+    private List<float[]> encodeInBatchesWithRetry(List<String> textContents) {
+        if (textContents == null || textContents.isEmpty()) {
+            return List.of();
+        }
+        int batchSize = Math.max(1, embeddingBatchSize);
+        List<float[]> vectors = new ArrayList<>(textContents.size());
+
+        for (int start = 0; start < textContents.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, textContents.size());
+            List<String> batch = textContents.subList(start, end);
+            List<float[]> batchVectors = encodeBatchWithRetry(batch, start / batchSize + 1);
+            vectors.addAll(batchVectors);
+        }
+
+        if (vectors.size() != textContents.size()) {
+            throw new RuntimeException("向量数量与文本片段数量不一致");
+        }
+        return vectors;
+    }
+
+    private List<float[]> encodeBatchWithRetry(List<String> texts, int batchNo) {
+        int maxAttempts = Math.max(1, embeddingMaxRetries + 1);
+        RuntimeException latest = null;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                List<float[]> vectors = encodingService.encode(texts);
+                if (vectors == null || vectors.size() != texts.size()) {
+                    throw new RuntimeException("embedding 返回向量数量异常");
+                }
+                for (float[] vector : vectors) {
+                    if (vector == null || vector.length == 0) {
+                        throw new RuntimeException("embedding 返回空向量");
+                    }
+                }
+                return vectors;
+            } catch (Exception e) {
+                latest = new RuntimeException("第 " + batchNo + " 批向量化失败（尝试 " + attempt + "/" + maxAttempts + "）", e);
+                if (attempt < maxAttempts) {
+                    sleepBeforeRetry(attempt);
+                }
+            }
+        }
+        throw latest;
+    }
+
+    private void sleepBeforeRetry(int attempt) {
+        long base = Math.max(50L, embeddingRetryBackoffMs);
+        long delay = base * (1L << Math.max(0, attempt - 1));
+        try {
+            Thread.sleep(delay);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("向量化重试被中断", e);
+        }
+    }
+
     private List<IndexedContentDO> buildIndexedDocuments(String documentMd5,
                                                          List<ContentFragment> fragments,
                                                          List<float[]> vectors) {
+        if (fragments.size() != vectors.size()) {
+            throw new RuntimeException("文本片段与向量数量不匹配");
+        }
         return IntStream.range(0, fragments.size())
             .mapToObj(i -> createIndexedContent(
                 documentMd5,
@@ -340,48 +398,17 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         );
     }
 
-    private boolean isValidFileType(String filename) {
-        if (filename == null) {
-            return false;
-        }
-        int dotIndex = filename.lastIndexOf('.');
-        if (dotIndex == -1) {
-            return false;
-        }
-        String extension = filename.substring(dotIndex + 1).toLowerCase();
-        return ALLOWED_FILE_TYPES.contains(extension);
-    }
-
-    private void storeFileToMinio(MultipartFile file, String filename, String fileHash) throws Exception {
-        minioClient.putObject(PutObjectArgs.builder()
-            .bucket(resolveBucketName())
-            .object(String.format("uploads/%s/%s", fileHash, filename))
-            .stream(file.getInputStream(), file.getSize(), -1)
-            .contentType(file.getContentType())
-            .build());
-    }
-
-    private String normalizeTags(String tags) {
-        List<String> tagList = parseTags(tags);
-        if (tagList.isEmpty()) {
-            return null;
-        }
-        return String.join(",", tagList);
-    }
-
-    private List<String> parseTags(String tags) {
-        if (tags == null || tags.isBlank()) {
-            return Collections.emptyList();
-        }
-        String[] parts = tags.split("[,，;；]");
-        List<String> results = new ArrayList<>();
-        for (String part : parts) {
-            String trimmed = part.trim();
-            if (!trimmed.isEmpty()) {
-                results.add(trimmed);
-            }
-        }
-        return results.stream().distinct().toList();
+    private void storeFileToRustfs(MultipartFile file,
+                                   String filename,
+                                   String fileHash,
+                                   String contentType) throws Exception {
+        storagePort.upload(
+            resolveBucketName(),
+            String.format("uploads/%s/%s", fileHash, filename),
+            file.getInputStream(),
+            file.getSize(),
+            StringUtils.hasText(contentType) ? contentType : file.getContentType()
+        );
     }
 
     private String resolveBucketName() {
@@ -391,52 +418,90 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         return storageBucket;
     }
 
+    private String normalizeVisibility(String visibility) {
+        if (!StringUtils.hasText(visibility)) {
+            return DEFAULT_VISIBILITY;
+        }
+        String normalized = visibility.trim().toLowerCase(Locale.ROOT);
+        if (PUBLIC_VISIBILITY.contains(normalized)) {
+            return normalized;
+        }
+        return DEFAULT_VISIBILITY;
+    }
+
     private boolean markProcessing(String documentMd5) {
-        Optional<DocumentDO> recordOpt = baseMapper.findByMd5Hash(documentMd5);
-        if (recordOpt.isEmpty()) {
+        DocumentDO record = findDocumentByMd5(documentMd5);
+        if (record == null) {
             return false;
         }
-        DocumentDO record = recordOpt.get();
-        record.setProcessingStatus(0);
+        record.setProcessingStatus(STATUS_PROCESSING);
         record.setProcessedAt(null);
         baseMapper.updateById(record);
         return true;
     }
 
     private void markCompleted(String documentMd5) {
-        baseMapper.findByMd5Hash(documentMd5).ifPresent(record -> {
-            record.setProcessingStatus(1);
-            record.setProcessedAt(LocalDateTime.now());
-            baseMapper.updateById(record);
-        });
+        DocumentDO record = findDocumentByMd5(documentMd5);
+        if (record == null) {
+            return;
+        }
+        record.setProcessingStatus(STATUS_COMPLETED);
+        record.setProcessedAt(LocalDateTime.now());
+        baseMapper.updateById(record);
     }
 
     private void markFailed(String documentMd5, String message, Exception error) {
-        log.error("{}: {}", message, documentMd5, error);
-        baseMapper.findByMd5Hash(documentMd5).ifPresent(record -> {
-            record.setProcessingStatus(-1);
-            record.setProcessedAt(LocalDateTime.now());
-            baseMapper.updateById(record);
-        });
+        if (StringUtils.hasText(documentMd5)) {
+            log.error("{}: {}", message, documentMd5, error);
+        } else {
+            log.error(message, error);
+            return;
+        }
+
+        DocumentDO record = findDocumentByMd5(documentMd5);
+        if (record == null) {
+            return;
+        }
+        record.setProcessingStatus(STATUS_FAILED);
+        record.setProcessedAt(LocalDateTime.now());
+        baseMapper.updateById(record);
+    }
+
+    private DocumentDO findDocumentByMd5(String documentMd5) {
+        if (!StringUtils.hasText(documentMd5)) {
+            return null;
+        }
+        LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
+            .eq(DocumentDO::getMd5Hash, documentMd5)
+            .last("limit 1");
+        return baseMapper.selectOne(queryWrapper);
     }
 
     private void processAndStore(String documentMd5, InputStream inputStream)
-            throws IOException, TikaException {
+        throws IOException, TikaException {
         log.info("开始处理文档: {}", documentMd5);
 
         try {
             String extractedText = performTextExtraction(inputStream);
-            log.info("文本提取成功，字符数: {}", extractedText.length());
+            String cleanedText = textCleaningService.clean(extractedText, maxCleanedChars);
+            if (!StringUtils.hasText(cleanedText)) {
+                throw new ServiceException("文档内容为空或不可解析", FILE_PARSE_FAILED);
+            }
+            log.info("文本提取成功，字符数: {}", cleanedText.length());
 
-            List<String> textChunks = performIntelligentSegmentation(extractedText);
+            List<String> textChunks = performIntelligentSegmentation(cleanedText);
+            if (textChunks.isEmpty()) {
+                throw new ServiceException("文档切分后为空", FILE_PARSE_FAILED);
+            }
             log.info("文本分块完成，片段数: {}", textChunks.size());
 
+            deleteSegments(documentMd5);
             persistTextSegments(documentMd5, textChunks);
             log.info("文档处理完成: {}, 总片段: {}", documentMd5, textChunks.size());
 
         } catch (SAXException e) {
             log.error("文档解析失败: {}", documentMd5, e);
-            throw new RuntimeException("文档解析错误", e);
+            throw new ServiceException("文档解析错误", e, FILE_PARSE_FAILED);
         }
     }
 
@@ -444,19 +509,40 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         if (documentMd5 == null || documentMd5.isBlank()) {
             return;
         }
-        segmentRepository.deleteByDocumentMd5(documentMd5);
+        LambdaQueryWrapper<TextSegmentDO> queryWrapper = Wrappers.lambdaQuery(TextSegmentDO.class)
+            .eq(TextSegmentDO::getDocumentMd5, documentMd5);
+        segmentRepository.delete(queryWrapper);
         log.info("已删除文档分块: {}", documentMd5);
     }
 
     private String performTextExtraction(InputStream stream)
-            throws IOException, TikaException, SAXException {
-        BodyContentHandler contentHandler = new BodyContentHandler(-1);
+        throws IOException, TikaException, SAXException {
+        int writeLimit = Math.max(2048, maxExtractedChars);
+        BodyContentHandler contentHandler = new BodyContentHandler(writeLimit);
         Metadata documentMetadata = new Metadata();
         ParseContext parseContext = new ParseContext();
+        parseContext.set(EmbeddedDocumentExtractor.class, new NoOpEmbeddedDocumentExtractor());
         AutoDetectParser documentParser = new AutoDetectParser();
 
-        documentParser.parse(stream, contentHandler, documentMetadata, parseContext);
+        try {
+            documentParser.parse(stream, contentHandler, documentMetadata, parseContext);
+        } catch (SAXException e) {
+            if (isWriteLimitReached(e)) {
+                log.warn("文档内容超过解析上限，已截断至 {} 字符", writeLimit);
+            } else {
+                throw e;
+            }
+        }
+
         return contentHandler.toString();
+    }
+
+    private boolean isWriteLimitReached(SAXException exception) {
+        if (exception == null || exception.getMessage() == null) {
+            return false;
+        }
+        String message = exception.getMessage().toLowerCase(Locale.ROOT);
+        return message.contains("write limit") || message.contains("more than");
     }
 
     private void persistTextSegments(String documentMd5, List<String> chunks) {
@@ -505,7 +591,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     }
 
     private String[] splitIntoParagraphs(String text) {
-        return text.split("\n\n+");
+        return text.split("\\n\\n+");
     }
 
     private List<String> subdivideOverlongParagraph(String paragraph) {
@@ -563,7 +649,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             }
 
             log.debug("HanLP分词 - 原句: {} 字符, 分词: {} 个, 片段: {} 个",
-                     sentence.length(), terms.size(), wordChunks.size());
+                sentence.length(), terms.size(), wordChunks.size());
             return wordChunks;
 
         } catch (Exception e) {
@@ -585,4 +671,19 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         return chunks;
     }
 
+    private static class NoOpEmbeddedDocumentExtractor implements EmbeddedDocumentExtractor {
+
+        @Override
+        public boolean shouldParseEmbedded(Metadata metadata) {
+            return false;
+        }
+
+        @Override
+        public void parseEmbedded(InputStream stream,
+                                  ContentHandler handler,
+                                  Metadata metadata,
+                                  boolean outputHtml) throws SAXException, IOException {
+            // no-op: 禁止递归解析嵌入对象，避免异常文件导致解析放大
+        }
+    }
 }

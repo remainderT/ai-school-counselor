@@ -29,35 +29,48 @@ spring:
       max-file-size: 100MB
       max-request-size: 100MB
 
-  webflux:
-    client:
-      max-in-memory-size: 16MB
-  codec:
-    max-in-memory-size: 16MB
+  ai:
+    model:
+      chat: dashscope
+      embedding: dashscope
+    dashscope:
+      api-key: sk-ce5fe88b18d84a6bb8cddfa6eb5eda54
+      chat:
+        options:
+          model: qwen-plus
+          temperature: 0.3
+          top-p: 0.9
+          max-token: 2000
+      embedding:
+        options:
+          model: text-embedding-v4
 
   mail:
     protocol: smtps
     host: smtp.126.com
     port: 465
     username: buaa_smart_tutor@126.com
-    password: UEkZ7Cm92AxcEUHu
+    password: ${MAIL_PASSWORD}
     default-encoding: UTF-8
     from: buaa_smart_tutor@126.com
     properties:
       mail.smtp.socketFactoryClass: javax.net.ssl.SSLSocketFactory
 
-minio:
+rustfs:
   endpoint: http://localhost:9000
-  accessKey: minioadmin
-  secretKey: minioadmin
+  accessKey: rustfs-access-key
+  secretKey: rustfs-secret-key
   bucketName: uploads
-  publicUrl: http://localhost:9000
+  region: cn-beijing
 
 file:
   parsing:
     chunk-size: 512
     buffer-size: 8192
     max-memory-threshold: 0.8
+    max-upload-bytes: 104857600
+    max-extracted-chars: 800000
+    max-cleaned-chars: 500000
 
 elasticsearch:
   host: localhost
@@ -65,20 +78,6 @@ elasticsearch:
   scheme: http
   index: knowledge
   username: elastic
-
-deepseek:
-  api:
-    url: https://api.deepseek.com/v1
-    model: deepseek-chat
-    key: sk-44adec67fab742ada7df587f5c644918
-
-embedding:
-  api:
-    url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    key: sk-ce5fe88b18d84a6bb8cddfa6eb5eda54
-    model: text-embedding-v4
-    batch-size: 10
-    dimension: 2048
 
 ai:
   prompt:
@@ -95,25 +94,25 @@ ai:
     no-result-text: "（当前未检索到相关资料）"
   generation:
     temperature: 0.3
-    max-tokens: 2000
+    max-token: 2000
     top-p: 0.9
 
 
-kaptcha:
-  image:
-    width: 100
-    height: 40
-  textproducer:
-    font:
-      size: 32
-      color: 0,0,0
-    char:
-      string: 0123456789ABCDEFGHIJKLMNOPQRSTUVMXYZ
-      length: 4
-  noise:
-    impl: com.google.code.kaptcha.impl.NoNoise
-
 rag:
+  ingestion:
+    stream:
+      enabled: true
+      key: rag:stream:document-ingestion
+      group: document-ingestion-group
+      consumer: document-worker-1
+      batch-size: 5
+      block-ms: 1500
+      poll-interval-ms: 500
+      max-retries: 3
+  embedding:
+    batch-size: 10
+    max-retries: 2
+    retry-backoff-ms: 400
   rewrite:
     enabled: true
     variants: 3
@@ -145,20 +144,6 @@ rag:
       1. 评分范围 0.0-1.0，越高越相关
       2. 只输出 “id:score” 每行一条
       3. 不要输出多余解释或符号
-  routing:
-    enabled: true
-    use-llm: false
-    max-tags: 4
-    prompt: |
-      你是检索路由助手，请从用户问题中抽取可能的元数据过滤条件。
-      只输出 JSON，字段如下：
-      {
-        "department": "学院或部门",
-        "docType": "文档类型",
-        "policyYear": "年份",
-        "tags": ["标签1","标签2"]
-      }
-      若无法确定请输出空字符串或空数组，不要输出解释。
   crag:
     enabled: true
     use-llm: true
@@ -182,3 +167,8 @@ rag:
   feedback:
     enabled: true
     max-boost: 0.15
+  semantic-cache:
+    enabled: true
+    min-similarity: 0.92
+    max-entries: 300
+    ttl-minutes: 120

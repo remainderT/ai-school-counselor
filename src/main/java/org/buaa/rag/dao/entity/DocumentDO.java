@@ -28,19 +28,11 @@ public class DocumentDO extends BaseDO {
 
     private long fileSizeBytes;
 
-    private int processingStatus; // 0-处理中 1-已完成
+    private int processingStatus; // 0-待处理 1-处理中 2-已完成 -1-失败
 
     private Long userId;
 
     private String visibility;
-
-    private String docType;
-
-    private String department;
-
-    private String policyYear;
-
-    private String tags;
 
     private LocalDateTime uploadedAt;
 

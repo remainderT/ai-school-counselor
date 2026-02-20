@@ -22,13 +22,11 @@ CREATE TABLE document (
                         md5_hash            VARCHAR(32)      NOT NULL COMMENT '文档MD5哈希值',
                         original_file_name  VARCHAR(255)     NOT NULL COMMENT '原始文件名',
                         file_size_bytes     BIGINT           NOT NULL COMMENT '文件大小（字节）',
-                        processing_status   TINYINT          NOT NULL DEFAULT 0 COMMENT '处理状态：0-处理中，1-已完成',
+                        processing_status   TINYINT          NOT NULL DEFAULT 0 COMMENT '处理状态：0-待处理，1-处理中，2-已完成，-1-失败',
                         user_id             bigint(20)      NOT NULL COMMENT '上传用户标识',
                         visibility          ENUM('private', 'public') NOT NULL COMMENT '可见性',
-                        doc_type            VARCHAR(64)      NULL COMMENT '文档类型：综测/请假/评奖等',
-                        department          VARCHAR(64)      NULL COMMENT '所属学院/部门',
-                        policy_year         VARCHAR(16)      NULL COMMENT '制度/政策年份',
-                        tags                VARCHAR(255)     NULL COMMENT '标签（逗号分隔）',
+                        uploaded_at         DATETIME         DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
+                        processed_at        DATETIME         DEFAULT NULL COMMENT '处理完成时间',
                         `create_time` datetime     DEFAULT NULL COMMENT '创建时间',
                         `update_time` datetime     DEFAULT NULL COMMENT '修改时间',
                         `del_flag`    tinyint(1)   DEFAULT 0 COMMENT '删除标识 0：未删除 1：已删除',
@@ -87,4 +85,3 @@ CREATE TABLE message_feedback (
                         INDEX idx_feedback_message (message_id) COMMENT '消息索引',
                         INDEX idx_feedback_user (user_id) COMMENT '用户索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息反馈表';
-

@@ -14,7 +14,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
-import java.util.Map;
 
 import lombok.RequiredArgsConstructor;
 
@@ -27,12 +26,8 @@ public class DocumentController {
 
     @PostMapping("/upload")
     public Result<Void> upload(@RequestParam("file") MultipartFile uploadedFile,
-                                                        @RequestParam(defaultValue = "PRIVATE") String visibility,
-                                                        @RequestParam(required = false) String department,
-                                                        @RequestParam(required = false) String docType,
-                                                        @RequestParam(required = false) String policyYear,
-                                                        @RequestParam(required = false) String tags) {
-        documentService.upload(uploadedFile, visibility, department, docType, policyYear, tags);
+                               @RequestParam(defaultValue = "PRIVATE") String visibility) {
+        documentService.upload(uploadedFile, visibility);
         return Results.success();
     }
 
@@ -41,7 +36,7 @@ public class DocumentController {
         return Results.success(documentService.list());
     }
 
-    @DeleteMapping("/id}")
+    @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable String id) {
         documentService.delete(id);
         return Results.success();

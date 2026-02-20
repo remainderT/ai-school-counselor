@@ -2,12 +2,13 @@ package org.buaa.rag.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.buaa.rag.common.prompt.PromptTemplateLoader;
 import org.buaa.rag.config.LlmConfiguration;
 import org.buaa.rag.config.RagConfiguration;
 import org.buaa.rag.dto.CragDecision;
 import org.buaa.rag.dto.RetrievalMatch;
-import org.buaa.rag.service.RetrievalPostProcessorService;
 import org.buaa.rag.tool.LlmChat;
+import org.buaa.rag.service.RetrievalPostProcessorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -28,7 +29,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
 
     private static final Logger log = LoggerFactory.getLogger(RetrievalPostProcessorServiceImpl.class);
 
-    private static final String DEFAULT_CRAG_PROMPT = """
+    private static final String DEFAULT_CRAG_PROMPT = PromptTemplateLoader.load("retrieval-crag.st", """
 你是检索质量评估器，请根据问题和候选片段判断是否足以回答。
 只输出 JSON，字段如下：
 {
@@ -36,23 +37,23 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
   "clarifyQuestion": "当需要澄清时给出一句问题"
 }
 如果问题本身模糊返回 CLARIFY；资料不足返回 REFINE 或 NO_ANSWER。
-""";
+""");
 
-    private static final String DEFAULT_CLARIFY_PROMPT = """
+    private static final String DEFAULT_CLARIFY_PROMPT = PromptTemplateLoader.load("retrieval-clarify.st", """
 你是问答助手，请基于用户问题生成一个澄清问题，帮助补充场景信息。
 要求：
 1. 一句话
 2. 不要给出答案
 3. 使用简体中文
-""";
+""");
 
-    private static final String DEFAULT_RERANK_PROMPT = """
+    private static final String DEFAULT_RERANK_PROMPT = PromptTemplateLoader.load("retrieval-rerank.st", """
 你是检索重排助手，请根据用户问题为候选片段打相关度分数。
 要求：
 1. 评分范围 0.0-1.0，越高越相关
 2. 只输出 "id:score" 每行一条
 3. 不要输出多余解释或符号
-""";
+""");
 
     private final LlmChat llmChat;
     private final RagConfiguration ragConfiguration;

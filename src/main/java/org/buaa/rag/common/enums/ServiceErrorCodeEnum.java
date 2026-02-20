@@ -51,7 +51,7 @@ public enum ServiceErrorCodeEnum implements IErrorCode {
 
     ELASTICSEARCH_ERROR("C0101", "Elasticsearch服务异常"),
 
-    MINIO_ERROR("C0102", "MinIO服务异常"),
+    RUSTFS_ERROR("C0102", "RustFS服务异常"),
 
     DEEPSEEK_API_ERROR("C0103", "DeepSeek API异常"),
 

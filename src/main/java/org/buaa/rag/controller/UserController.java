@@ -68,14 +68,6 @@ public class UserController {
     }
 
     /**
-     * 登陆时候获取验证码
-     */
-    @GetMapping("/kaptcha/")
-    public void getKaptcha(HttpServletResponse response) {
-        userService.getKaptcha(response);
-    }
-
-    /**
      * 检查用户是否登录
      */
     @GetMapping("/check-login")

@@ -10,7 +10,6 @@ import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.result.Results;
 
 import com.alibaba.fastjson2.JSON;
-import com.google.common.collect.Lists;
 
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
@@ -28,7 +27,7 @@ import lombok.SneakyThrows;
 @RequiredArgsConstructor
 public class LoginCheckFilter implements Filter {
 
-    private static final List<String> IGNORE_URI = Lists.newArrayList(
+    private static final List<String> IGNORE_URI = List.of(
             "/api/rag/user/login", //登录
             "/api/rag/user/send-code", //注册时发送验证码
             "/api/rag/user/forget-username", //忘记用户名

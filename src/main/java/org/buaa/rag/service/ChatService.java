@@ -28,11 +28,7 @@ public interface ChatService {
      */
     Result<List<RetrievalMatch>> handleSearchRequest(String query,
                                                      int topK,
-                                                     String userId,
-                                                     String department,
-                                                     String docType,
-                                                     String policyYear,
-                                                     String tags);
+                                                     String userId);
 
     /**
      * 处理反馈请求

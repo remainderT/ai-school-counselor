@@ -16,9 +16,10 @@ public class RagConfiguration {
     private Hyde hyde = new Hyde();
     private Fusion fusion = new Fusion();
     private Rerank rerank = new Rerank();
-    private Routing routing = new Routing();
     private Crag crag = new Crag();
     private Feedback feedback = new Feedback();
+    private Decomposition decomposition = new Decomposition();
+    private SemanticCache semanticCache = new SemanticCache();
 
     @Data
     public static class Rewrite {
@@ -50,14 +51,6 @@ public class RagConfiguration {
     }
 
     @Data
-    public static class Routing {
-        private boolean enabled = true;
-        private boolean useLlm = false;
-        private int maxTags = 4;
-        private String prompt;
-    }
-
-    @Data
     public static class Crag {
         private boolean enabled = true;
         private boolean useLlm = true;
@@ -72,5 +65,20 @@ public class RagConfiguration {
     public static class Feedback {
         private boolean enabled = true;
         private double maxBoost = 0.15;
+    }
+
+    @Data
+    public static class Decomposition {
+        private boolean enabled = true;
+        private int maxSubqueries = 3;
+        private String prompt;
+    }
+
+    @Data
+    public static class SemanticCache {
+        private boolean enabled = true;
+        private double minSimilarity = 0.92;
+        private int maxEntries = 300;
+        private long ttlMinutes = 120;
     }
 }

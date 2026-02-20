@@ -21,10 +21,6 @@ const fileNameDisplay = document.getElementById('file-name-display');
 const fileNameText = document.getElementById('file-name-text');
 const uploadStatus = document.getElementById('upload-status');
 const uploadVisibility = document.getElementById('upload-visibility');
-const uploadDepartment = document.getElementById('upload-department');
-const uploadDocType = document.getElementById('upload-doc-type');
-const uploadPolicyYear = document.getElementById('upload-policy-year');
-const uploadTags = document.getElementById('upload-tags');
 
 const docTableBody = document.getElementById('doc-table-body');
 const docSearchInput = document.getElementById('doc-search-input');
@@ -196,18 +192,6 @@ if (hasUpload) {
             if (uploadVisibility?.value) {
                 formData.append('visibility', uploadVisibility.value);
             }
-            if (uploadDepartment?.value) {
-                formData.append('department', uploadDepartment.value);
-            }
-            if (uploadDocType?.value) {
-                formData.append('docType', uploadDocType.value);
-            }
-            if (uploadPolicyYear?.value) {
-                formData.append('policyYear', uploadPolicyYear.value);
-            }
-            if (uploadTags?.value) {
-                formData.append('tags', uploadTags.value);
-            }
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 60000);
@@ -243,18 +227,6 @@ if (hasUpload) {
                 }
                 if (uploadVisibility) {
                     uploadVisibility.value = 'PRIVATE';
-                }
-                if (uploadDepartment) {
-                    uploadDepartment.value = '';
-                }
-                if (uploadDocType) {
-                    uploadDocType.value = '';
-                }
-                if (uploadPolicyYear) {
-                    uploadPolicyYear.value = '';
-                }
-                if (uploadTags) {
-                    uploadTags.value = '';
                 }
 
                 // 延迟关闭模态框并刷新列表

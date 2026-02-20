@@ -54,9 +54,4 @@ public interface UserService extends IService<UserDO> {
      */
     void update(UserUpdateReqDTO requestParam);
 
-    /**
-     * 登陆时候获取图片验证码
-     */
-    void getKaptcha(HttpServletResponse response);
-
 }

@@ -1,6 +1,5 @@
 package org.buaa.rag.service;
 
-import org.buaa.rag.dto.MetadataFilter;
 import org.buaa.rag.dto.RetrievalMatch;
 
 import java.util.List;
@@ -31,17 +30,6 @@ public interface SmartRetrieverService {
     List<RetrievalMatch> retrieve(String queryText, int topK, String userId);
 
     /**
-     * 执行混合检索（带权限和元数据过滤）
-     *
-     * @param queryText 查询文本
-     * @param topK 返回结果数量
-     * @param userId 用户标识
-     * @param filter 元数据过滤条件
-     * @return 检索匹配结果列表
-     */
-    List<RetrievalMatch> retrieve(String queryText, int topK, String userId, MetadataFilter filter);
-
-    /**
      * 向量检索（仅向量召回）
      *
      * @param queryText 查询文本
@@ -52,20 +40,11 @@ public interface SmartRetrieverService {
     List<RetrievalMatch> retrieveVectorOnly(String queryText, int topK, String userId);
 
     /**
-     * 向量检索（仅向量召回，带元数据过滤）
-     */
-    List<RetrievalMatch> retrieveVectorOnly(String queryText,
-                                           int topK,
-                                           String userId,
-                                           MetadataFilter filter);
-
-    /**
      * 纯文本检索（显式使用）
      */
     List<RetrievalMatch> retrieveTextOnly(String queryText,
                                          int topK,
-                                         String userId,
-                                         MetadataFilter filter);
+                                         String userId);
 
     /**
      * 记录用户反馈

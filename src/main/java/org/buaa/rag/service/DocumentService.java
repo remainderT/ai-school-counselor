@@ -1,11 +1,9 @@
 package org.buaa.rag.service;
 
-import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 文档服务接口
@@ -16,11 +14,7 @@ public interface DocumentService {
      * 上传文档
      */
     void upload(MultipartFile file,
-                                       String visibility,
-                                       String department,
-                                       String docType,
-                                       String policyYear,
-                                       String tags);
+                String visibility);
 
     /**
      * 列出用户的文档
@@ -33,7 +27,7 @@ public interface DocumentService {
     void delete(String id);
 
     /**
-     * 异步摄取文档
+     * 处理文档摄取任务
      */
-    void ingestDocumentAsync(String documentMd5, String originalFileName);
+    void ingestDocumentTask(String documentMd5, String originalFileName);
 }

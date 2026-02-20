@@ -3,20 +3,22 @@ package org.buaa.rag.service.impl;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.buaa.rag.config.RagConfiguration;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.IndexedContentDO;
 import org.buaa.rag.dao.entity.MessageFeedbackDO;
+import org.buaa.rag.dao.entity.MessageSourceDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.MessageFeedbackMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
-import org.buaa.rag.dto.MetadataFilter;
 import org.buaa.rag.dto.RetrievalMatch;
 import org.buaa.rag.service.SmartRetrieverService;
 import org.buaa.rag.tool.VectorEncoding;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -35,6 +37,7 @@ import java.util.stream.Collectors;
  * 结合向量检索和文本匹配的混合搜索策略
  */
 @Service
+@RequiredArgsConstructor
 public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
     private static final Logger log = LoggerFactory.getLogger(SmartRetrieverServiceImpl.class);
@@ -43,23 +46,12 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     @Value("${elasticsearch.index:knowledge_base}")
     private String knowledgeIndex;
 
-    @Autowired
-    private ElasticsearchClient esClient;
-
-    @Autowired
-    private VectorEncoding encodingService;
-
-    @Autowired
-    private DocumentMapper documentMapper;
-
-    @Autowired
-    private RagConfiguration ragConfiguration;
-
-    @Autowired
-    private MessageFeedbackMapper feedbackRepository;
-
-    @Autowired
-    private MessageSourceMapper sourceRepository;
+    private final ElasticsearchClient esClient;
+    private final VectorEncoding encodingService;
+    private final DocumentMapper documentMapper;
+    private final RagConfiguration ragConfiguration;
+    private final MessageFeedbackMapper feedbackRepository;
+    private final MessageSourceMapper sourceRepository;
 
     @Override
     public List<RetrievalMatch> retrieve(String queryText, int topK) {
@@ -68,11 +60,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
     @Override
     public List<RetrievalMatch> retrieve(String queryText, int topK, String userId) {
-        return retrieve(queryText, topK, userId, null);
-    }
-
-    @Override
-    public List<RetrievalMatch> retrieve(String queryText, int topK, String userId, MetadataFilter filter) {
         try {
             log.debug("执行混合检索 - 查询: {}, K值: {}", queryText, topK);
 
@@ -82,13 +69,13 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             // 向量生成失败则降级到纯文本检索
             if (queryVector == null) {
                 log.warn("向量生成失败，降级为纯文本检索");
-                return performTextOnlyRetrieval(queryText, topK, userId, filter);
+                return performTextOnlyRetrieval(queryText, topK, userId);
             }
 
             // 执行混合检索
             List<RetrievalMatch> matches = performHybridRetrieval(queryText, queryVector, topK);
             
-            return filterAndEnrichMatches(matches, userId, topK, filter);
+            return filterAndEnrichMatches(matches, userId, topK);
         } catch (Exception e) {
             if (isIndexMissing(e)) {
                 log.warn("索引 {} 不存在，返回空结果", knowledgeIndex);
@@ -101,14 +88,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
     @Override
     public List<RetrievalMatch> retrieveVectorOnly(String queryText, int topK, String userId) {
-        return retrieveVectorOnly(queryText, topK, userId, null);
-    }
-
-    @Override
-    public List<RetrievalMatch> retrieveVectorOnly(String queryText,
-                                                   int topK,
-                                                   String userId,
-                                                   MetadataFilter filter) {
         try {
             List<Float> vector = generateQueryVector(queryText);
             if (vector == null) {
@@ -138,7 +117,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                 ))
                 .collect(Collectors.toList());
 
-            return filterAndEnrichMatches(results, userId, topK, filter);
+            return filterAndEnrichMatches(results, userId, topK);
         } catch (Exception e) {
             if (isIndexMissing(e)) {
                 log.warn("索引 {} 不存在，向量检索返回空结果", knowledgeIndex);
@@ -152,10 +131,9 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     @Override
     public List<RetrievalMatch> retrieveTextOnly(String queryText,
                                                  int topK,
-                                                 String userId,
-                                                 MetadataFilter filter) {
+                                                 String userId) {
         try {
-            return performTextOnlyRetrieval(queryText, topK, userId, filter);
+            return performTextOnlyRetrieval(queryText, topK, userId);
         } catch (Exception e) {
             if (isIndexMissing(e)) {
                 log.warn("索引 {} 不存在，文本检索返回空结果", knowledgeIndex);
@@ -170,10 +148,18 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     public void recordFeedback(Long messageId, String userId, int score, String comment) {
         MessageFeedbackDO feedback = new MessageFeedbackDO();
         feedback.setMessageId(messageId);
-        feedback.setUserId(userId);
+        feedback.setUserId(parseUserId(userId));
         feedback.setScore(score);
         feedback.setComment(comment);
         feedbackRepository.insert(feedback);
+    }
+
+    private Long parseUserId(String userId) {
+        try {
+            return userId == null ? null : Long.valueOf(userId);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /**
@@ -265,8 +251,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
      */
     private List<RetrievalMatch> performTextOnlyRetrieval(String query,
                                                           int topK,
-                                                          String userId,
-                                                          MetadataFilter filter)
+                                                          String userId)
             throws Exception {
         try {
             SearchResponse<IndexedContentDO> response = esClient.search(searchBuilder ->
@@ -292,7 +277,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                 ))
                 .collect(Collectors.toList());
             
-            return filterAndEnrichMatches(results, userId, topK, filter);
+            return filterAndEnrichMatches(results, userId, topK);
         } catch (Exception e) {
             if (isIndexMissing(e)) {
                 log.warn("索引 {} 不存在，文本检索返回空结果", knowledgeIndex);
@@ -326,41 +311,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     }
 
     /**
-     * 为检索结果补充文件名
-     */
-    private void enrichWithFileNames(List<RetrievalMatch> matches) {
-        if (matches == null || matches.isEmpty()) {
-            return;
-        }
-        
-        try {
-            // 收集所有MD5
-            Set<String> md5Set = matches.stream()
-                .map(RetrievalMatch::getFileMd5)
-                .collect(Collectors.toSet());
-            
-            // 批量查询文件信息
-            List<DocumentDO> documentDOS = documentMapper.findByMd5HashIn(
-                new ArrayList<>(md5Set)
-            );
-
-            // 构建MD5到文件名的映射
-            Map<String, String> md5ToFileName = documentDOS.stream()
-                .collect(Collectors.toMap(
-                    DocumentDO::getMd5Hash,
-                    DocumentDO::getOriginalFileName
-                ));
-            
-            // 填充文件名
-            matches.forEach(match -> 
-                match.setSourceFileName(md5ToFileName.get(match.getFileMd5()))
-            );
-        } catch (Exception e) {
-            log.error("补充文件名失败", e);
-        }
-    }
-
-    /**
      * 权限过滤
      */
     private List<RetrievalMatch> filterMatchesByAccess(List<RetrievalMatch> matches,
@@ -386,8 +336,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
     private List<RetrievalMatch> filterAndEnrichMatches(List<RetrievalMatch> matches,
                                                         String userId,
-                                                        int topK,
-                                                        MetadataFilter filter) {
+                                                        int topK) {
         if (matches == null || matches.isEmpty()) {
             return Collections.emptyList();
         }
@@ -403,9 +352,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         for (RetrievalMatch match : accessFiltered) {
             DocumentDO record = recordMap.get(match.getFileMd5());
             if (record == null) {
-                continue;
-            }
-            if (!matchesMetadata(record, filter)) {
                 continue;
             }
             match.setSourceFileName(record.getOriginalFileName());
@@ -431,8 +377,8 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     private Set<String> resolveAccessibleDocuments(String userId) {
         Set<String> md5Set = new HashSet<>();
 
-        md5Set.addAll(documentMapper.findMd5HashByVisibility("PUBLIC"));
-        md5Set.addAll(documentMapper.findMd5HashByOwnerId(userId));
+        md5Set.addAll(loadMd5ByVisibility("public"));
+        md5Set.addAll(loadMd5ByOwnerId(userId));
 
         return md5Set;
     }
@@ -448,82 +394,17 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         Set<String> md5Set = matches.stream()
             .map(RetrievalMatch::getFileMd5)
             .collect(Collectors.toSet());
-        List<DocumentDO> documentDOS = documentMapper.findByMd5HashIn(new ArrayList<>(md5Set));
+        if (md5Set.isEmpty()) {
+            return Map.of();
+        }
+        LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
+            .in(DocumentDO::getMd5Hash, md5Set);
+        List<DocumentDO> documentDOS = documentMapper.selectList(queryWrapper);
+        if (documentDOS == null || documentDOS.isEmpty()) {
+            return Map.of();
+        }
         return documentDOS.stream()
             .collect(Collectors.toMap(DocumentDO::getMd5Hash, doc -> doc));
-    }
-
-    private boolean matchesMetadata(DocumentDO record, MetadataFilter filter) {
-        if (filter == null || filter.isEmpty()) {
-            return true;
-        }
-        if (!matchesField(record.getDepartment(), filter.getDepartment())) {
-            return false;
-        }
-        if (!matchesField(record.getDocType(), filter.getDocType())) {
-            return false;
-        }
-        if (!matchesField(record.getPolicyYear(), filter.getPolicyYear())) {
-            return false;
-        }
-        List<String> tags = parseTags(record.getTags());
-        List<String> filterTags = filter.normalizedTags();
-        if (!filterTags.isEmpty() && tags.isEmpty()) {
-            return false;
-        }
-        if (!filterTags.isEmpty()) {
-            boolean anyMatch = false;
-            for (String filterTag : filterTags) {
-                if (matchesToken(tags, filterTag)) {
-                    anyMatch = true;
-                    break;
-                }
-            }
-            if (!anyMatch) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean matchesField(String value, String expected) {
-        if (expected == null || expected.isBlank()) {
-            return true;
-        }
-        if (value == null || value.isBlank()) {
-            return false;
-        }
-        String normalizedValue = value.trim().toLowerCase(Locale.ROOT);
-        String normalizedExpected = expected.trim().toLowerCase(Locale.ROOT);
-        return normalizedValue.contains(normalizedExpected);
-    }
-
-    private List<String> parseTags(String tags) {
-        if (tags == null || tags.isBlank()) {
-            return Collections.emptyList();
-        }
-        String[] parts = tags.split("[,，;；]");
-        List<String> results = new ArrayList<>();
-        for (String part : parts) {
-            String trimmed = part.trim();
-            if (!trimmed.isEmpty()) {
-                results.add(trimmed.toLowerCase(Locale.ROOT));
-            }
-        }
-        return results;
-    }
-
-    private boolean matchesToken(List<String> tokens, String expected) {
-        if (expected == null || expected.isBlank()) {
-            return true;
-        }
-        String normalized = expected.trim().toLowerCase(Locale.ROOT);
-        for (String token : tokens) {
-            if (token.contains(normalized)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private boolean isIndexMissing(Throwable error) {
@@ -573,24 +454,99 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         if (md5Set == null || md5Set.isEmpty()) {
             return Map.of();
         }
-        List<Object[]> rows = sourceRepository.findAverageScoreByDocumentMd5In(md5Set);
+
+        LambdaQueryWrapper<MessageSourceDO> sourceQuery = Wrappers.lambdaQuery(MessageSourceDO.class)
+            .in(MessageSourceDO::getDocumentMd5, md5Set)
+            .select(MessageSourceDO::getMessageId, MessageSourceDO::getDocumentMd5);
+        List<MessageSourceDO> sourceRows = sourceRepository.selectList(sourceQuery);
+        if (sourceRows == null || sourceRows.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, List<String>> messageToDocuments = new HashMap<>();
+        Set<Long> messageIds = new HashSet<>();
+        for (MessageSourceDO sourceRow : sourceRows) {
+            if (sourceRow == null || sourceRow.getMessageId() == null || sourceRow.getDocumentMd5() == null) {
+                continue;
+            }
+            Long messageId = sourceRow.getMessageId();
+            messageIds.add(messageId);
+            messageToDocuments
+                .computeIfAbsent(messageId, key -> new ArrayList<>())
+                .add(sourceRow.getDocumentMd5());
+        }
+        if (messageIds.isEmpty()) {
+            return Map.of();
+        }
+
+        LambdaQueryWrapper<MessageFeedbackDO> feedbackQuery = Wrappers.lambdaQuery(MessageFeedbackDO.class)
+            .in(MessageFeedbackDO::getMessageId, messageIds)
+            .select(MessageFeedbackDO::getMessageId, MessageFeedbackDO::getScore);
+        List<MessageFeedbackDO> feedbackRows = feedbackRepository.selectList(feedbackQuery);
+        if (feedbackRows == null || feedbackRows.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, double[]> scoreAccumulator = new HashMap<>();
+        for (MessageFeedbackDO feedbackRow : feedbackRows) {
+            if (feedbackRow == null || feedbackRow.getMessageId() == null || feedbackRow.getScore() == null) {
+                continue;
+            }
+            List<String> documents = messageToDocuments.get(feedbackRow.getMessageId());
+            if (documents == null || documents.isEmpty()) {
+                continue;
+            }
+            for (String documentMd5 : documents) {
+                double[] stats = scoreAccumulator.computeIfAbsent(documentMd5, key -> new double[2]);
+                stats[0] += feedbackRow.getScore();
+                stats[1] += 1;
+            }
+        }
+
         Map<String, Double> boostMap = new HashMap<>();
-        for (Object[] row : rows) {
-            if (row == null || row.length < 2) {
+        for (Map.Entry<String, double[]> entry : scoreAccumulator.entrySet()) {
+            String md5 = entry.getKey();
+            double[] stats = entry.getValue();
+            if (md5 == null || stats == null || stats[1] <= 0) {
                 continue;
             }
-            String md5 = row[0] != null ? row[0].toString() : null;
-            if (md5 == null) {
-                continue;
-            }
-            Double avgScore = row[1] instanceof Number ? ((Number) row[1]).doubleValue() : null;
-            if (avgScore == null) {
-                continue;
-            }
+            double avgScore = stats[0] / stats[1];
             double centered = (avgScore - 3.0) / 2.0;
             double boost = Math.max(-maxBoost, Math.min(maxBoost, centered * maxBoost));
             boostMap.put(md5, boost);
         }
         return boostMap;
+    }
+
+    private List<String> loadMd5ByVisibility(String visibility) {
+        LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
+            .eq(DocumentDO::getVisibility, visibility)
+            .select(DocumentDO::getMd5Hash);
+        List<DocumentDO> rows = documentMapper.selectList(queryWrapper);
+        if (rows == null || rows.isEmpty()) {
+            return List.of();
+        }
+        return rows.stream()
+            .map(DocumentDO::getMd5Hash)
+            .filter(md5 -> md5 != null && !md5.isBlank())
+            .toList();
+    }
+
+    private List<String> loadMd5ByOwnerId(String userId) {
+        Long ownerId = parseUserId(userId);
+        if (ownerId == null) {
+            return List.of();
+        }
+        LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
+            .eq(DocumentDO::getUserId, ownerId)
+            .select(DocumentDO::getMd5Hash);
+        List<DocumentDO> rows = documentMapper.selectList(queryWrapper);
+        if (rows == null || rows.isEmpty()) {
+            return List.of();
+        }
+        return rows.stream()
+            .map(DocumentDO::getMd5Hash)
+            .filter(md5 -> md5 != null && !md5.isBlank())
+            .toList();
     }
 }
