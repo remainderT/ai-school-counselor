@@ -1,5 +1,6 @@
-DROP DATABASE IF EXISTS rag;
-CREATE DATABASE rag  DEFAULT CHARACTER SET utf8mb4;
+DROP DATABASE IF EXISTS ai_school_conselor;
+CREATE DATABASE ai_school_conselor  DEFAULT CHARACTER SET utf8mb4;
+use ai_school_conselor;
 
 DROP TABLE IF EXISTS `user`;
 CREATE TABLE `user` (
@@ -13,7 +14,8 @@ CREATE TABLE `user` (
                         `update_time` datetime     DEFAULT NULL COMMENT '修改时间',
                         `del_flag`    tinyint(1)   DEFAULT 0 COMMENT '删除标识 0：未删除 1：已删除',
                         PRIMARY KEY (`id`),
-                        UNIQUE KEY uk_mail (mail)
+                        UNIQUE KEY uk_mail (mail),
+                        UNIQUE KEY uk_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
 
 DROP TABLE IF EXISTS document;
@@ -25,7 +27,6 @@ CREATE TABLE document (
                         processing_status   TINYINT          NOT NULL DEFAULT 0 COMMENT '处理状态：0-待处理，1-处理中，2-已完成，-1-失败',
                         user_id             bigint(20)      NOT NULL COMMENT '上传用户标识',
                         visibility          ENUM('private', 'public') NOT NULL COMMENT '可见性',
-                        uploaded_at         DATETIME         DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
                         processed_at        DATETIME         DEFAULT NULL COMMENT '处理完成时间',
                         `create_time` datetime     DEFAULT NULL COMMENT '创建时间',
                         `update_time` datetime     DEFAULT NULL COMMENT '修改时间',

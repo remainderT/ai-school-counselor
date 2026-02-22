@@ -13,13 +13,15 @@ public enum UserErrorCodeEnum implements IErrorCode {
 
     USER_MAIL_EXIST("A000103", "邮箱已被注册"),
 
-    USER_LOGIN_KAPTCHA_ERROR("A000201", "用户登录验证码错误"),
+    USER_NAME_EXIST("A000104", "用户名已被注册"),
 
-    USER_PASSWORD_ERROR("A000202", "密码错误"),
+    USER_PASSWORD_ERROR("A000201", "密码错误"),
 
-    USER_REPEATED_LOGIN("A000203", "重复登录"),
+    USER_REPEATED_LOGIN("A000202", "重复登录"),
 
-    USER_TOKEN_NULL("A000204", "用户未登录"),
+    USER_TOKEN_NULL("A000203", "用户未登录"),
+
+    USER_TOKEN_ERROR("A000204", "登陆token错误"),
 
     USER_UPDATE_ERROR("A000302", "用户信息更新失败");
 

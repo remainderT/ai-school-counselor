@@ -49,11 +49,11 @@ public class UserController {
     }
 
     /**
-     * 根据邮箱查找用户信息
+     * 根据用户名查找用户信息
      */
-    @GetMapping("/{mail}")
-    public Result<UserRespDTO> getUserByMail(@PathVariable("mail") String mail) {
-        return Results.success(userService.getUserByMail(mail));
+    @GetMapping("/info/{username}")
+    public Result<UserRespDTO> getUserInfo(@PathVariable String username) {
+        return Results.success(userService.getUserInfo(username));
     }
 
     /**

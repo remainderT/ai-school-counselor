@@ -26,12 +26,17 @@ public interface UserService extends IService<UserDO> {
     /**
      * 根据邮箱查询用户信息
      */
-    UserRespDTO getUserByMail(String mail);
+    UserRespDTO getUserInfo(String username);
 
     /**
      *  查询邮箱是否已注册
      */
     Boolean hasMail(String email);
+
+    /**
+     *  查询用户名是否已存在
+     */
+    Boolean hasUsername(String username);
 
     /**
      * 用户登录

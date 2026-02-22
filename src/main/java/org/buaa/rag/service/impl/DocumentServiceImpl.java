@@ -1,10 +1,17 @@
 package org.buaa.rag.service.impl;
 
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_ACCESS_CONTROL_ERROR;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_NULL;
-import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.FILE_PARSE_FAILED;
-import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.FILE_UPLOAD_FAILED;
+import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_EXISTS;
+import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_MIME_FAILED;
+import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_NOT_EXISTS;
+import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_PARSE_FAILED;
+import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_UPLOAD_FAILED;
+import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_UPLOAD_NULL;
 import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.STORAGE_SERVICE_ERROR;
+import static org.buaa.rag.common.enums.UploadStatusEnum.COMPLETED;
+import static org.buaa.rag.common.enums.UploadStatusEnum.FAILED;
+import static org.buaa.rag.common.enums.UploadStatusEnum.PENDING;
+import static org.buaa.rag.common.enums.UploadStatusEnum.PROCESSING;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,6 +25,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.tika.Tika;
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.extractor.EmbeddedDocumentExtractor;
 import org.apache.tika.metadata.Metadata;
@@ -33,11 +41,10 @@ import org.buaa.rag.dao.entity.TextSegmentDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.TextSegmentMapper;
 import org.buaa.rag.dto.ContentFragment;
-import org.buaa.rag.service.ContentTypeDetectionService;
 import org.buaa.rag.service.DocumentService;
-import org.buaa.rag.service.FileValidationService;
 import org.buaa.rag.service.TextCleaningService;
 import org.buaa.rag.service.ingestion.DocumentIngestionStreamProducer;
+import org.buaa.rag.tool.FileTypeValidate;
 import org.buaa.rag.tool.RustfsStorage;
 import org.buaa.rag.tool.VectorEncoding;
 import org.springframework.beans.factory.annotation.Value;
@@ -74,11 +81,6 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private static final String DEFAULT_VISIBILITY = "private";
     private static final String MODEL_VERSION = "text-embedding-v4";
 
-    private static final int STATUS_PENDING = 0;
-    private static final int STATUS_PROCESSING = 1;
-    private static final int STATUS_COMPLETED = 2;
-    private static final int STATUS_FAILED = -1;
-
     private static final Set<String> PUBLIC_VISIBILITY = Set.of("public", "private");
 
     private final VectorEncoding encodingService;
@@ -86,8 +88,6 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final TextSegmentMapper segmentRepository;
     private final RustfsStorage storagePort;
     private final DocumentIngestionStreamProducer ingestionStreamProducer;
-    private final FileValidationService fileValidationService;
-    private final ContentTypeDetectionService contentTypeDetectionService;
     private final TextCleaningService textCleaningService;
 
     @Value("${rustfs.bucketName}")
@@ -114,17 +114,33 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     @Value("${rag.embedding.retry-backoff-ms:400}")
     private long embeddingRetryBackoffMs;
 
+    private final Tika tika = new Tika();
+
     @Override
     public void upload(MultipartFile file, String visibility) {
-        String originalFilename = file == null ? null : file.getOriginalFilename();
-        String detectedMimeType = contentTypeDetectionService.detect(file, originalFilename);
-        fileValidationService.validate(file, originalFilename, detectedMimeType);
+        if (file == null || file.isEmpty()) {
+            throw new ClientException(DOCUMENT_UPLOAD_NULL);
+        }
+        String originalFilename = file.getOriginalFilename();
+        // 基于文件内容检测 MIME 类型
+        String mimeType = "";
+
+        try (InputStream inputStream = file.getInputStream()) {
+            mimeType = tika.detect(inputStream, originalFilename);
+        } catch (IOException e) {
+            log.warn("MIME 检测失败: {}", e.getMessage());
+            throw new ServiceException(DOCUMENT_MIME_FAILED);
+        }
+
+
+
+        FileTypeValidate.validate(file, originalFilename, mimeType);
 
         String md5Hash;
         try {
             md5Hash = DigestUtils.md5Hex(file.getInputStream());
         } catch (IOException ex) {
-            throw new ServiceException("文件读取失败: " + ex.getMessage(), ex, FILE_UPLOAD_FAILED);
+            throw new ServiceException("文档解析失败: " + ex.getMessage(), ex, DOCUMENT_PARSE_FAILED);
         }
 
         LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
@@ -132,17 +148,17 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             .eq(DocumentDO::getUserId, UserContext.getUserId());
         DocumentDO existingDoc = baseMapper.selectOne(queryWrapper);
         if (existingDoc != null) {
-            throw new ClientException("文件已存在，请勿重复上传", FILE_UPLOAD_FAILED);
+            throw new ClientException(DOCUMENT_EXISTS);
         }
 
         try {
-            storeFileToRustfs(file, originalFilename, md5Hash, detectedMimeType);
+            storeFileToRustfs(file, originalFilename, md5Hash, mimeType);
 
             DocumentDO record = new DocumentDO();
             record.setMd5Hash(md5Hash);
             record.setOriginalFileName(originalFilename);
             record.setFileSizeBytes(file.getSize());
-            record.setProcessingStatus(STATUS_PENDING);
+            record.setProcessingStatus(PENDING.getCode());
             record.setVisibility(normalizeVisibility(visibility));
             record.setUserId(UserContext.getUserId());
             record.setProcessedAt(null);
@@ -153,7 +169,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw e;
         } catch (Exception e) {
             markFailed(md5Hash, "文件上传失败", e);
-            throw new ServiceException("文件上传失败: " + e.getMessage(), e, FILE_UPLOAD_FAILED);
+            throw new ServiceException("文件上传失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
         }
     }
 
@@ -169,7 +185,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     public void delete(String id) {
         DocumentDO documentDO = baseMapper.selectById(id);
         if (documentDO == null || documentDO.getDelFlag() != 0) {
-            throw new ClientException(DOCUMENT_NULL);
+            throw new ClientException(DOCUMENT_NOT_EXISTS);
         }
         if (!documentDO.getUserId().equals(UserContext.getUserId())) {
             throw new ClientException(DOCUMENT_ACCESS_CONTROL_ERROR);
@@ -207,7 +223,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             log.info("文档摄取完成: {}", documentMd5);
         } catch (Exception e) {
             markFailed(documentMd5, "文档摄取失败", e);
-            throw new ServiceException("文档摄取失败: " + e.getMessage(), e, FILE_PARSE_FAILED);
+            throw new ServiceException("文档摄取失败: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
         }
     }
 
@@ -434,7 +450,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         if (record == null) {
             return false;
         }
-        record.setProcessingStatus(STATUS_PROCESSING);
+        record.setProcessingStatus(PROCESSING.getCode());
         record.setProcessedAt(null);
         baseMapper.updateById(record);
         return true;
@@ -445,7 +461,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         if (record == null) {
             return;
         }
-        record.setProcessingStatus(STATUS_COMPLETED);
+        record.setProcessingStatus(COMPLETED.getCode());
         record.setProcessedAt(LocalDateTime.now());
         baseMapper.updateById(record);
     }
@@ -462,7 +478,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         if (record == null) {
             return;
         }
-        record.setProcessingStatus(STATUS_FAILED);
+        record.setProcessingStatus(FAILED.getCode());
         record.setProcessedAt(LocalDateTime.now());
         baseMapper.updateById(record);
     }
@@ -485,13 +501,13 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             String extractedText = performTextExtraction(inputStream);
             String cleanedText = textCleaningService.clean(extractedText, maxCleanedChars);
             if (!StringUtils.hasText(cleanedText)) {
-                throw new ServiceException("文档内容为空或不可解析", FILE_PARSE_FAILED);
+                throw new ServiceException("文档内容为空或不可解析", DOCUMENT_PARSE_FAILED);
             }
             log.info("文本提取成功，字符数: {}", cleanedText.length());
 
             List<String> textChunks = performIntelligentSegmentation(cleanedText);
             if (textChunks.isEmpty()) {
-                throw new ServiceException("文档切分后为空", FILE_PARSE_FAILED);
+                throw new ServiceException("文档切分后为空", DOCUMENT_PARSE_FAILED);
             }
             log.info("文本分块完成，片段数: {}", textChunks.size());
 
@@ -501,7 +517,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
 
         } catch (SAXException e) {
             log.error("文档解析失败: {}", documentMd5, e);
-            throw new ServiceException("文档解析错误", e, FILE_PARSE_FAILED);
+            throw new ServiceException("文档解析错误", e, DOCUMENT_PARSE_FAILED);
         }
     }
 
@@ -601,13 +617,13 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
 
         for (String sentence : sentences) {
             if (sentence.length() > maxChunkSize) {
-                if (currentChunk.length() > 0) {
+                if (!currentChunk.isEmpty()) {
                     subChunks.add(currentChunk.toString().trim());
                     currentChunk.setLength(0);
                 }
                 subChunks.addAll(subdivideOverlongSentence(sentence));
             } else if (currentChunk.length() + sentence.length() > maxChunkSize) {
-                if (currentChunk.length() > 0) {
+                if (!currentChunk.isEmpty()) {
                     subChunks.add(currentChunk.toString().trim());
                     currentChunk.setLength(0);
                 }
@@ -617,7 +633,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             }
         }
 
-        if (currentChunk.length() > 0) {
+        if (!currentChunk.isEmpty()) {
             subChunks.add(currentChunk.toString().trim());
         }
 
@@ -644,7 +660,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
                 wordBuilder.append(word);
             }
 
-            if (wordBuilder.length() > 0) {
+            if (!wordBuilder.isEmpty()) {
                 wordChunks.add(wordBuilder.toString());
             }
 

@@ -4,8 +4,6 @@ import java.util.List;
 import java.util.Map;
 
 import org.buaa.rag.common.convention.result.Result;
-import org.buaa.rag.common.limit.LimitScope;
-import org.buaa.rag.common.limit.RateLimit;
 import org.buaa.rag.dto.FeedbackRequest;
 import org.buaa.rag.dto.RetrievalMatch;
 import org.buaa.rag.service.ChatService;
@@ -29,17 +27,11 @@ public class ChatController {
     }
 
     @PostMapping("/chat")
-    @RateLimit(key = "rag:chat:sync", scope = LimitScope.GLOBAL, maxRequests = 180, windowSeconds = 60)
-    @RateLimit(key = "rag:chat:sync", scope = LimitScope.IP, maxRequests = 45, windowSeconds = 60)
-    @RateLimit(key = "rag:chat:sync", scope = LimitScope.USER, maxRequests = 30, windowSeconds = 60)
     public Result<Map<String, Object>> handleChatRequest(@RequestBody Map<String, String> payload) {
         return chatService.handleChatRequest(payload);
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    @RateLimit(key = "rag:chat:stream", scope = LimitScope.GLOBAL, maxRequests = 300, windowSeconds = 60)
-    @RateLimit(key = "rag:chat:stream", scope = LimitScope.IP, maxRequests = 80, windowSeconds = 60)
-    @RateLimit(key = "rag:chat:stream", scope = LimitScope.USER, maxRequests = 50, windowSeconds = 60)
     public SseEmitter handleChatStream(@RequestParam String message,
                                        @RequestParam(defaultValue = "anonymous") String userId) {
         return chatService.handleChatStream(message, userId);

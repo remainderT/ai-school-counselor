@@ -37,35 +37,34 @@ public class RefreshTokenFilter implements Filter {
 
     @SneakyThrows
     @Override
-    public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain filterChain) throws IOException,
-            ServletException {
+    public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain filterChain) throws IOException, ServletException {
         HttpServletRequest httpServletRequest = (HttpServletRequest) servletRequest;
-        String mail = httpServletRequest.getHeader("mail");
+        String username = httpServletRequest.getHeader("username");
         String token = httpServletRequest.getHeader("token");
-        if (StrUtil.isBlank(token) || StrUtil.isBlank(mail)) {
+        if (StrUtil.isBlank(token) || StrUtil.isBlank(username)) {
             filterChain.doFilter(servletRequest, servletResponse);
             return;
         }
-        String hasLogin = stringRedisTemplate.opsForValue().get(USER_LOGIN_KEY + mail);
+        String hasLogin = stringRedisTemplate.opsForValue().get(USER_LOGIN_KEY + username);
         if (StrUtil.isBlank(hasLogin) || !Objects.equals(hasLogin, token)) {
             filterChain.doFilter(servletRequest, servletResponse);
             return;
         }
-        UserDO userDO = JSON.parseObject(stringRedisTemplate.opsForValue().get(USER_INFO_KEY + mail), UserDO.class);
+        UserDO userDO = JSON.parseObject(stringRedisTemplate.opsForValue().get(USER_INFO_KEY + username), UserDO.class);
         if (userDO == null) {
-            userDO = userMapper.selectOne(new QueryWrapper<UserDO>().eq("mail", mail));
-            stringRedisTemplate.opsForValue().set(USER_INFO_KEY + mail, JSON.toJSONString(userDO), USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
+            userDO = userMapper.selectOne(new QueryWrapper<UserDO>().eq("username", username));
+            stringRedisTemplate.opsForValue().set(USER_INFO_KEY + username, JSON.toJSONString(userDO), USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
         }
-        UserInfoDTO userInfoDTO = UserInfoDTO.builder().
-                userId(String.valueOf(userDO.getId())).
-                username(userDO.getUsername()).
-                mail(userDO.getMail()).
-                salt(userDO.getSalt()).
-                token(token).
-                build();
+        UserInfoDTO userInfoDTO = UserInfoDTO.builder()
+                .userId(String.valueOf(userDO.getId()))
+                .username(userDO.getUsername())
+                .mail(userDO.getMail())
+                .salt(userDO.getSalt())
+                .token(token)
+                .build();
         UserContext.setUser(userInfoDTO);
 
-        stringRedisTemplate.expire(USER_LOGIN_KEY + mail, USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
+        stringRedisTemplate.expire(USER_LOGIN_KEY + username, USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
 
         try {
             filterChain.doFilter(servletRequest, servletResponse);

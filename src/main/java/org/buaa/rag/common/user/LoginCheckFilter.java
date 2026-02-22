@@ -1,16 +1,22 @@
 package org.buaa.rag.common.user;
 
+import static org.buaa.rag.common.consts.CacheConstants.USER_INFO_KEY;
+import static org.buaa.rag.common.consts.CacheConstants.USER_LOGIN_KEY;
+import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_TOKEN_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_TOKEN_NULL;
 
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.List;
+import java.util.Objects;
 
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.result.Results;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 import com.alibaba.fastjson2.JSON;
 
+import cn.hutool.core.util.StrUtil;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -27,12 +33,11 @@ import lombok.SneakyThrows;
 @RequiredArgsConstructor
 public class LoginCheckFilter implements Filter {
 
+    private final StringRedisTemplate stringRedisTemplate;
+
     private static final List<String> IGNORE_URI = List.of(
             "/api/rag/user/login", //登录
-            "/api/rag/user/send-code", //注册时发送验证码
-            "/api/rag/user/forget-username", //忘记用户名
-            "/api/rag/user/send-reset-password-code", //忘记密码发送验证码
-            "/api/rag/user/reset-password"//忘记密码重置密码
+            "/api/rag/user/send-code" //注册时发送验证码
     );
 
     private boolean requireLogin(String URI, String method) {
@@ -43,14 +48,12 @@ public class LoginCheckFilter implements Filter {
         if (URI.equals("/api/rag/user") && method.equals("POST")) {
             return false;
         }
-        // 查询题目详情
         return true;
     }
 
     @SneakyThrows
     @Override
-    public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain filterChain) throws IOException,
-            ServletException {
+    public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain filterChain) throws IOException, ServletException {
         HttpServletRequest httpServletRequest = (HttpServletRequest) servletRequest;
         String requestURI = httpServletRequest.getRequestURI();
         String method = httpServletRequest.getMethod();
@@ -61,6 +64,7 @@ public class LoginCheckFilter implements Filter {
 
         filterChain.doFilter(servletRequest, servletResponse);
     }
+
 
     private void returnJson(HttpServletResponse response, String json) throws Exception {
         PrintWriter writer = null;

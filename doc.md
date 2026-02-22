@@ -16,7 +16,7 @@
 - Spring Boot 3.4.x
 - Spring AI 1.0.1 + Spring AI Alibaba DashScope Starter 1.0.0.2
 - Elasticsearch 8.x（向量检索 + BM25 + RRF）
-- RustFS 8.xs
+- RustFS 
 - MyBatis-Plus（业务数据持久化）
 
 ## 3. 总体调用链路

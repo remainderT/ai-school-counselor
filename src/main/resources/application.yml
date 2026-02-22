@@ -7,7 +7,7 @@ spring:
       add-mappings: true
 
   datasource:
-    url: jdbc:mysql://localhost:3306/rag?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3306/ai_school_conselor?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -50,7 +50,7 @@ spring:
     host: smtp.126.com
     port: 465
     username: buaa_smart_tutor@126.com
-    password: ${MAIL_PASSWORD}
+    password: ETgCVqqiiLptxyMk
     default-encoding: UTF-8
     from: buaa_smart_tutor@126.com
     properties:
@@ -78,6 +78,12 @@ elasticsearch:
   scheme: http
   index: knowledge
   username: elastic
+
+flow-limit:
+  enable: true
+  time-window: 1
+  max-access-count: 10
+
 
 ai:
   prompt:

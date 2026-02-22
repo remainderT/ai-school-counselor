@@ -5,6 +5,7 @@ import org.buaa.rag.common.convention.errorcode.IErrorCode;
 /**
  * 系统错误码
  */
+
 public enum ServiceErrorCodeEnum implements IErrorCode {
 
     MAIL_SEND_ERROR("B000101", "邮件发送错误"),
@@ -22,14 +23,6 @@ public enum ServiceErrorCodeEnum implements IErrorCode {
     MESSAGE_ID_REQUIRED("A0105", "消息ID不能为空"),
 
     SCORE_OUT_OF_RANGE("A0106", "评分必须在1-5之间"),
-
-    FILE_UPLOAD_FAILED("A0202", "文件上传失败"),
-
-    FILE_PARSE_FAILED("A0203", "文件解析失败"),
-
-    FILE_SIZE_EXCEEDED("A0204", "文件大小超出限制"),
-
-    FILE_ALREADY_EXISTS("A0205", "文件已存在"),
 
     OPERATION_FORBIDDEN("A0302", "操作被禁止"),
 

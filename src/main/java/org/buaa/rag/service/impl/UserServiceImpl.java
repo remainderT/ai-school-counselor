@@ -2,19 +2,17 @@ package org.buaa.rag.service.impl;
 
 import static org.buaa.rag.common.consts.CacheConstants.USER_INFO_KEY;
 import static org.buaa.rag.common.consts.CacheConstants.USER_LOGIN_EXPIRE_KEY;
-import static org.buaa.rag.common.consts.CacheConstants.USER_LOGIN_KAPTCHA_KEY;
 import static org.buaa.rag.common.consts.CacheConstants.USER_LOGIN_KEY;
 import static org.buaa.rag.common.consts.CacheConstants.USER_REGISTER_CODE_EXPIRE_KEY;
 import static org.buaa.rag.common.consts.CacheConstants.USER_REGISTER_CODE_KEY;
 import static org.buaa.rag.common.consts.SystemConstants.MAIL_SUFFIX;
 import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.MAIL_SEND_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_CODE_ERROR;
-import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_LOGIN_KAPTCHA_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_MAIL_EXIST;
+import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_NAME_EXIST;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_PASSWORD_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_TOKEN_NULL;
 
-import java.util.Arrays;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
@@ -51,8 +49,6 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.StrUtil;
 import jakarta.servlet.ServletRequest;
-import jakarta.servlet.http.Cookie;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -69,9 +65,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
     private String from;
 
     @Override
-    public UserRespDTO getUserByMail(String mail) {
+    public UserRespDTO getUserInfo(String username) {
         LambdaQueryWrapper<UserDO> queryWrapper = Wrappers.lambdaQuery(UserDO.class)
-                .eq(UserDO::getMail, mail);
+                .eq(UserDO::getUsername, username);
         UserDO userDO = baseMapper.selectOne(queryWrapper);
         if (userDO == null) {
             throw new ServiceException(UserErrorCodeEnum.USER_NULL);
@@ -90,6 +86,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
     }
 
     @Override
+    public Boolean hasUsername(String username) {
+        LambdaQueryWrapper<UserDO> queryWrapper = Wrappers.lambdaQuery(UserDO.class)
+                .eq(UserDO::getUsername, username);
+        UserDO userDO = baseMapper.selectOne(queryWrapper);
+        return userDO != null;
+    }
+
+    @Override
     public Boolean sendCode(String mail) {
         SimpleMailMessage message = new SimpleMailMessage();
         String code = RandomGenerator.generateSixDigitCode();
@@ -103,12 +107,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
             stringRedisTemplate.opsForValue().set(key, code, USER_REGISTER_CODE_EXPIRE_KEY, TimeUnit.MINUTES);
             return true;
         } catch (Exception e) {
+            log.error("发送邮件失败", e);
             throw new ServiceException(MAIL_SEND_ERROR);
         }
     }
 
     @Override
-    public void register(UserRegisterReqDTO requestParam) {
+    public synchronized void register(UserRegisterReqDTO requestParam) {
         String code = requestParam.getCode();
         String key = USER_REGISTER_CODE_KEY + requestParam.getMail().replace(MAIL_SUFFIX, "");
         String cacheCode = stringRedisTemplate.opsForValue().get(key);
@@ -117,6 +122,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
         }
         if (hasMail(requestParam.getMail())) {
             throw new ClientException(USER_MAIL_EXIST);
+        }
+        if (hasUsername(requestParam.getUsername())) {
+            throw new ClientException(USER_NAME_EXIST);
         }
         try {
             UserDO userDO = BeanUtil.toBean(requestParam, UserDO.class);
@@ -133,22 +141,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
 
     @Override
     public UserLoginRespDTO login(UserLoginReqDTO requestParam, ServletRequest request) {
-        HttpServletRequest httpRequest = (HttpServletRequest) request;
-        Cookie[] cookies = httpRequest.getCookies();
-        String kaptchaOwner = "";
-        if (cookies != null) {
-            kaptchaOwner = Arrays.stream(cookies)
-                    .filter(cookie -> "KaptchaOwner".equals(cookie.getName()))
-                    .findFirst()
-                    .map(Cookie::getValue)
-                    .orElse(null);
-        }
-
-        String code = stringRedisTemplate.opsForValue().get(USER_LOGIN_KAPTCHA_KEY + kaptchaOwner);
-        if (StrUtil.isBlank(code) || !code.equalsIgnoreCase(requestParam.getCode())) {
-            throw new ClientException(USER_LOGIN_KAPTCHA_ERROR);
-        }
-
         LambdaQueryWrapper<UserDO> queryWrapper = Wrappers.lambdaQuery(UserDO.class)
                 .eq(UserDO::getUsername, requestParam.getUsername());
         UserDO userDO = baseMapper.selectOne(queryWrapper);

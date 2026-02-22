@@ -13,8 +13,7 @@ public interface DocumentService {
     /**
      * 上传文档
      */
-    void upload(MultipartFile file,
-                String visibility);
+    void upload(MultipartFile file, String visibility);
 
     /**
      * 列出用户的文档
