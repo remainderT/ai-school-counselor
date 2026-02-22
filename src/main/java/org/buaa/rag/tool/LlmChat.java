@@ -6,9 +6,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
-import org.buaa.rag.config.LlmConfiguration;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.buaa.rag.properties.LlmProperties;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
@@ -17,21 +15,21 @@ import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import lombok.extern.slf4j.Slf4j;
+
 /**
  * 大语言模型聊天服务
  * 统一通过 Spring AI ChatClient 调用模型
  */
+@Slf4j
 @Service
 public class LlmChat {
-
-    private static final Logger log = LoggerFactory.getLogger(LlmChat.class);
-
-    private final LlmConfiguration llmConfiguration;
+    private final LlmProperties llmProperties;
     private final ObjectProvider<ChatClient.Builder> chatClientBuilderProvider;
 
-    public LlmChat(LlmConfiguration llmConfiguration,
+    public LlmChat(LlmProperties llmProperties,
                    ObjectProvider<ChatClient.Builder> chatClientBuilderProvider) {
-        this.llmConfiguration = llmConfiguration;
+        this.llmProperties = llmProperties;
         this.chatClientBuilderProvider = chatClientBuilderProvider;
     }
 
@@ -110,7 +108,7 @@ public class LlmChat {
     }
 
     private ChatOptions buildChatOptions(Integer maxTokens) {
-        LlmConfiguration.GenerationParams params = llmConfiguration.getGenerationParams();
+        LlmProperties.GenerationParams params = llmProperties.getGenerationParams();
         Integer resolvedMaxTokens = maxTokens;
         if (resolvedMaxTokens == null && params != null) {
             resolvedMaxTokens = params.getMaxTokens();
@@ -156,7 +154,7 @@ public class LlmChat {
     }
 
     private String buildSystemPrompt(String context) {
-        LlmConfiguration.PromptTemplate template = llmConfiguration.getPromptTemplate();
+        LlmProperties.PromptTemplate template = llmProperties.getPromptTemplate();
         StringBuilder systemMessageBuilder = new StringBuilder();
 
         if (template != null && template.getRules() != null && !template.getRules().isEmpty()) {

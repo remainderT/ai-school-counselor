@@ -17,7 +17,7 @@ import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.config.RagConfiguration;
+import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.dto.CragDecision;
 import org.buaa.rag.dto.FeedbackRequest;
 import org.buaa.rag.dto.IntentDecision;
@@ -79,7 +79,7 @@ public class ChatServiceImpl implements ChatService {
     private final IntentPatternService intentPatternService;
     private final QueryDecomposer queryDecomposer;
     private final AnswerValidator answerValidator;
-    private final RagConfiguration ragConfiguration;
+    private final RagProperties ragProperties;
     private final SemanticCacheService semanticCacheService;
     private final ConversationService conversationService;
 
@@ -732,12 +732,12 @@ public class ChatServiceImpl implements ChatService {
 
         resultSets.add(retrieveWithFallback(userId, message, topK));
 
-        int remainingQueries = ragConfiguration.getFusion().getMaxQueries() - 1;
-        if (ragConfiguration.getHyde().isEnabled()) {
+        int remainingQueries = ragProperties.getFusion().getMaxQueries() - 1;
+        if (ragProperties.getHyde().isEnabled()) {
             remainingQueries -= 1;
         }
 
-        if (ragConfiguration.getRewrite().isEnabled() && remainingQueries > 0) {
+        if (ragProperties.getRewrite().isEnabled() && remainingQueries > 0) {
             List<String> rewrites = plan.getRewrittenQueries();
             if (rewrites != null && !rewrites.isEmpty()) {
                 int limit = Math.min(remainingQueries, rewrites.size());
@@ -747,18 +747,18 @@ public class ChatServiceImpl implements ChatService {
             }
         }
 
-        if (ragConfiguration.getHyde().isEnabled()) {
+        if (ragProperties.getHyde().isEnabled()) {
             String hydeAnswer = plan.getHydeAnswer();
             if (hydeAnswer != null && !hydeAnswer.isBlank()) {
                 resultSets.add(retrieverService.retrieveVectorOnly(hydeAnswer, topK, userId));
             }
         }
 
-        if (!ragConfiguration.getFusion().isEnabled() || resultSets.size() == 1) {
+        if (!ragProperties.getFusion().isEnabled() || resultSets.size() == 1) {
             return postProcessorService.rerank(message, resultSets.get(0), topK);
         }
 
-        List<RetrievalMatch> fused = fuseByRrf(resultSets, topK, ragConfiguration.getFusion().getRrfK());
+        List<RetrievalMatch> fused = fuseByRrf(resultSets, topK, ragProperties.getFusion().getRrfK());
         return postProcessorService.rerank(message, fused, topK);
     }
 
@@ -895,7 +895,7 @@ public class ChatServiceImpl implements ChatService {
     private List<RetrievalMatch> runFallbackRetrieval(String userId,
                                                       String message,
                                                       int topK) {
-        RagConfiguration.Crag config = ragConfiguration.getCrag();
+        RagProperties.Crag config = ragProperties.getCrag();
         int multiplier = config != null ? config.getFallbackMultiplier() : 2;
         int fallbackK = Math.min(topK * Math.max(1, multiplier), MAX_RETRIEVAL_K);
         List<RetrievalMatch> fallback = retrieverService.retrieveTextOnly(

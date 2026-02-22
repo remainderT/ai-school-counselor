@@ -10,7 +10,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import org.buaa.rag.config.RagConfiguration;
+import org.buaa.rag.properties.EsProperties;
+import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.IndexedContentDO;
 import org.buaa.rag.dao.entity.MessageFeedbackDO;
@@ -23,7 +24,6 @@ import org.buaa.rag.service.SmartRetrieverService;
 import org.buaa.rag.tool.VectorEncoding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -45,15 +45,13 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     private static final Logger log = LoggerFactory.getLogger(SmartRetrieverServiceImpl.class);
     private static final int MAX_RECALL_SIZE = 300;
 
-    @Value("${elasticsearch.index:knowledge_base}")
-    private String knowledgeIndex;
-
     private final ElasticsearchClient esClient;
     private final VectorEncoding encodingService;
     private final DocumentMapper documentMapper;
-    private final RagConfiguration ragConfiguration;
+    private final RagProperties ragProperties;
     private final MessageFeedbackMapper feedbackRepository;
     private final MessageSourceMapper sourceRepository;
+    private final EsProperties esProperties;
 
     @Override
     public List<RetrievalMatch> retrieve(String queryText, int topK) {
@@ -80,7 +78,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             return filterAndEnrichMatches(matches, userId, topK);
         } catch (Exception e) {
             if (isIndexMissing(e)) {
-                log.warn("索引 {} 不存在，返回空结果", knowledgeIndex);
+                log.warn("索引 {} 不存在，返回空结果", esProperties.getIndex());
                 return Collections.emptyList();
             }
             log.error("检索失败", e);
@@ -98,7 +96,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
             int recallSize = calculateRecallSize(queryText, topK);
             SearchResponse<IndexedContentDO> response = esClient.search(searchBuilder -> {
-                searchBuilder.index(knowledgeIndex);
+                searchBuilder.index(esProperties.getIndex());
                 searchBuilder.knn(knnBuilder -> knnBuilder
                         .field("vectorEmbedding")
                         .queryVector(vector)
@@ -122,7 +120,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             return filterAndEnrichMatches(results, userId, topK);
         } catch (Exception e) {
             if (isIndexMissing(e)) {
-                log.warn("索引 {} 不存在，向量检索返回空结果", knowledgeIndex);
+                log.warn("索引 {} 不存在，向量检索返回空结果", esProperties.getIndex());
                 return Collections.emptyList();
             }
             log.error("向量检索失败", e);
@@ -138,7 +136,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             return performTextOnlyRetrieval(queryText, topK, userId);
         } catch (Exception e) {
             if (isIndexMissing(e)) {
-                log.warn("索引 {} 不存在，文本检索返回空结果", knowledgeIndex);
+                log.warn("索引 {} 不存在，文本检索返回空结果", esProperties.getIndex());
                 return Collections.emptyList();
             }
             log.error("文本检索失败", e);
@@ -176,7 +174,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         try {
             SearchResponse<IndexedContentDO> response = esClient.search(searchBuilder -> {
                 // kNN向量召回
-                searchBuilder.index(knowledgeIndex);
+                searchBuilder.index(esProperties.getIndex());
                 searchBuilder.knn(knnBuilder -> knnBuilder
                         .field("vectorEmbedding")
                         .queryVector(vector)
@@ -224,7 +222,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                     .collect(Collectors.toList());
         } catch (Exception e) {
             if (isIndexMissing(e)) {
-                log.warn("索引 {} 不存在，混合检索返回空结果", knowledgeIndex);
+                log.warn("索引 {} 不存在，混合检索返回空结果", esProperties.getIndex());
                 return Collections.emptyList();
             }
             throw e;
@@ -258,7 +256,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         try {
             SearchResponse<IndexedContentDO> response = esClient.search(searchBuilder ->
                             searchBuilder
-                                    .index(knowledgeIndex)
+                                    .index(esProperties.getIndex())
                                     .query(queryBuilder -> queryBuilder
                                             .match(matchBuilder -> matchBuilder
                                                     .field("textPayload")
@@ -282,7 +280,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             return filterAndEnrichMatches(results, userId, topK);
         } catch (Exception e) {
             if (isIndexMissing(e)) {
-                log.warn("索引 {} 不存在，文本检索返回空结果", knowledgeIndex);
+                log.warn("索引 {} 不存在，文本检索返回空结果", esProperties.getIndex());
                 return Collections.emptyList();
             }
             throw e;
@@ -427,7 +425,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         if (matches == null || matches.isEmpty()) {
             return;
         }
-        RagConfiguration.Feedback config = ragConfiguration.getFeedback();
+        RagProperties.Feedback config = ragProperties.getFeedback();
         if (config == null || !config.isEnabled()) {
             return;
         }

@@ -1,6 +1,6 @@
 package org.buaa.rag.common.user;
 
-import org.buaa.rag.config.FlowControlConfiguration;
+import org.buaa.rag.properties.FlowControlProperties;
 import org.buaa.rag.dao.mapper.UserMapper;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -43,9 +43,9 @@ public class ReqFilterChain {
     @Bean
     public FilterRegistrationBean<FlowControlFilter> globalUserFlowRiskControlFilter(
             StringRedisTemplate stringRedisTemplate,
-            FlowControlConfiguration flowControlConfiguration) {
+            FlowControlProperties flowControlProperties) {
         FilterRegistrationBean<FlowControlFilter> registration = new FilterRegistrationBean<>();
-        registration.setFilter(new FlowControlFilter(stringRedisTemplate, flowControlConfiguration));
+        registration.setFilter(new FlowControlFilter(stringRedisTemplate, flowControlProperties));
         registration.addUrlPatterns("/*");
         registration.setOrder(2);
         return registration;

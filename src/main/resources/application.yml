@@ -56,11 +56,11 @@ spring:
     properties:
       mail.smtp.socketFactoryClass: javax.net.ssl.SSLSocketFactory
 
-rustfs:
-  endpoint: http://localhost:9000
-  accessKey: rustfs-access-key
-  secretKey: rustfs-secret-key
-  bucketName: uploads
+storage:
+  service-endpoint: http://localhost:9000
+  access-key-id: rustfs-access-key
+  secret-access-key: rustfs-secret-key
+  storage-bucket: uploads
   region: cn-beijing
 
 file:
@@ -71,13 +71,13 @@ file:
     max-upload-bytes: 104857600
     max-extracted-chars: 800000
     max-cleaned-chars: 500000
+    enable-ocr: false
 
 elasticsearch:
   host: localhost
   port: 9200
   scheme: http
   index: knowledge
-  username: elastic
 
 flow-limit:
   enable: true
@@ -104,17 +104,18 @@ ai:
     top-p: 0.9
 
 
+ingestion:
+  stream:
+    enabled: true
+    key: rag:stream:document-ingestion
+    group: document-ingestion-group
+    consumer: document-worker-1
+    batch-size: 5
+    block-ms: 1500
+    poll-interval-ms: 500
+    max-retries: 3
+
 rag:
-  ingestion:
-    stream:
-      enabled: true
-      key: rag:stream:document-ingestion
-      group: document-ingestion-group
-      consumer: document-worker-1
-      batch-size: 5
-      block-ms: 1500
-      poll-interval-ms: 500
-      max-retries: 3
   embedding:
     batch-size: 10
     max-retries: 2

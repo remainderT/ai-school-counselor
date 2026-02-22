@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Set;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.config.RagConfiguration;
+import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.service.QueryDecomposer;
 import org.buaa.rag.tool.LlmChat;
 import org.springframework.stereotype.Service;
@@ -32,12 +32,12 @@ public class QueryDecomposerImpl implements QueryDecomposer {
 """);
 
     private final LlmChat llmChat;
-    private final RagConfiguration ragConfiguration;
+    private final RagProperties ragProperties;
     private final ObjectMapper objectMapper;
 
-    public QueryDecomposerImpl(LlmChat llmChat, RagConfiguration ragConfiguration) {
+    public QueryDecomposerImpl(LlmChat llmChat, RagProperties ragProperties) {
         this.llmChat = llmChat;
-        this.ragConfiguration = ragConfiguration;
+        this.ragProperties = ragProperties;
         this.objectMapper = new ObjectMapper();
     }
 
@@ -46,7 +46,7 @@ public class QueryDecomposerImpl implements QueryDecomposer {
         if (!StringUtils.hasText(query)) {
             return List.of();
         }
-        RagConfiguration.Decomposition cfg = ragConfiguration.getDecomposition();
+        RagProperties.Decomposition cfg = ragProperties.getDecomposition();
         if (cfg == null || !cfg.isEnabled()) {
             return List.of(query);
         }

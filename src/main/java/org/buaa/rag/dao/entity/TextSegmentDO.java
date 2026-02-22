@@ -18,7 +18,7 @@ import lombok.NoArgsConstructor;
 @TableName("text_segments")
 public class TextSegmentDO {
 
-    private Long segmentId;
+    private Long id;
 
     private String documentMd5;
 

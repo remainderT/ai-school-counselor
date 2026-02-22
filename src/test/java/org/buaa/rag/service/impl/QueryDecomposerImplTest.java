@@ -1,6 +1,6 @@
 package org.buaa.rag.service.impl;
 
-import org.buaa.rag.config.RagConfiguration;
+import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.tool.LlmChat;
 import org.junit.jupiter.api.Test;
 
@@ -20,7 +20,7 @@ class QueryDecomposerImplTest {
         LlmChat llmPort = mock(LlmChat.class);
         when(llmPort.generateCompletion(anyString(), anyString(), anyInt())).thenReturn("");
 
-        RagConfiguration config = new RagConfiguration();
+        RagProperties config = new RagProperties();
         config.getDecomposition().setEnabled(true);
         config.getDecomposition().setMaxSubqueries(3);
 

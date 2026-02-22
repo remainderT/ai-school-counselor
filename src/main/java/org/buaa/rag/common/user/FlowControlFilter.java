@@ -8,7 +8,7 @@ import java.util.List;
 
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.result.Results;
-import org.buaa.rag.config.FlowControlConfiguration;
+import org.buaa.rag.properties.FlowControlProperties;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -35,7 +35,7 @@ import lombok.extern.slf4j.Slf4j;
 public class FlowControlFilter implements Filter {
 
     private final StringRedisTemplate stringRedisTemplate;
-    private final FlowControlConfiguration flowControlConfiguration;
+    private final FlowControlProperties flowControlProperties;
 
     private static final String FLOW_CONTROL_LUA_SCRIPT_PATH = "rate_limit.lua";
 
@@ -48,13 +48,13 @@ public class FlowControlFilter implements Filter {
         String ipAddress = request.getRemoteAddr();
         Long result;
         try {
-            result = stringRedisTemplate.execute(redisScript, List.of(ipAddress), flowControlConfiguration.getTimeWindow());
+            result = stringRedisTemplate.execute(redisScript, List.of(ipAddress), flowControlProperties.getTimeWindow());
         } catch (Throwable ex) {
             log.error("执行用户请求流量限制LUA脚本出错", ex);
             returnJson((HttpServletResponse) response, JSON.toJSONString(Results.failure(new ClientException(FLOW_LIMIT_ERROR))));
             return;
         }
-        if (result == null || result > flowControlConfiguration.getMaxAccessCount()) {
+        if (result == null || result > flowControlProperties.getMaxAccessCount()) {
             log.error("用户请求流量超限: " + ipAddress + " " + UserContext.getUsername());
             returnJson((HttpServletResponse) response, JSON.toJSONString(Results.failure(new ClientException(FLOW_LIMIT_ERROR))));
             return;

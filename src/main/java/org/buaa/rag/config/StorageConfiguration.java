@@ -2,12 +2,12 @@ package org.buaa.rag.config;
 
 import java.net.URI;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import org.buaa.rag.properties.StorageProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -21,36 +21,23 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
 /**
  * RustFS (S3 compatible) 对象存储配置
  */
+@Slf4j
 @Configuration
-public class RustfsConfiguration {
+@RequiredArgsConstructor
+public class StorageConfiguration {
 
-    private static final Logger log = LoggerFactory.getLogger(RustfsConfiguration.class);
-
-    @Value("${rustfs.endpoint}")
-    private String serviceEndpoint;
-
-    @Value("${rustfs.accessKey}")
-    private String accessKeyId;
-
-    @Value("${rustfs.secretKey}")
-    private String secretAccessKey;
-
-    @Value("${rustfs.bucketName:uploads}")
-    private String storageBucket;
-
-    @Value("${rustfs.region:us-east-1}")
-    private String region;
+    private final StorageProperties properties;
 
     @Bean
     public S3Client rustfsS3Client() {
         S3Client storageClient = S3Client.builder()
-            .endpointOverride(URI.create(serviceEndpoint))
+            .endpointOverride(URI.create(properties.getServiceEndpoint()))
             .credentialsProvider(StaticCredentialsProvider.create(
-                AwsBasicCredentials.create(accessKeyId, secretAccessKey)))
+                AwsBasicCredentials.create(properties.getAccessKeyId(), properties.getSecretAccessKey())))
             .serviceConfiguration(S3Configuration.builder()
                 .pathStyleAccessEnabled(true)
                 .build())
-            .region(Region.of(region))
+            .region(Region.of(properties.getRegion()))
             .build();
         ensureBucketExists(storageClient);
         return storageClient;
@@ -58,8 +45,9 @@ public class RustfsConfiguration {
 
     private void ensureBucketExists(S3Client client) {
         try {
-            client.headBucket(HeadBucketRequest.builder().bucket(storageBucket).build());
-            log.info("存储桶已就绪: {}", storageBucket);
+            String bucket = properties.getStorageBucket();
+            client.headBucket(HeadBucketRequest.builder().bucket(bucket).build());
+            log.info("存储桶已就绪: {}", bucket);
         } catch (NoSuchBucketException e) {
             createBucket(client);
         } catch (S3Exception e) {
@@ -76,7 +64,8 @@ public class RustfsConfiguration {
     }
 
     private void createBucket(S3Client client) {
-        client.createBucket(CreateBucketRequest.builder().bucket(storageBucket).build());
-        log.info("成功创建存储桶: {}", storageBucket);
+        String bucket = properties.getStorageBucket();
+        client.createBucket(CreateBucketRequest.builder().bucket(bucket).build());
+        log.info("成功创建存储桶: {}", bucket);
     }
 }

@@ -29,4 +29,9 @@ public interface DocumentService {
      * 处理文档摄取任务
      */
     void ingestDocumentTask(String documentMd5, String originalFileName);
+
+    /**
+     * 将文档状态标记为最终失败（不可继续重试）
+     */
+    void markIngestionFinalFailure(String documentMd5, String failureReason);
 }

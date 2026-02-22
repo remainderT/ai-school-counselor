@@ -9,7 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.buaa.rag.config.RagConfiguration;
+import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.dto.RetrievalMatch;
 import org.buaa.rag.service.SemanticCacheService;
 import org.buaa.rag.tool.VectorEncoding;
@@ -23,13 +23,13 @@ public class SemanticCacheServiceImpl implements SemanticCacheService {
     private static final Logger log = LoggerFactory.getLogger(SemanticCacheServiceImpl.class);
 
     private final VectorEncoding embeddingPort;
-    private final RagConfiguration ragConfiguration;
+    private final RagProperties ragProperties;
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
     public SemanticCacheServiceImpl(VectorEncoding embeddingPort,
-                                    RagConfiguration ragConfiguration) {
+                                    RagProperties ragProperties) {
         this.embeddingPort = embeddingPort;
-        this.ragConfiguration = ragConfiguration;
+        this.ragProperties = ragProperties;
     }
 
     @Override
@@ -87,12 +87,12 @@ public class SemanticCacheServiceImpl implements SemanticCacheService {
     }
 
     private boolean enabled() {
-        RagConfiguration.SemanticCache cfg = ragConfiguration.getSemanticCache();
+        RagProperties.SemanticCache cfg = ragProperties.getSemanticCache();
         return cfg != null && cfg.isEnabled();
     }
 
     private double minSimilarity() {
-        RagConfiguration.SemanticCache cfg = ragConfiguration.getSemanticCache();
+        RagProperties.SemanticCache cfg = ragProperties.getSemanticCache();
         if (cfg == null) {
             return 0.92;
         }
@@ -100,7 +100,7 @@ public class SemanticCacheServiceImpl implements SemanticCacheService {
     }
 
     private long ttlMillis() {
-        RagConfiguration.SemanticCache cfg = ragConfiguration.getSemanticCache();
+        RagProperties.SemanticCache cfg = ragProperties.getSemanticCache();
         if (cfg == null) {
             return 120L * 60 * 1000;
         }
@@ -108,7 +108,7 @@ public class SemanticCacheServiceImpl implements SemanticCacheService {
     }
 
     private int maxEntries() {
-        RagConfiguration.SemanticCache cfg = ragConfiguration.getSemanticCache();
+        RagProperties.SemanticCache cfg = ragProperties.getSemanticCache();
         if (cfg == null) {
             return 300;
         }

@@ -24,9 +24,10 @@ CREATE TABLE document (
                         md5_hash            VARCHAR(32)      NOT NULL COMMENT '文档MD5哈希值',
                         original_file_name  VARCHAR(255)     NOT NULL COMMENT '原始文件名',
                         file_size_bytes     BIGINT           NOT NULL COMMENT '文件大小（字节）',
-                        processing_status   TINYINT          NOT NULL DEFAULT 0 COMMENT '处理状态：0-待处理，1-处理中，2-已完成，-1-失败',
+                        processing_status   TINYINT          NOT NULL DEFAULT 0 COMMENT '处理状态：0-待处理，1-处理中，2-已完成，-2-失败可重试，-1-失败最终',
                         user_id             bigint(20)      NOT NULL COMMENT '上传用户标识',
                         visibility          ENUM('private', 'public') NOT NULL COMMENT '可见性',
+                        failure_reason      VARCHAR(512)     DEFAULT NULL COMMENT '失败原因',
                         processed_at        DATETIME         DEFAULT NULL COMMENT '处理完成时间',
                         `create_time` datetime     DEFAULT NULL COMMENT '创建时间',
                         `update_time` datetime     DEFAULT NULL COMMENT '修改时间',
@@ -37,12 +38,12 @@ CREATE TABLE document (
 
 DROP TABLE IF EXISTS text_segments;
 CREATE TABLE text_segments (
-                        segment_id      BIGINT(20)          NOT NULL AUTO_INCREMENT COMMENT '片段唯一标识',
+                        id      BIGINT(20)          NOT NULL AUTO_INCREMENT COMMENT '片段唯一标识',
                         document_md5    VARCHAR(32)      NOT NULL COMMENT '关联文档的MD5值',
                         fragment_index  INT              NOT NULL COMMENT '片段序号',
                         text_data       TEXT             COMMENT '文本内容',
                         encoding_model  VARCHAR(32)      COMMENT '编码模型版本',
-                        PRIMARY KEY (segment_id),
+                        PRIMARY KEY (id),
                         INDEX idx_document_md5 (document_md5) COMMENT '文档MD5索引',
                         INDEX idx_fragment (document_md5, fragment_index) COMMENT '文档和片段组合索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文本片段存储表';

@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Set;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.config.RagConfiguration;
+import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.dto.QueryPlan;
 import org.buaa.rag.service.QueryAnalysisService;
 import org.buaa.rag.tool.LlmChat;
@@ -35,12 +35,12 @@ public class QueryAnalysisServiceImpl implements QueryAnalysisService {
 """);
 
     private final LlmChat llmChat;
-    private final RagConfiguration ragConfiguration;
+    private final RagProperties ragProperties;
 
     public QueryAnalysisServiceImpl(LlmChat llmChat,
-                                    RagConfiguration ragConfiguration) {
+                                    RagProperties ragProperties) {
         this.llmChat = llmChat;
-        this.ragConfiguration = ragConfiguration;
+        this.ragProperties = ragProperties;
     }
 
     @Override
@@ -51,25 +51,25 @@ public class QueryAnalysisServiceImpl implements QueryAnalysisService {
     }
 
     private List<String> generateRewrites(String userQuery) {
-        if (!ragConfiguration.getRewrite().isEnabled()) {
+        if (!ragProperties.getRewrite().isEnabled()) {
             return List.of();
         }
 
-        String prompt = ragConfiguration.getRewrite().getPrompt();
+        String prompt = ragProperties.getRewrite().getPrompt();
         if (prompt == null || prompt.isBlank()) {
             prompt = DEFAULT_REWRITE_PROMPT;
         }
 
         String output = llmChat.generateCompletion(prompt, userQuery, 256);
-        return normalizeRewrites(output, ragConfiguration.getRewrite().getVariants());
+        return normalizeRewrites(output, ragProperties.getRewrite().getVariants());
     }
 
     private String generateHydeAnswer(String userQuery) {
-        if (!ragConfiguration.getHyde().isEnabled()) {
+        if (!ragProperties.getHyde().isEnabled()) {
             return null;
         }
 
-        String prompt = ragConfiguration.getHyde().getPrompt();
+        String prompt = ragProperties.getHyde().getPrompt();
         if (prompt == null || prompt.isBlank()) {
             prompt = DEFAULT_HYDE_PROMPT;
         }
@@ -77,7 +77,7 @@ public class QueryAnalysisServiceImpl implements QueryAnalysisService {
         return llmChat.generateCompletion(
             prompt,
             userQuery,
-            ragConfiguration.getHyde().getMaxTokens()
+            ragProperties.getHyde().getMaxTokens()
         );
     }
 

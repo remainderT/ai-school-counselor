@@ -1,4 +1,4 @@
-package org.buaa.rag.config;
+package org.buaa.rag.properties;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -6,13 +6,12 @@ import org.springframework.stereotype.Component;
 import lombok.Data;
 
 /**
- * 大语言模型配置属性类
- * 统一管理提示词模板和生成参数
+ * 大语言模型配置属性
  */
 @Component
 @ConfigurationProperties(prefix = "ai")
 @Data
-public class LlmConfiguration {
+public class LlmProperties {
 
     private PromptTemplate promptTemplate = new PromptTemplate();
     private GenerationParams generationParams = new GenerationParams();

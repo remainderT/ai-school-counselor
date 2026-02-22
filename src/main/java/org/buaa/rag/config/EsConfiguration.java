@@ -1,33 +1,31 @@
 package org.buaa.rag.config;
 
+import java.io.IOException;
+
 import org.apache.http.HttpHost;
+import org.buaa.rag.properties.EsProperties;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.indices.ExistsRequest;
 import co.elastic.clients.json.jackson.JacksonJsonpMapper;
+import co.elastic.clients.transport.endpoints.BooleanResponse;
 import co.elastic.clients.transport.rest_client.RestClientTransport;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Elasticsearch搜索引擎配置
  */
+@Slf4j
 @Configuration
+@RequiredArgsConstructor
 public class EsConfiguration {
 
-    @Value("${elasticsearch.host}")
-    private String esHost;
-
-    @Value("${elasticsearch.port}")
-    private int esPort;
-
-    @Value("${elasticsearch.scheme:https}")
-    private String protocol;
-
-    @Value("${elasticsearch.username:elastic}")
-    private String userName;
+    private final EsProperties esProperties;
 
     /**
      * 构建Elasticsearch客户端实例
@@ -37,7 +35,7 @@ public class EsConfiguration {
     @Bean
     public ElasticsearchClient elasticsearchClient() {
         RestClientBuilder clientBuilder = RestClient.builder(
-                new HttpHost(esHost, esPort, protocol)
+                new HttpHost(esProperties.getHost(), esProperties.getPort(), esProperties.getScheme())
         );
 
         RestClient restClient = clientBuilder.build();
@@ -45,7 +43,28 @@ public class EsConfiguration {
                 restClient,
                 new JacksonJsonpMapper()
         );
+        ElasticsearchClient client = new ElasticsearchClient(transport);
+        esIndexValidator(client);
 
-        return new ElasticsearchClient(transport);
+        return client;
+    }
+
+    /**
+     * 应用启动时校验 Elasticsearch 索引是否存在
+     */
+    public void  esIndexValidator(ElasticsearchClient esClient) {
+        String indexName = esProperties.getIndex();
+        try {
+            BooleanResponse response = esClient.indices().exists(
+                    ExistsRequest.of(e -> e.index(indexName))
+            );
+            if (response.value()) {
+                log.info("Elasticsearch 索引 [{}] 已存在，校验通过", indexName);
+            } else {
+                log.warn("Elasticsearch 索引 [{}] 不存在，请创建", indexName);
+            }
+        } catch (IOException ex) {
+            log.error("Elasticsearch 索引校验失败，无法连接到 ES 集群: {}", ex.getMessage(), ex);
+        }
     }
 }

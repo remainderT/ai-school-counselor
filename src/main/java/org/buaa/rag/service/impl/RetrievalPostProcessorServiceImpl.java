@@ -8,8 +8,8 @@ import java.util.Locale;
 import java.util.Map;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.config.LlmConfiguration;
-import org.buaa.rag.config.RagConfiguration;
+import org.buaa.rag.properties.LlmProperties;
+import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.dto.CragDecision;
 import org.buaa.rag.dto.RetrievalMatch;
 import org.buaa.rag.service.RetrievalPostProcessorService;
@@ -57,22 +57,22 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
 """);
 
     private final LlmChat llmChat;
-    private final RagConfiguration ragConfiguration;
-    private final LlmConfiguration llmConfiguration;
+    private final RagProperties ragProperties;
+    private final LlmProperties llmProperties;
     private final ObjectMapper objectMapper;
 
     public RetrievalPostProcessorServiceImpl(LlmChat llmChat,
-                                             RagConfiguration ragConfiguration,
-                                             LlmConfiguration llmConfiguration) {
+                                             RagProperties ragProperties,
+                                             LlmProperties llmProperties) {
         this.llmChat = llmChat;
-        this.ragConfiguration = ragConfiguration;
-        this.llmConfiguration = llmConfiguration;
+        this.ragProperties = ragProperties;
+        this.llmProperties = llmProperties;
         this.objectMapper = new ObjectMapper();
     }
 
     @Override
     public CragDecision evaluate(String query, List<RetrievalMatch> matches) {
-        RagConfiguration.Crag config = ragConfiguration.getCrag();
+        RagProperties.Crag config = ragProperties.getCrag();
         if (config == null || !config.isEnabled()) {
             return new CragDecision(CragDecision.Action.ANSWER, null);
         }
@@ -100,8 +100,8 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
 
     @Override
     public String noResultMessage() {
-        if (llmConfiguration != null && llmConfiguration.getPromptTemplate() != null) {
-            String noResult = llmConfiguration.getPromptTemplate().getNoResultText();
+        if (llmProperties != null && llmProperties.getPromptTemplate() != null) {
+            String noResult = llmProperties.getPromptTemplate().getNoResultText();
             if (noResult != null && !noResult.isBlank()) {
                 return noResult;
             }
@@ -114,7 +114,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
         if (matches == null || matches.size() <= 1) {
             return matches;
         }
-        RagConfiguration.Rerank config = ragConfiguration.getRerank();
+        RagProperties.Rerank config = ragProperties.getRerank();
         if (config == null || !config.isEnabled()) {
             return matches;
         }
@@ -166,7 +166,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
         return score == null || score < minScore;
     }
 
-    private boolean shouldReviewWithLlm(List<RetrievalMatch> matches, RagConfiguration.Crag config) {
+    private boolean shouldReviewWithLlm(List<RetrievalMatch> matches, RagProperties.Crag config) {
         if (matches == null || matches.isEmpty()) {
             return true;
         }
@@ -179,7 +179,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
 
     private CragDecision evaluateWithLlm(String query,
                                          List<RetrievalMatch> matches,
-                                         RagConfiguration.Crag config) {
+                                         RagProperties.Crag config) {
         String prompt = config.getPrompt();
         if (prompt == null || prompt.isBlank()) {
             prompt = DEFAULT_CRAG_PROMPT;
@@ -237,7 +237,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
         }
     }
 
-    private String buildClarifyQuestion(String query, RagConfiguration.Crag config) {
+    private String buildClarifyQuestion(String query, RagProperties.Crag config) {
         if (!config.isUseLlm()) {
             return "为了更准确回答，请补充问题的具体场景，例如涉及哪一年、学院或制度名称。";
         }
@@ -277,7 +277,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
 
     private String buildRerankPrompt(String query,
                                      List<RetrievalMatch> candidates,
-                                     RagConfiguration.Rerank config) {
+                                     RagProperties.Rerank config) {
         StringBuilder builder = new StringBuilder();
         builder.append("问题：").append(query).append("\n");
         builder.append("候选片段：\n");
@@ -308,7 +308,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
         return trimmed.substring(0, maxLength) + "...";
     }
 
-    private String resolveRerankPrompt(RagConfiguration.Rerank config) {
+    private String resolveRerankPrompt(RagProperties.Rerank config) {
         if (config.getPrompt() != null && !config.getPrompt().isBlank()) {
             return config.getPrompt();
         }

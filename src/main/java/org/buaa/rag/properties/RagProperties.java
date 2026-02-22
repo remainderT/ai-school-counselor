@@ -1,4 +1,4 @@
-package org.buaa.rag.config;
+package org.buaa.rag.properties;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -6,12 +6,12 @@ import org.springframework.stereotype.Component;
 import lombok.Data;
 
 /**
- * RAG检索增强配置
+ * RAG检索增强配置属性
  */
 @Component
 @ConfigurationProperties(prefix = "rag")
 @Data
-public class RagConfiguration {
+public class RagProperties {
 
     private Rewrite rewrite = new Rewrite();
     private Hyde hyde = new Hyde();
