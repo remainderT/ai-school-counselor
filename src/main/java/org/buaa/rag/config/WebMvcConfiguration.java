@@ -1,7 +1,8 @@
 package org.buaa.rag.config;
 
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.converter.StringHttpMessageConverter;
@@ -10,8 +11,8 @@ import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-import java.nio.charset.StandardCharsets;
-import java.util.List;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * Spring MVC Web配置
@@ -27,15 +28,15 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         // 静态资源路径映射
         String[] resourceLocations = {
-            "classpath:/static/",
-            "classpath:/public/",
-            "classpath:/resources/",
-            "classpath:/META-INF/resources/"
+                "classpath:/static/",
+                "classpath:/public/",
+                "classpath:/resources/",
+                "classpath:/META-INF/resources/"
         };
 
         registry.addResourceHandler("/static/**")
                 .addResourceLocations("classpath:/static/");
-        
+
         registry.addResourceHandler("/**")
                 .addResourceLocations(resourceLocations);
     }
@@ -68,8 +69,8 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
      * 创建字符串转换器（UTF-8编码）
      */
     private StringHttpMessageConverter createStringConverter() {
-        StringHttpMessageConverter stringConverter = 
-            new StringHttpMessageConverter(StandardCharsets.UTF_8);
+        StringHttpMessageConverter stringConverter =
+                new StringHttpMessageConverter(StandardCharsets.UTF_8);
         stringConverter.setWriteAcceptCharset(false);
         return stringConverter;
     }
@@ -78,14 +79,14 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
      * 创建JSON转换器（不转义中文字符）
      */
     private MappingJackson2HttpMessageConverter createJsonConverter() {
-        MappingJackson2HttpMessageConverter jsonConverter = 
-            new MappingJackson2HttpMessageConverter();
-        
+        MappingJackson2HttpMessageConverter jsonConverter =
+                new MappingJackson2HttpMessageConverter();
+
         ObjectMapper objectMapper = jsonConverter.getObjectMapper();
         objectMapper.getFactory().configure(
-            JsonGenerator.Feature.ESCAPE_NON_ASCII, false
+                JsonGenerator.Feature.ESCAPE_NON_ASCII, false
         );
-        
+
         jsonConverter.setObjectMapper(objectMapper);
         return jsonConverter;
     }

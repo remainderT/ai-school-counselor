@@ -1,13 +1,5 @@
 package org.buaa.rag.service.impl;
 
-import org.buaa.rag.config.RagConfiguration;
-import org.buaa.rag.dto.RetrievalMatch;
-import org.buaa.rag.tool.VectorEncoding;
-import org.buaa.rag.service.SemanticCacheService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -16,6 +8,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+
+import org.buaa.rag.config.RagConfiguration;
+import org.buaa.rag.dto.RetrievalMatch;
+import org.buaa.rag.service.SemanticCacheService;
+import org.buaa.rag.tool.VectorEncoding;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
 @Service
 public class SemanticCacheServiceImpl implements SemanticCacheService {

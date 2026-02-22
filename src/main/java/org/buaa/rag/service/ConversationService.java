@@ -1,9 +1,9 @@
 package org.buaa.rag.service;
 
-import org.buaa.rag.dto.RetrievalMatch;
-
 import java.util.List;
 import java.util.Map;
+
+import org.buaa.rag.dto.RetrievalMatch;
 
 public interface ConversationService {
 

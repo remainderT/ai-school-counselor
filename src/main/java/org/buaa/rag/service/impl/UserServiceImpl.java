@@ -7,7 +7,6 @@ import static org.buaa.rag.common.consts.CacheConstants.USER_LOGIN_KEY;
 import static org.buaa.rag.common.consts.CacheConstants.USER_REGISTER_CODE_EXPIRE_KEY;
 import static org.buaa.rag.common.consts.CacheConstants.USER_REGISTER_CODE_KEY;
 import static org.buaa.rag.common.consts.SystemConstants.MAIL_SUFFIX;
-import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.IMAGE_UPLOAD_ERROR;
 import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.MAIL_SEND_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_CODE_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_LOGIN_KAPTCHA_ERROR;
@@ -15,18 +14,14 @@ import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_MAIL_EXIST;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_PASSWORD_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_TOKEN_NULL;
 
-import java.awt.image.BufferedImage;
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-import javax.imageio.ImageIO;
-
 import org.buaa.rag.common.consts.SystemConstants;
 import org.buaa.rag.common.convention.exception.ClientException;
-import org.buaa.rag.common.enums.UserErrorCodeEnum;
 import org.buaa.rag.common.convention.exception.ServiceException;
+import org.buaa.rag.common.enums.UserErrorCodeEnum;
 import org.buaa.rag.common.user.UserContext;
 import org.buaa.rag.dao.entity.UserDO;
 import org.buaa.rag.dao.mapper.UserMapper;

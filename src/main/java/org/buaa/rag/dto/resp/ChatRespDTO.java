@@ -1,12 +1,12 @@
 package org.buaa.rag.dto.resp;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 import java.util.List;
 
 import org.buaa.rag.dto.RetrievalMatch;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /**
  * 对话响应DTO

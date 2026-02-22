@@ -1,14 +1,15 @@
 package org.buaa.rag.service.impl;
 
-import lombok.extern.slf4j.Slf4j;
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.tool.CounselorTools;
 import org.buaa.rag.dto.IntentDecision;
 import org.buaa.rag.service.ToolService;
+import org.buaa.rag.tool.CounselorTools;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 工具路由执行器

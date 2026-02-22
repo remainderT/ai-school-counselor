@@ -1,24 +1,25 @@
 package org.buaa.rag.service.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.config.LlmConfiguration;
-import org.buaa.rag.config.RagConfiguration;
-import org.buaa.rag.dto.CragDecision;
-import org.buaa.rag.dto.RetrievalMatch;
-import org.buaa.rag.tool.LlmChat;
-import org.buaa.rag.service.RetrievalPostProcessorService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+
+import org.buaa.rag.common.prompt.PromptTemplateLoader;
+import org.buaa.rag.config.LlmConfiguration;
+import org.buaa.rag.config.RagConfiguration;
+import org.buaa.rag.dto.CragDecision;
+import org.buaa.rag.dto.RetrievalMatch;
+import org.buaa.rag.service.RetrievalPostProcessorService;
+import org.buaa.rag.tool.LlmChat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * 检索后处理服务实现

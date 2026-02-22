@@ -1,17 +1,19 @@
 package org.buaa.rag.service.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
 import org.buaa.rag.config.RagConfiguration;
-import org.buaa.rag.tool.LlmChat;
 import org.buaa.rag.service.QueryDecomposer;
+import org.buaa.rag.tool.LlmChat;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class QueryDecomposerImpl implements QueryDecomposer {

@@ -1,8 +1,9 @@
 package org.buaa.rag.config;
 
-import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+
+import lombok.Data;
 
 /**
  * 大语言模型配置属性类

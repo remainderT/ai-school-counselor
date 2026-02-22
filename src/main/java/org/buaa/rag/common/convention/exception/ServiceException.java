@@ -1,9 +1,9 @@
 package org.buaa.rag.common.convention.exception;
 
+import java.util.Optional;
+
 import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
 import org.buaa.rag.common.convention.errorcode.IErrorCode;
-
-import java.util.Optional;
 
 
 public class ServiceException extends AbstractException {

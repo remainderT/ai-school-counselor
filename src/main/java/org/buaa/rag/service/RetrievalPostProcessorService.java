@@ -1,9 +1,9 @@
 package org.buaa.rag.service;
 
+import java.util.List;
+
 import org.buaa.rag.dto.CragDecision;
 import org.buaa.rag.dto.RetrievalMatch;
-
-import java.util.List;
 
 /**
  * 检索后处理服务接口

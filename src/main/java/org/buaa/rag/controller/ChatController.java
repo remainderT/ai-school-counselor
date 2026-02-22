@@ -1,5 +1,8 @@
 package org.buaa.rag.controller;
 
+import java.util.List;
+import java.util.Map;
+
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.limit.LimitScope;
 import org.buaa.rag.common.limit.RateLimit;
@@ -14,9 +17,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
-import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/rag/chat")

@@ -1,9 +1,9 @@
 package org.buaa.rag.service;
 
+import java.util.List;
+
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.springframework.web.multipart.MultipartFile;
-
-import java.util.List;
 
 /**
  * 文档服务接口

@@ -1,11 +1,8 @@
 package org.buaa.rag.common.web;
 
-import cn.hutool.core.collection.CollectionUtil;
-import cn.hutool.core.util.ReflectUtil;
-import cn.hutool.core.util.StrUtil;
-import jakarta.servlet.http.HttpServletRequest;
-import lombok.SneakyThrows;
-import lombok.extern.slf4j.Slf4j;
+import java.util.Objects;
+import java.util.Optional;
+
 import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
 import org.buaa.rag.common.convention.exception.AbstractException;
 import org.buaa.rag.common.convention.result.Result;
@@ -18,8 +15,12 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import java.util.Objects;
-import java.util.Optional;
+import cn.hutool.core.collection.CollectionUtil;
+import cn.hutool.core.util.ReflectUtil;
+import cn.hutool.core.util.StrUtil;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 全局异常处理器

@@ -3,8 +3,6 @@ package org.buaa.rag.common.convention.exception;
 import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
 import org.buaa.rag.common.convention.errorcode.IErrorCode;
 
-import java.util.Optional;
-
 public class ClientException extends AbstractException {
 
     public ClientException(IErrorCode errorCode) {

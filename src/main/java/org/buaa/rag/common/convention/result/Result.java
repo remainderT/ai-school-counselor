@@ -1,10 +1,10 @@
 package org.buaa.rag.common.convention.result;
 
-import lombok.Data;
-import lombok.experimental.Accessors;
-
 import java.io.Serial;
 import java.io.Serializable;
+
+import lombok.Data;
+import lombok.experimental.Accessors;
 
 /**
  * 全局返回对象

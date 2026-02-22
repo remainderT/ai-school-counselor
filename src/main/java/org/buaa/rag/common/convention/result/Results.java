@@ -1,10 +1,9 @@
 package org.buaa.rag.common.convention.result;
 
-import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
-import org.buaa.rag.common.convention.errorcode.IErrorCode;
-import org.buaa.rag.common.convention.exception.AbstractException;
-
 import java.util.Optional;
+
+import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
+import org.buaa.rag.common.convention.exception.AbstractException;
 
 
 /**

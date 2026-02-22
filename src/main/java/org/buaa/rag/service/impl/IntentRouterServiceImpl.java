@@ -1,16 +1,21 @@
 package org.buaa.rag.service.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.extern.slf4j.Slf4j;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
+
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
 import org.buaa.rag.dto.IntentClassifyResult;
 import org.buaa.rag.dto.IntentDecision;
 import org.buaa.rag.dto.IntentNode;
-import org.buaa.rag.tool.VectorEncoding;
-import org.buaa.rag.tool.LlmChat;
 import org.buaa.rag.service.IntentPatternService;
 import org.buaa.rag.service.IntentRouterService;
 import org.buaa.rag.service.IntentTreeService;
+import org.buaa.rag.tool.LlmChat;
+import org.buaa.rag.tool.VectorEncoding;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.converter.BeanOutputConverter;
@@ -18,12 +23,9 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service

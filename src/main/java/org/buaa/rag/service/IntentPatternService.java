@@ -1,6 +1,7 @@
 package org.buaa.rag.service;
 
 import java.util.Optional;
+
 import org.buaa.rag.dto.IntentDecision;
 
 public interface IntentPatternService {

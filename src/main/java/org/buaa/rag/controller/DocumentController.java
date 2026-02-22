@@ -1,5 +1,7 @@
 package org.buaa.rag.controller;
 
+import java.util.List;
+
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.dao.entity.DocumentDO;
@@ -12,8 +14,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-
-import java.util.List;
 
 import lombok.RequiredArgsConstructor;
 

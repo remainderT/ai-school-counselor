@@ -1,8 +1,8 @@
 package org.buaa.rag.service;
 
-import org.buaa.rag.dto.RetrievalMatch;
-
 import java.util.List;
+
+import org.buaa.rag.dto.RetrievalMatch;
 
 /**
  * 智能检索服务接口
@@ -12,9 +12,9 @@ public interface SmartRetrieverService {
 
     /**
      * 执行混合检索
-     * 
+     *
      * @param queryText 查询文本
-     * @param topK 返回结果数量
+     * @param topK      返回结果数量
      * @return 检索匹配结果列表
      */
     List<RetrievalMatch> retrieve(String queryText, int topK);
@@ -23,8 +23,8 @@ public interface SmartRetrieverService {
      * 执行混合检索（带权限过滤）
      *
      * @param queryText 查询文本
-     * @param topK 返回结果数量
-     * @param userId 用户标识
+     * @param topK      返回结果数量
+     * @param userId    用户标识
      * @return 检索匹配结果列表
      */
     List<RetrievalMatch> retrieve(String queryText, int topK, String userId);
@@ -33,8 +33,8 @@ public interface SmartRetrieverService {
      * 向量检索（仅向量召回）
      *
      * @param queryText 查询文本
-     * @param topK 返回结果数量
-     * @param userId 用户标识
+     * @param topK      返回结果数量
+     * @param userId    用户标识
      * @return 检索匹配结果列表
      */
     List<RetrievalMatch> retrieveVectorOnly(String queryText, int topK, String userId);
@@ -43,8 +43,8 @@ public interface SmartRetrieverService {
      * 纯文本检索（显式使用）
      */
     List<RetrievalMatch> retrieveTextOnly(String queryText,
-                                         int topK,
-                                         String userId);
+                                          int topK,
+                                          String userId);
 
     /**
      * 记录用户反馈

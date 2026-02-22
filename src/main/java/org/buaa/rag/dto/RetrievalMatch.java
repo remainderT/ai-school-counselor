@@ -12,15 +12,15 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class RetrievalMatch {
-    
+
     private String fileMd5;
-    
+
     private Integer chunkId;
-    
+
     private String textContent;
-    
+
     private Double relevanceScore;
-    
+
     private String sourceFileName;
 
     /**
@@ -44,8 +44,12 @@ public class RetrievalMatch {
      * 获取简短预览
      */
     public String getPreview(int maxLength) {
-        if (textContent == null) return "";
-        if (textContent.length() <= maxLength) return textContent;
+        if (textContent == null) {
+            return "";
+        }
+        if (textContent.length() <= maxLength) {
+            return textContent;
+        }
         return textContent.substring(0, maxLength) + "...";
     }
 }

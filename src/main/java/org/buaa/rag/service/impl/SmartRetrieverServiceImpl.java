@@ -1,10 +1,15 @@
 package org.buaa.rag.service.impl;
 
-import co.elastic.clients.elasticsearch.ElasticsearchClient;
-import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
-import co.elastic.clients.elasticsearch.core.SearchResponse;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 import org.buaa.rag.config.RagConfiguration;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.IndexedContentDO;
@@ -16,21 +21,18 @@ import org.buaa.rag.dao.mapper.MessageSourceMapper;
 import org.buaa.rag.dto.RetrievalMatch;
 import org.buaa.rag.service.SmartRetrieverService;
 import org.buaa.rag.tool.VectorEncoding;
-import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
+import co.elastic.clients.elasticsearch.core.SearchResponse;
+import lombok.RequiredArgsConstructor;
 
 /**
  * 智能检索服务实现
@@ -65,7 +67,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
             // 生成查询向量
             final List<Float> queryVector = generateQueryVector(queryText);
-            
+
             // 向量生成失败则降级到纯文本检索
             if (queryVector == null) {
                 log.warn("向量生成失败，降级为纯文本检索");
@@ -74,7 +76,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
             // 执行混合检索
             List<RetrievalMatch> matches = performHybridRetrieval(queryText, queryVector, topK);
-            
+
             return filterAndEnrichMatches(matches, userId, topK);
         } catch (Exception e) {
             if (isIndexMissing(e)) {
@@ -98,24 +100,24 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             SearchResponse<IndexedContentDO> response = esClient.search(searchBuilder -> {
                 searchBuilder.index(knowledgeIndex);
                 searchBuilder.knn(knnBuilder -> knnBuilder
-                    .field("vectorEmbedding")
-                    .queryVector(vector)
-                    .k(recallSize)
-                    .numCandidates(recallSize)
+                        .field("vectorEmbedding")
+                        .queryVector(vector)
+                        .k(recallSize)
+                        .numCandidates(recallSize)
                 );
                 searchBuilder.size(topK);
                 return searchBuilder;
             }, IndexedContentDO.class);
 
             List<RetrievalMatch> results = response.hits().hits().stream()
-                .filter(hit -> hit.source() != null)
-                .map(hit -> new RetrievalMatch(
-                    hit.source().getSourceMd5(),
-                    hit.source().getSegmentNumber(),
-                    hit.source().getTextPayload(),
-                    hit.score()
-                ))
-                .collect(Collectors.toList());
+                    .filter(hit -> hit.source() != null)
+                    .map(hit -> new RetrievalMatch(
+                            hit.source().getSourceMd5(),
+                            hit.source().getSegmentNumber(),
+                            hit.source().getTextPayload(),
+                            hit.score()
+                    ))
+                    .collect(Collectors.toList());
 
             return filterAndEnrichMatches(results, userId, topK);
         } catch (Exception e) {
@@ -165,61 +167,61 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     /**
      * 执行混合检索
      */
-    private List<RetrievalMatch> performHybridRetrieval(String query, 
-                                                        List<Float> vector, 
+    private List<RetrievalMatch> performHybridRetrieval(String query,
+                                                        List<Float> vector,
                                                         int topK) throws Exception {
         int recallSize = calculateRecallSize(query, topK);
         Operator matchOperator = resolveOperator(query);
-        
+
         try {
             SearchResponse<IndexedContentDO> response = esClient.search(searchBuilder -> {
                 // kNN向量召回
                 searchBuilder.index(knowledgeIndex);
                 searchBuilder.knn(knnBuilder -> knnBuilder
-                    .field("vectorEmbedding")
-                    .queryVector(vector)
-                    .k(recallSize)
-                    .numCandidates(recallSize)
+                        .field("vectorEmbedding")
+                        .queryVector(vector)
+                        .k(recallSize)
+                        .numCandidates(recallSize)
                 );
 
                 // 文本匹配过滤
                 searchBuilder.query(queryBuilder -> queryBuilder
-                    .match(matchBuilder -> matchBuilder
-                        .field("textPayload")
-                        .query(query)
-                        .operator(matchOperator)
-                    )
+                        .match(matchBuilder -> matchBuilder
+                                .field("textPayload")
+                                .query(query)
+                                .operator(matchOperator)
+                        )
                 );
 
                 // BM25重排序
                 searchBuilder.rescore(rescoreBuilder -> rescoreBuilder
-                    .windowSize(recallSize)
-                    .query(rescoreQueryBuilder -> rescoreQueryBuilder
-                        .queryWeight(0.2)  // 向量得分权重
-                        .rescoreQueryWeight(1.0)  // BM25得分权重
-                        .query(innerQueryBuilder -> innerQueryBuilder
-                            .match(matchBuilder -> matchBuilder
-                                .field("textPayload")
-                                .query(query)
-                                .operator(matchOperator)
-                            )
+                        .windowSize(recallSize)
+                        .query(rescoreQueryBuilder -> rescoreQueryBuilder
+                                .queryWeight(0.2)  // 向量得分权重
+                                .rescoreQueryWeight(1.0)  // BM25得分权重
+                                .query(innerQueryBuilder -> innerQueryBuilder
+                                        .match(matchBuilder -> matchBuilder
+                                                .field("textPayload")
+                                                .query(query)
+                                                .operator(matchOperator)
+                                        )
+                                )
                         )
-                    )
                 );
-                
+
                 searchBuilder.size(topK);
                 return searchBuilder;
             }, IndexedContentDO.class);
 
             return response.hits().hits().stream()
-                .filter(hit -> hit.source() != null)
-                .map(hit -> new RetrievalMatch(
-                    hit.source().getSourceMd5(),
-                    hit.source().getSegmentNumber(),
-                    hit.source().getTextPayload(),
-                    hit.score()
-                ))
-                .collect(Collectors.toList());
+                    .filter(hit -> hit.source() != null)
+                    .map(hit -> new RetrievalMatch(
+                            hit.source().getSourceMd5(),
+                            hit.source().getSegmentNumber(),
+                            hit.source().getTextPayload(),
+                            hit.score()
+                    ))
+                    .collect(Collectors.toList());
         } catch (Exception e) {
             if (isIndexMissing(e)) {
                 log.warn("索引 {} 不存在，混合检索返回空结果", knowledgeIndex);
@@ -255,28 +257,28 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             throws Exception {
         try {
             SearchResponse<IndexedContentDO> response = esClient.search(searchBuilder ->
-                searchBuilder
-                    .index(knowledgeIndex)
-                    .query(queryBuilder -> queryBuilder
-                        .match(matchBuilder -> matchBuilder
-                            .field("textPayload")
-                            .query(query)
-                        )
-                    )
-                    .size(topK),
-                IndexedContentDO.class
+                            searchBuilder
+                                    .index(knowledgeIndex)
+                                    .query(queryBuilder -> queryBuilder
+                                            .match(matchBuilder -> matchBuilder
+                                                    .field("textPayload")
+                                                    .query(query)
+                                            )
+                                    )
+                                    .size(topK),
+                    IndexedContentDO.class
             );
 
             List<RetrievalMatch> results = response.hits().hits().stream()
-                .filter(hit -> hit.source() != null)
-                .map(hit -> new RetrievalMatch(
-                    hit.source().getSourceMd5(),
-                    hit.source().getSegmentNumber(),
-                    hit.source().getTextPayload(),
-                    hit.score()
-                ))
-                .collect(Collectors.toList());
-            
+                    .filter(hit -> hit.source() != null)
+                    .map(hit -> new RetrievalMatch(
+                            hit.source().getSourceMd5(),
+                            hit.source().getSegmentNumber(),
+                            hit.source().getTextPayload(),
+                            hit.score()
+                    ))
+                    .collect(Collectors.toList());
+
             return filterAndEnrichMatches(results, userId, topK);
         } catch (Exception e) {
             if (isIndexMissing(e)) {
@@ -297,7 +299,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                 log.warn("向量编码返回空结果");
                 return null;
             }
-            
+
             float[] vectorArray = vectors.get(0);
             List<Float> vectorList = new ArrayList<>(vectorArray.length);
             for (float value : vectorArray) {
@@ -324,8 +326,8 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         Set<String> allowedMd5 = resolveAccessibleDocuments(normalizedUserId);
 
         List<RetrievalMatch> filtered = matches.stream()
-            .filter(match -> allowedMd5.contains(match.getFileMd5()))
-            .collect(Collectors.toList());
+                .filter(match -> allowedMd5.contains(match.getFileMd5()))
+                .collect(Collectors.toList());
 
         if (filtered.size() > topK) {
             return filtered.subList(0, topK);
@@ -392,19 +394,19 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
     private Map<String, DocumentDO> loadDocumentRecords(List<RetrievalMatch> matches) {
         Set<String> md5Set = matches.stream()
-            .map(RetrievalMatch::getFileMd5)
-            .collect(Collectors.toSet());
+                .map(RetrievalMatch::getFileMd5)
+                .collect(Collectors.toSet());
         if (md5Set.isEmpty()) {
             return Map.of();
         }
         LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
-            .in(DocumentDO::getMd5Hash, md5Set);
+                .in(DocumentDO::getMd5Hash, md5Set);
         List<DocumentDO> documentDOS = documentMapper.selectList(queryWrapper);
         if (documentDOS == null || documentDOS.isEmpty()) {
             return Map.of();
         }
         return documentDOS.stream()
-            .collect(Collectors.toMap(DocumentDO::getMd5Hash, doc -> doc));
+                .collect(Collectors.toMap(DocumentDO::getMd5Hash, doc -> doc));
     }
 
     private boolean isIndexMissing(Throwable error) {
@@ -431,8 +433,8 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         }
 
         Set<String> md5Set = matches.stream()
-            .map(RetrievalMatch::getFileMd5)
-            .collect(Collectors.toSet());
+                .map(RetrievalMatch::getFileMd5)
+                .collect(Collectors.toSet());
         Map<String, Double> boostMap = loadBoostMap(md5Set, config.getMaxBoost());
         if (boostMap.isEmpty()) {
             return;
@@ -445,8 +447,8 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         }
 
         matches.sort((a, b) -> Double.compare(
-            b.getRelevanceScore() != null ? b.getRelevanceScore() : 0.0,
-            a.getRelevanceScore() != null ? a.getRelevanceScore() : 0.0
+                b.getRelevanceScore() != null ? b.getRelevanceScore() : 0.0,
+                a.getRelevanceScore() != null ? a.getRelevanceScore() : 0.0
         ));
     }
 
@@ -456,8 +458,8 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         }
 
         LambdaQueryWrapper<MessageSourceDO> sourceQuery = Wrappers.lambdaQuery(MessageSourceDO.class)
-            .in(MessageSourceDO::getDocumentMd5, md5Set)
-            .select(MessageSourceDO::getMessageId, MessageSourceDO::getDocumentMd5);
+                .in(MessageSourceDO::getDocumentMd5, md5Set)
+                .select(MessageSourceDO::getMessageId, MessageSourceDO::getDocumentMd5);
         List<MessageSourceDO> sourceRows = sourceRepository.selectList(sourceQuery);
         if (sourceRows == null || sourceRows.isEmpty()) {
             return Map.of();
@@ -472,16 +474,16 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             Long messageId = sourceRow.getMessageId();
             messageIds.add(messageId);
             messageToDocuments
-                .computeIfAbsent(messageId, key -> new ArrayList<>())
-                .add(sourceRow.getDocumentMd5());
+                    .computeIfAbsent(messageId, key -> new ArrayList<>())
+                    .add(sourceRow.getDocumentMd5());
         }
         if (messageIds.isEmpty()) {
             return Map.of();
         }
 
         LambdaQueryWrapper<MessageFeedbackDO> feedbackQuery = Wrappers.lambdaQuery(MessageFeedbackDO.class)
-            .in(MessageFeedbackDO::getMessageId, messageIds)
-            .select(MessageFeedbackDO::getMessageId, MessageFeedbackDO::getScore);
+                .in(MessageFeedbackDO::getMessageId, messageIds)
+                .select(MessageFeedbackDO::getMessageId, MessageFeedbackDO::getScore);
         List<MessageFeedbackDO> feedbackRows = feedbackRepository.selectList(feedbackQuery);
         if (feedbackRows == null || feedbackRows.isEmpty()) {
             return Map.of();
@@ -520,16 +522,16 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
     private List<String> loadMd5ByVisibility(String visibility) {
         LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
-            .eq(DocumentDO::getVisibility, visibility)
-            .select(DocumentDO::getMd5Hash);
+                .eq(DocumentDO::getVisibility, visibility)
+                .select(DocumentDO::getMd5Hash);
         List<DocumentDO> rows = documentMapper.selectList(queryWrapper);
         if (rows == null || rows.isEmpty()) {
             return List.of();
         }
         return rows.stream()
-            .map(DocumentDO::getMd5Hash)
-            .filter(md5 -> md5 != null && !md5.isBlank())
-            .toList();
+                .map(DocumentDO::getMd5Hash)
+                .filter(md5 -> md5 != null && !md5.isBlank())
+                .toList();
     }
 
     private List<String> loadMd5ByOwnerId(String userId) {
@@ -538,15 +540,15 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             return List.of();
         }
         LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
-            .eq(DocumentDO::getUserId, ownerId)
-            .select(DocumentDO::getMd5Hash);
+                .eq(DocumentDO::getUserId, ownerId)
+                .select(DocumentDO::getMd5Hash);
         List<DocumentDO> rows = documentMapper.selectList(queryWrapper);
         if (rows == null || rows.isEmpty()) {
             return List.of();
         }
         return rows.stream()
-            .map(DocumentDO::getMd5Hash)
-            .filter(md5 -> md5 != null && !md5.isBlank())
-            .toList();
+                .map(DocumentDO::getMd5Hash)
+                .filter(md5 -> md5 != null && !md5.isBlank())
+                .toList();
     }
 }

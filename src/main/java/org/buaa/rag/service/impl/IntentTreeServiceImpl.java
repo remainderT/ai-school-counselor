@@ -1,22 +1,24 @@
 package org.buaa.rag.service.impl;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.InputStream;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+
 import org.buaa.rag.dto.IntentNode;
 import org.buaa.rag.service.IntentTreeService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
@@ -62,7 +64,7 @@ public class IntentTreeServiceImpl implements IntentTreeService {
         try {
             Resource resource = resourceLoader.getResource(treePath);
             try (InputStream is = resource.getInputStream()) {
-                List<IntentNode> list = objectMapper.readValue(is, new TypeReference<>() {});
+                List<IntentNode> list = objectMapper.readValue(is, new TypeReference<>() { });
                 nodes.clear();
                 for (IntentNode node : list) {
                     nodes.put(node.getNodeId(), node);

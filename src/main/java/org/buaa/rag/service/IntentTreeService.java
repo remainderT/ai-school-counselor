@@ -2,6 +2,7 @@ package org.buaa.rag.service;
 
 import java.util.List;
 import java.util.Optional;
+
 import org.buaa.rag.dto.IntentNode;
 
 public interface IntentTreeService {

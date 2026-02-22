@@ -1,16 +1,16 @@
 package org.buaa.rag.service.impl;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
 import org.buaa.rag.config.RagConfiguration;
 import org.buaa.rag.dto.QueryPlan;
 import org.buaa.rag.service.QueryAnalysisService;
 import org.buaa.rag.tool.LlmChat;
 import org.springframework.stereotype.Service;
-
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
 
 /**
  * 查询分析服务实现

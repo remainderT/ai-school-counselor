@@ -1,11 +1,11 @@
 package org.buaa.rag.common.convention.exception;
 
+import java.util.Optional;
+
 import org.buaa.rag.common.convention.errorcode.IErrorCode;
 import org.springframework.util.StringUtils;
 
 import lombok.Getter;
-
-import java.util.Optional;
 
 /**
  * 抽象项目中两种异常体系，客户端异常以及服务端异常

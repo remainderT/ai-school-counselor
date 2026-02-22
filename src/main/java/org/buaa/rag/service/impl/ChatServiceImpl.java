@@ -4,35 +4,6 @@ import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.MESSAGE_EMPTY;
 import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.MESSAGE_ID_REQUIRED;
 import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.SCORE_OUT_OF_RANGE;
 
-import org.buaa.rag.common.convention.exception.ClientException;
-import org.buaa.rag.common.convention.result.Result;
-import org.buaa.rag.common.convention.result.Results;
-import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.config.RagConfiguration;
-import org.buaa.rag.dto.resp.ChatRespDTO;
-import org.buaa.rag.dto.CragDecision;
-import org.buaa.rag.dto.FeedbackRequest;
-import org.buaa.rag.dto.IntentDecision;
-import org.buaa.rag.dto.QueryPlan;
-import org.buaa.rag.dto.RetrievalMatch;
-import org.buaa.rag.service.ChatService;
-import org.buaa.rag.service.ConversationService;
-import org.buaa.rag.service.IntentPatternService;
-import org.buaa.rag.service.IntentRouterService;
-import org.buaa.rag.service.QueryDecomposer;
-import org.buaa.rag.service.QueryAnalysisService;
-import org.buaa.rag.service.RetrievalPostProcessorService;
-import org.buaa.rag.service.SemanticCacheService;
-import org.buaa.rag.service.SmartRetrieverService;
-import org.buaa.rag.service.ToolService;
-import org.buaa.rag.service.AnswerValidator;
-import org.buaa.rag.tool.LlmChat;
-import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -41,6 +12,36 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+
+import org.buaa.rag.common.convention.exception.ClientException;
+import org.buaa.rag.common.convention.result.Result;
+import org.buaa.rag.common.convention.result.Results;
+import org.buaa.rag.common.prompt.PromptTemplateLoader;
+import org.buaa.rag.config.RagConfiguration;
+import org.buaa.rag.dto.CragDecision;
+import org.buaa.rag.dto.FeedbackRequest;
+import org.buaa.rag.dto.IntentDecision;
+import org.buaa.rag.dto.QueryPlan;
+import org.buaa.rag.dto.RetrievalMatch;
+import org.buaa.rag.dto.resp.ChatRespDTO;
+import org.buaa.rag.service.AnswerValidator;
+import org.buaa.rag.service.ChatService;
+import org.buaa.rag.service.ConversationService;
+import org.buaa.rag.service.IntentPatternService;
+import org.buaa.rag.service.IntentRouterService;
+import org.buaa.rag.service.QueryAnalysisService;
+import org.buaa.rag.service.QueryDecomposer;
+import org.buaa.rag.service.RetrievalPostProcessorService;
+import org.buaa.rag.service.SemanticCacheService;
+import org.buaa.rag.service.SmartRetrieverService;
+import org.buaa.rag.service.ToolService;
+import org.buaa.rag.tool.LlmChat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
@@ -54,20 +55,20 @@ public class ChatServiceImpl implements ChatService {
     private static final int MAX_RETRIEVAL_K = 10;
     private static final double MIN_ACCEPTABLE_SCORE = 0.25;
     private static final String CRISIS_RESPONSE = """
-如感到紧急，请立即联系辅导员或校心理中心：心理热线 010-12345678；24h 校园保卫处 010-87654321。
-""";
+            如感到紧急，请立即联系辅导员或校心理中心：心理热线 010-12345678；24h 校园保卫处 010-87654321。
+            """;
     private static final String MULTI_INTENT_SYNTHESIS_PROMPT = PromptTemplateLoader.load("chat-multi-intent-synthesis.st", """
-你是高校辅导员综合回答助手。你会收到：
-1. 原始用户问题
-2. 多个子问题的独立处理结果（可能来自政策RAG、办事工具或澄清）
-
-请输出一份最终合成答复，要求：
-1. 先给最终结论，再分点给出依据与步骤
-2. 保持与各子结论一致，不编造新事实
-3. 若信息不足，明确指出缺失信息
-4. 若存在冲突，给出优先处理建议
-5. 使用简体中文，结构清晰
-""");
+            你是高校辅导员综合回答助手。你会收到：
+            1. 原始用户问题
+            2. 多个子问题的独立处理结果（可能来自政策RAG、办事工具或澄清）
+            
+            请输出一份最终合成答复，要求：
+            1. 先给最终结论，再分点给出依据与步骤
+            2. 保持与各子结论一致，不编造新事实
+            3. 若信息不足，明确指出缺失信息
+            4. 若存在冲突，给出优先处理建议
+            5. 使用简体中文，结构清晰
+            """);
 
     private final SmartRetrieverService retrieverService;
     private final RetrievalPostProcessorService postProcessorService;
@@ -102,8 +103,8 @@ public class ChatServiceImpl implements ChatService {
 
         ChatRespDTO aiResponse = handleMessage(userId, userMessage);
         return Results.success(Map.of(
-            "response", aiResponse.getResponse(),
-            "sources", aiResponse.getSources()
+                "response", aiResponse.getResponse(),
+                "sources", aiResponse.getSources()
         ));
     }
 
@@ -114,7 +115,7 @@ public class ChatServiceImpl implements ChatService {
         if (isBlankString(message)) {
             try {
                 emitter.send(SseEmitter.event().name("error")
-                    .data(MESSAGE_EMPTY.message()));
+                        .data(MESSAGE_EMPTY.message()));
             } catch (Exception ignored) {
             } finally {
                 emitter.complete();
@@ -124,44 +125,44 @@ public class ChatServiceImpl implements ChatService {
 
         String resolvedUserId = isBlankString(userId) ? DEFAULT_USER_ID : userId;
         handleMessageStreamInternal(
-            resolvedUserId,
-            message,
-            chunk -> {
-                try {
-                    emitter.send(chunk);
-                } catch (Exception e) {
-                    emitter.completeWithError(e);
+                resolvedUserId,
+                message,
+                chunk -> {
+                    try {
+                        emitter.send(chunk);
+                    } catch (Exception e) {
+                        emitter.completeWithError(e);
+                    }
+                },
+                error -> {
+                    try {
+                        emitter.send(SseEmitter.event().name("error")
+                                .data("对话服务异常: " + error.getMessage()));
+                    } catch (Exception ignored) {
+                    } finally {
+                        emitter.completeWithError(error);
+                    }
+                },
+                sources -> {
+                    try {
+                        emitter.send(SseEmitter.event().name("sources").data(sources));
+                    } catch (Exception ignored) {
+                    }
+                },
+                messageId -> {
+                    try {
+                        emitter.send(SseEmitter.event().name("messageId").data(messageId));
+                    } catch (Exception ignored) {
+                    }
+                },
+                () -> {
+                    try {
+                        emitter.send(SseEmitter.event().name("done").data(""));
+                    } catch (Exception ignored) {
+                    } finally {
+                        emitter.complete();
+                    }
                 }
-            },
-            error -> {
-                try {
-                    emitter.send(SseEmitter.event().name("error")
-                        .data("对话服务异常: " + error.getMessage()));
-                } catch (Exception ignored) {
-                } finally {
-                    emitter.completeWithError(error);
-                }
-            },
-            sources -> {
-                try {
-                    emitter.send(SseEmitter.event().name("sources").data(sources));
-                } catch (Exception ignored) {
-                }
-            },
-            messageId -> {
-                try {
-                    emitter.send(SseEmitter.event().name("messageId").data(messageId));
-                } catch (Exception ignored) {
-                }
-            },
-            () -> {
-                try {
-                    emitter.send(SseEmitter.event().name("done").data(""));
-                } catch (Exception ignored) {
-                } finally {
-                    emitter.complete();
-                }
-            }
         );
 
         return emitter;
@@ -206,11 +207,11 @@ public class ChatServiceImpl implements ChatService {
             IntentDecision intent = intentRouterService.decide(userId, userMessage);
             if (intent.getAction() == IntentDecision.Action.CRISIS) {
                 Long messageId = conversationService.appendToHistory(
-                    sessionId,
-                    userId,
-                    userMessage,
-                    CRISIS_RESPONSE,
-                    List.of()
+                        sessionId,
+                        userId,
+                        userMessage,
+                        CRISIS_RESPONSE,
+                        List.of()
                 );
                 return new ChatRespDTO(CRISIS_RESPONSE, List.of(), messageId);
             }
@@ -220,33 +221,33 @@ public class ChatServiceImpl implements ChatService {
             if (subqueries.size() > 1) {
                 log.info("检测到多意图问题，子问题数: {}", subqueries.size());
                 ExecutionResult multiResult = executeMultiIntentRoute(
-                    userId,
-                    userMessage,
-                    subqueries,
-                    conversationHistory
+                        userId,
+                        userMessage,
+                        subqueries,
+                        conversationHistory
                 );
                 Long messageId = conversationService.appendToHistory(
-                    sessionId,
-                    userId,
-                    userMessage,
-                    multiResult.response(),
-                    multiResult.sources()
+                        sessionId,
+                        userId,
+                        userMessage,
+                        multiResult.response(),
+                        multiResult.sources()
                 );
                 return new ChatRespDTO(multiResult.response(), multiResult.sources(), messageId);
             }
 
             ExecutionResult singleResult = executeIntentRoute(
-                userId,
-                userMessage,
-                intent,
-                conversationHistory
+                    userId,
+                    userMessage,
+                    intent,
+                    conversationHistory
             );
             Long messageId = conversationService.appendToHistory(
-                sessionId,
-                userId,
-                userMessage,
-                singleResult.response(),
-                singleResult.sources()
+                    sessionId,
+                    userId,
+                    userMessage,
+                    singleResult.response(),
+                    singleResult.sources()
             );
             recordHighConfidencePattern(intent, userMessage);
 
@@ -283,10 +284,10 @@ public class ChatServiceImpl implements ChatService {
 
             if (intent.getAction() == IntentDecision.Action.CRISIS) {
                 conversationService.completeAssistantMessage(
-                    sessionId,
-                    assistantMessageId,
-                    CRISIS_RESPONSE,
-                    List.of()
+                        sessionId,
+                        assistantMessageId,
+                        CRISIS_RESPONSE,
+                        List.of()
                 );
                 if (chunkHandler != null) {
                     chunkHandler.accept(CRISIS_RESPONSE);
@@ -304,16 +305,16 @@ public class ChatServiceImpl implements ChatService {
             List<String> subqueries = queryDecomposer.decompose(userMessage);
             if (subqueries.size() > 1) {
                 ExecutionResult multiResult = executeMultiIntentRoute(
-                    userId,
-                    userMessage,
-                    subqueries,
-                    conversationHistory
+                        userId,
+                        userMessage,
+                        subqueries,
+                        conversationHistory
                 );
                 conversationService.completeAssistantMessage(
-                    sessionId,
-                    assistantMessageId,
-                    multiResult.response(),
-                    multiResult.sources()
+                        sessionId,
+                        assistantMessageId,
+                        multiResult.response(),
+                        multiResult.sources()
                 );
                 if (chunkHandler != null) {
                     chunkHandler.accept(multiResult.response());
@@ -328,18 +329,18 @@ public class ChatServiceImpl implements ChatService {
             }
 
             if (intent.getAction() == IntentDecision.Action.CLARIFY
-                || intent.getAction() == IntentDecision.Action.ROUTE_TOOL) {
+                    || intent.getAction() == IntentDecision.Action.ROUTE_TOOL) {
                 ExecutionResult immediate = executeIntentRoute(
-                    userId,
-                    userMessage,
-                    intent,
-                    conversationHistory
+                        userId,
+                        userMessage,
+                        intent,
+                        conversationHistory
                 );
                 conversationService.completeAssistantMessage(
-                    sessionId,
-                    assistantMessageId,
-                    immediate.response(),
-                    immediate.sources()
+                        sessionId,
+                        assistantMessageId,
+                        immediate.response(),
+                        immediate.sources()
                 );
                 if (chunkHandler != null) {
                     chunkHandler.accept(immediate.response());
@@ -378,7 +379,7 @@ public class ChatServiceImpl implements ChatService {
 
             CragDecision decision = postProcessorService.evaluate(userMessage, retrievalResults);
             if (decision.getAction() == CragDecision.Action.CLARIFY
-                || decision.getAction() == CragDecision.Action.NO_ANSWER) {
+                    || decision.getAction() == CragDecision.Action.NO_ANSWER) {
                 String response = decision.getMessage();
                 responseBuilder.append(response);
                 if (chunkHandler != null) {
@@ -396,9 +397,9 @@ public class ChatServiceImpl implements ChatService {
 
             if (decision.getAction() == CragDecision.Action.REFINE) {
                 List<RetrievalMatch> fallback = runFallbackRetrieval(
-                    userId,
-                    userMessage,
-                    retrievalK
+                        userId,
+                        userMessage,
+                        retrievalK
                 );
                 if (!fallback.isEmpty()) {
                     retrievalResults = fallback;
@@ -426,56 +427,56 @@ public class ChatServiceImpl implements ChatService {
             java.util.concurrent.atomic.AtomicBoolean streamFailed = new java.util.concurrent.atomic.AtomicBoolean(false);
 
             llmService.streamResponse(
-                userMessage,
-                applyPromptTemplate(promptTemplate, referenceContext),
-                conversationHistory,
-                chunk -> {
-                    responseBuilder.append(chunk);
-                    if (chunkHandler != null) {
-                        chunkHandler.accept(chunk);
-                    }
-                },
-                error -> {
-                    streamFailed.set(true);
-                    conversationService.failAssistantMessage(
-                        streamSessionId,
-                        streamMessageId,
-                        "对话服务异常，请稍后重试。"
-                    );
-                    if (errorHandler != null) {
-                        errorHandler.accept(error);
-                    }
-                },
-                () -> {
-                    if (streamFailed.get()) {
+                    userMessage,
+                    applyPromptTemplate(promptTemplate, referenceContext),
+                    conversationHistory,
+                    chunk -> {
+                        responseBuilder.append(chunk);
+                        if (chunkHandler != null) {
+                            chunkHandler.accept(chunk);
+                        }
+                    },
+                    error -> {
+                        streamFailed.set(true);
+                        conversationService.failAssistantMessage(
+                                streamSessionId,
+                                streamMessageId,
+                                "对话服务异常，请稍后重试。"
+                        );
+                        if (errorHandler != null) {
+                            errorHandler.accept(error);
+                        }
+                    },
+                    () -> {
+                        if (streamFailed.get()) {
+                            if (completionHandler != null) {
+                                completionHandler.run();
+                            }
+                            return;
+                        }
+                        String finalResponse = responseBuilder.toString();
+                        conversationService.completeAssistantMessage(streamSessionId, streamMessageId, finalResponse, finalResults);
+                        semanticCacheService.put(userMessage, finalResponse, finalResults);
+                        if (intent.getConfidence() != null
+                                && intent.getConfidence() >= 0.9
+                                && (intent.getAction() == IntentDecision.Action.ROUTE_RAG
+                                || intent.getAction() == IntentDecision.Action.ROUTE_TOOL)) {
+                            intentPatternService.recordPattern(intent.getLevel1(), intent.getLevel2(), userMessage, intent.getConfidence());
+                        }
+                        if (sourcesHandler != null) {
+                            sourcesHandler.accept(finalResults);
+                        }
                         if (completionHandler != null) {
                             completionHandler.run();
                         }
-                        return;
                     }
-                    String finalResponse = responseBuilder.toString();
-                    conversationService.completeAssistantMessage(streamSessionId, streamMessageId, finalResponse, finalResults);
-                    semanticCacheService.put(userMessage, finalResponse, finalResults);
-                    if (intent.getConfidence() != null
-                        && intent.getConfidence() >= 0.9
-                        && (intent.getAction() == IntentDecision.Action.ROUTE_RAG
-                            || intent.getAction() == IntentDecision.Action.ROUTE_TOOL)) {
-                        intentPatternService.recordPattern(intent.getLevel1(), intent.getLevel2(), userMessage, intent.getConfidence());
-                    }
-                    if (sourcesHandler != null) {
-                        sourcesHandler.accept(finalResults);
-                    }
-                    if (completionHandler != null) {
-                        completionHandler.run();
-                    }
-                }
             );
         } catch (Exception e) {
             if (sessionId != null && assistantMessageId != null) {
                 conversationService.failAssistantMessage(
-                    sessionId,
-                    assistantMessageId,
-                    "对话服务异常，请稍后重试。"
+                        sessionId,
+                        assistantMessageId,
+                        "对话服务异常，请稍后重试。"
                 );
             }
             if (errorHandler != null) {
@@ -490,9 +491,9 @@ public class ChatServiceImpl implements ChatService {
                                                List<Map<String, String>> conversationHistory) throws InterruptedException {
         if (intent == null || intent.getAction() == null) {
             return executeRagRoute(userId, query, IntentDecision.builder()
-                .action(IntentDecision.Action.ROUTE_RAG)
-                .strategy(IntentDecision.Strategy.HYBRID)
-                .build(), conversationHistory);
+                    .action(IntentDecision.Action.ROUTE_RAG)
+                    .strategy(IntentDecision.Strategy.HYBRID)
+                    .build(), conversationHistory);
         }
 
         if (intent.getAction() == IntentDecision.Action.CRISIS) {
@@ -501,8 +502,8 @@ public class ChatServiceImpl implements ChatService {
 
         if (intent.getAction() == IntentDecision.Action.CLARIFY) {
             String response = intent.getClarifyQuestion() != null
-                ? intent.getClarifyQuestion()
-                : "需要更多信息，请具体描述。";
+                    ? intent.getClarifyQuestion()
+                    : "需要更多信息，请具体描述。";
             return new ExecutionResult(response, List.of());
         }
 
@@ -529,7 +530,7 @@ public class ChatServiceImpl implements ChatService {
 
         CragDecision decision = postProcessorService.evaluate(query, retrievalResults);
         if (decision.getAction() == CragDecision.Action.CLARIFY
-            || decision.getAction() == CragDecision.Action.NO_ANSWER) {
+                || decision.getAction() == CragDecision.Action.NO_ANSWER) {
             return new ExecutionResult(decision.getMessage(), retrievalResults);
         }
 
@@ -544,9 +545,9 @@ public class ChatServiceImpl implements ChatService {
 
         String referenceContext = constructReferenceContext(retrievalResults);
         String response = generateAnswerBlocking(
-            query,
-            applyPromptTemplate(promptTemplate, referenceContext),
-            conversationHistory
+                query,
+                applyPromptTemplate(promptTemplate, referenceContext),
+                conversationHistory
         );
 
         if (answerValidator.evaluate(query, response) == AnswerValidator.Verdict.REFINE) {
@@ -606,9 +607,9 @@ public class ChatServiceImpl implements ChatService {
         }
 
         String synthesized = llmService.generateCompletion(
-            MULTI_INTENT_SYNTHESIS_PROMPT,
-            userPrompt.toString(),
-            768
+                MULTI_INTENT_SYNTHESIS_PROMPT,
+                userPrompt.toString(),
+                768
         );
         if (synthesized != null && !synthesized.isBlank()) {
             return synthesized;
@@ -621,11 +622,11 @@ public class ChatServiceImpl implements ChatService {
         for (int i = 0; i < executions.size(); i++) {
             SubQueryExecution execution = executions.get(i);
             builder.append(i + 1)
-                .append(". ")
-                .append(execution.query())
-                .append(" -> ")
-                .append(execution.answer())
-                .append("\n");
+                    .append(". ")
+                    .append(execution.query())
+                    .append(" -> ")
+                    .append(execution.answer())
+                    .append("\n");
         }
         return builder.toString().trim();
     }
@@ -642,11 +643,11 @@ public class ChatServiceImpl implements ChatService {
                 builder.append("；");
             }
             builder.append("[")
-                .append(i + 1)
-                .append("] ")
-                .append(getSourceLabel(source))
-                .append(": ")
-                .append(truncateText(source.getTextContent(), 80));
+                    .append(i + 1)
+                    .append("] ")
+                    .append(getSourceLabel(source))
+                    .append(": ")
+                    .append(truncateText(source.getTextContent(), 80));
         }
         return builder.toString();
     }
@@ -671,16 +672,16 @@ public class ChatServiceImpl implements ChatService {
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
 
         llmService.streamResponse(
-            userQuery,
-            referenceContext,
-            conversationHistory,
-            responseBuilder::append,
-            error -> {
-                log.error("LLM服务错误: {}", error.getMessage(), error);
-                errorRef.set(error);
-                completionLatch.countDown();
-            },
-            completionLatch::countDown
+                userQuery,
+                referenceContext,
+                conversationHistory,
+                responseBuilder::append,
+                error -> {
+                    log.error("LLM服务错误: {}", error.getMessage(), error);
+                    errorRef.set(error);
+                    completionLatch.countDown();
+                },
+                completionLatch::countDown
         );
 
         if (!completionLatch.await(120, TimeUnit.SECONDS)) {
@@ -697,8 +698,8 @@ public class ChatServiceImpl implements ChatService {
             return;
         }
         if (intent.getConfidence() != null
-            && intent.getConfidence() >= 0.9
-            && (intent.getAction() == IntentDecision.Action.ROUTE_RAG
+                && intent.getConfidence() >= 0.9
+                && (intent.getAction() == IntentDecision.Action.ROUTE_RAG
                 || intent.getAction() == IntentDecision.Action.ROUTE_TOOL)) {
             intentPatternService.recordPattern(intent.getLevel1(), intent.getLevel2(), query, intent.getConfidence());
         }
@@ -717,8 +718,8 @@ public class ChatServiceImpl implements ChatService {
         }
         List<RetrievalMatch> deduplicated = new ArrayList<>(map.values());
         deduplicated.sort((a, b) -> Double.compare(
-            b.getRelevanceScore() != null ? b.getRelevanceScore() : 0.0,
-            a.getRelevanceScore() != null ? a.getRelevanceScore() : 0.0
+                b.getRelevanceScore() != null ? b.getRelevanceScore() : 0.0,
+                a.getRelevanceScore() != null ? a.getRelevanceScore() : 0.0
         ));
         return deduplicated;
     }
@@ -793,9 +794,9 @@ public class ChatServiceImpl implements ChatService {
         String refinedQuery = normalizeQuery(message);
         if (!refinedQuery.equals(message)) {
             List<RetrievalMatch> refined = retrieverService.retrieve(
-                refinedQuery,
-                Math.min(topK * 2, MAX_RETRIEVAL_K),
-                userId
+                    refinedQuery,
+                    Math.min(topK * 2, MAX_RETRIEVAL_K),
+                    userId
             );
             if (!isLowQualityForFallback(refined)) {
                 return refined;
@@ -836,8 +837,8 @@ public class ChatServiceImpl implements ChatService {
         }
 
         fused.sort((a, b) -> Double.compare(
-            b.getRelevanceScore() != null ? b.getRelevanceScore() : 0.0,
-            a.getRelevanceScore() != null ? a.getRelevanceScore() : 0.0
+                b.getRelevanceScore() != null ? b.getRelevanceScore() : 0.0,
+                a.getRelevanceScore() != null ? a.getRelevanceScore() : 0.0
         ));
 
         if (fused.size() > topK) {
@@ -851,8 +852,8 @@ public class ChatServiceImpl implements ChatService {
                                                     int topK,
                                                     IntentDecision intent) {
         IntentDecision.Strategy strategy = intent.getStrategy() != null
-            ? intent.getStrategy()
-            : IntentDecision.Strategy.HYBRID;
+                ? intent.getStrategy()
+                : IntentDecision.Strategy.HYBRID;
 
         if (strategy == IntentDecision.Strategy.PRECISION) {
             List<RetrievalMatch> results = retrieverService.retrieveTextOnly(message, topK, userId);
@@ -886,9 +887,9 @@ public class ChatServiceImpl implements ChatService {
             return "";
         }
         return message.replaceAll("[\\t\\n\\r]", " ")
-            .replaceAll("[，。！？；、]", " ")
-            .replaceAll("\\s+", " ")
-            .trim();
+                .replaceAll("[，。！？；、]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     private List<RetrievalMatch> runFallbackRetrieval(String userId,
@@ -898,9 +899,9 @@ public class ChatServiceImpl implements ChatService {
         int multiplier = config != null ? config.getFallbackMultiplier() : 2;
         int fallbackK = Math.min(topK * Math.max(1, multiplier), MAX_RETRIEVAL_K);
         List<RetrievalMatch> fallback = retrieverService.retrieveTextOnly(
-            message,
-            fallbackK,
-            userId
+                message,
+                fallbackK,
+                userId
         );
         return postProcessorService.rerank(message, fallback, topK);
     }
@@ -918,10 +919,10 @@ public class ChatServiceImpl implements ChatService {
             String sourceLabel = getSourceLabel(match);
 
             contextBuilder.append(String.format(
-                "[%d] (%s) %s\n",
-                i + 1,
-                sourceLabel,
-                textSnippet
+                    "[%d] (%s) %s\n",
+                    i + 1,
+                    sourceLabel,
+                    textSnippet
             ));
         }
 
@@ -957,8 +958,8 @@ public class ChatServiceImpl implements ChatService {
 
     private String getSourceLabel(RetrievalMatch match) {
         return match.getSourceFileName() != null ?
-               match.getSourceFileName() :
-               "未知来源";
+                match.getSourceFileName() :
+                "未知来源";
     }
 
     private boolean isBlankString(String str) {

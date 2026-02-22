@@ -71,9 +71,11 @@ public class LoginCheckFilter implements Filter {
             writer.print(json);
 
         } catch (IOException e) {
+
         } finally {
-            if (writer != null)
+            if (writer != null) {
                 writer.close();
+            }
         }
     }
 
