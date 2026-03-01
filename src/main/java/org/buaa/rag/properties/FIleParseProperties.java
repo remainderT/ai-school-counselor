@@ -13,8 +13,26 @@ import lombok.Data;
 @ConfigurationProperties(prefix = "file.parsing")
 public class FIleParseProperties {
 
+    /** 分块模式: fixed_size / structure_aware / sentence / paragraph */
+    private String chunkMode = "structure_aware";
+
     /** 文本分块大小 */
     private int chunkSize = 512;
+
+    /** 相邻块重叠字符 */
+    private int overlapSize = 128;
+
+    /** 结构感知分块目标字符 */
+    private int semanticTargetChars = 1400;
+
+    /** 结构感知分块最大字符 */
+    private int semanticMaxChars = 1800;
+
+    /** 结构感知分块最小字符 */
+    private int semanticMinChars = 600;
+
+    /** 结构感知分块重叠字符 */
+    private int semanticOverlapChars = 0;
 
     /** 缓冲区大小 */
     private int bufferSize = 8192;

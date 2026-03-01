@@ -35,6 +35,7 @@ import org.buaa.rag.service.RetrievalPostProcessorService;
 import org.buaa.rag.service.SemanticCacheService;
 import org.buaa.rag.service.SmartRetrieverService;
 import org.buaa.rag.service.ToolService;
+import org.buaa.rag.service.retrieval.MultiChannelRetrievalEngine;
 import org.buaa.rag.tool.LlmChat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,6 +72,7 @@ public class ChatServiceImpl implements ChatService {
             """);
 
     private final SmartRetrieverService retrieverService;
+    private final MultiChannelRetrievalEngine multiChannelRetrievalEngine;
     private final RetrievalPostProcessorService postProcessorService;
     private final LlmChat llmService;
     private final QueryAnalysisService queryAnalysisService;
@@ -172,8 +174,21 @@ public class ChatServiceImpl implements ChatService {
     public Result<List<RetrievalMatch>> handleSearchRequest(String query,
                                                             int topK,
                                                             String userId) {
-        List<RetrievalMatch> results = retrieverService.retrieve(query, topK, userId);
-        results = postProcessorService.rerank(query, results, topK);
+        IntentDecision decision = null;
+        try {
+            IntentDecision raw = intentRouterService.decide(userId, query);
+            if (raw != null && raw.getAction() == IntentDecision.Action.ROUTE_RAG) {
+                decision = raw;
+            }
+        } catch (Exception e) {
+            log.debug("搜索接口意图识别失败，降级到全局检索: {}", e.getMessage());
+        }
+
+        List<RetrievalMatch> results = multiChannelRetrievalEngine.retrieve(userId, query, topK, decision);
+        if (results.isEmpty()) {
+            results = retrieverService.retrieve(query, topK, userId);
+            results = postProcessorService.rerank(query, results, topK);
+        }
         return Results.success(results);
     }
 
@@ -216,7 +231,7 @@ public class ChatServiceImpl implements ChatService {
                 return new ChatRespDTO(CRISIS_RESPONSE, List.of(), messageId);
             }
 
-            List<Map<String, String>> conversationHistory = conversationService.loadConversationHistory(sessionId);
+            List<Map<String, String>> conversationHistory = conversationService.loadConversationContext(sessionId);
             List<String> subqueries = queryDecomposer.decompose(userMessage);
             if (subqueries.size() > 1) {
                 log.info("检测到多意图问题，子问题数: {}", subqueries.size());
@@ -301,7 +316,7 @@ public class ChatServiceImpl implements ChatService {
                 return;
             }
 
-            List<Map<String, String>> conversationHistory = conversationService.loadConversationHistory(sessionId);
+            List<Map<String, String>> conversationHistory = conversationService.loadConversationContext(sessionId);
             List<String> subqueries = queryDecomposer.decompose(userMessage);
             if (subqueries.size() > 1) {
                 ExecutionResult multiResult = executeMultiIntentRoute(
@@ -726,11 +741,12 @@ public class ChatServiceImpl implements ChatService {
 
     private List<RetrievalMatch> retrieveMatches(String userId,
                                                  String message,
-                                                 int topK) {
+                                                 int topK,
+                                                 IntentDecision intent) {
         QueryPlan plan = queryAnalysisService.createPlan(message);
         List<List<RetrievalMatch>> resultSets = new ArrayList<>();
 
-        resultSets.add(retrieveWithFallback(userId, message, topK));
+        resultSets.add(retrieveWithFallback(userId, message, topK, intent));
 
         int remainingQueries = ragProperties.getFusion().getMaxQueries() - 1;
         if (ragProperties.getHyde().isEnabled()) {
@@ -742,7 +758,7 @@ public class ChatServiceImpl implements ChatService {
             if (rewrites != null && !rewrites.isEmpty()) {
                 int limit = Math.min(remainingQueries, rewrites.size());
                 for (int i = 0; i < limit; i++) {
-                    resultSets.add(retrieveWithFallback(userId, rewrites.get(i), topK));
+                    resultSets.add(retrieveWithFallback(userId, rewrites.get(i), topK, intent));
                 }
             }
         }
@@ -750,7 +766,7 @@ public class ChatServiceImpl implements ChatService {
         if (ragProperties.getHyde().isEnabled()) {
             String hydeAnswer = plan.getHydeAnswer();
             if (hydeAnswer != null && !hydeAnswer.isBlank()) {
-                resultSets.add(retrieverService.retrieveVectorOnly(hydeAnswer, topK, userId));
+                resultSets.add(multiChannelRetrievalEngine.retrieve(userId, hydeAnswer, topK, null));
             }
         }
 
@@ -785,18 +801,20 @@ public class ChatServiceImpl implements ChatService {
 
     private List<RetrievalMatch> retrieveWithFallback(String userId,
                                                       String message,
-                                                      int topK) {
-        List<RetrievalMatch> results = retrieverService.retrieve(message, topK, userId);
+                                                      int topK,
+                                                      IntentDecision intent) {
+        List<RetrievalMatch> results = multiChannelRetrievalEngine.retrieve(userId, message, topK, intent);
         if (!isLowQualityForFallback(results)) {
             return results;
         }
 
         String refinedQuery = normalizeQuery(message);
         if (!refinedQuery.equals(message)) {
-            List<RetrievalMatch> refined = retrieverService.retrieve(
+            List<RetrievalMatch> refined = multiChannelRetrievalEngine.retrieve(
+                    userId,
                     refinedQuery,
                     Math.min(topK * 2, MAX_RETRIEVAL_K),
-                    userId
+                    intent
             );
             if (!isLowQualityForFallback(refined)) {
                 return refined;
@@ -864,8 +882,11 @@ public class ChatServiceImpl implements ChatService {
             return List.of();
         }
 
-        // 默认 HYBRID
-        return retrieveMatches(userId, message, topK);
+        IntentDecision retrievalIntent = intent;
+        if (retrievalIntent != null && retrievalIntent.getAction() != IntentDecision.Action.ROUTE_RAG) {
+            retrievalIntent = null;
+        }
+        return retrieveMatches(userId, message, topK, retrievalIntent);
     }
 
     private String buildMatchKey(RetrievalMatch match) {

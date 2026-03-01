@@ -20,20 +20,18 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.tika.Tika;
 import org.apache.tika.exception.TikaException;
-import org.apache.tika.extractor.EmbeddedDocumentExtractor;
-import org.apache.tika.metadata.Metadata;
-import org.apache.tika.parser.AutoDetectParser;
-import org.apache.tika.parser.ParseContext;
-import org.apache.tika.parser.Parser;
-import org.apache.tika.parser.pdf.PDFParserConfig;
-import org.apache.tika.sax.BodyContentHandler;
+import org.buaa.rag.core.parser.DocumentParseResult;
+import org.buaa.rag.core.parser.DocumentParser;
+import org.buaa.rag.core.parser.DocumentParserSelector;
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.exception.DocumentIngestionException;
 import org.buaa.rag.common.convention.exception.ServiceException;
@@ -55,7 +53,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
-import org.xml.sax.ContentHandler;
 import org.xml.sax.SAXException;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -86,6 +83,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final DocumentIngestionProducer ingestionProducer;
     private final TextCleaningService textCleaningService;
     private final TextChunkingService textChunkingService;
+    private final DocumentParserSelector documentParserSelector;
     private final DocumentIndexingService indexingService;
     private final TextSegmentMapper segmentMapper;
     private final FIleParseProperties fileParseProperties;
@@ -185,7 +183,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         }
 
         try (InputStream in = downloadForIngestion(documentMd5, originalFileName)) {
-            List<ContentFragment> fragments = extractAndChunk(documentMd5, in);
+            List<ContentFragment> fragments = extractAndChunk(documentMd5, originalFileName, in);
             indexingService.index(documentMd5, fragments);
             markCompleted(documentMd5);
             log.info("文档摄取完成: {}", documentMd5);
@@ -225,51 +223,49 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     /**
      * 提取文本 → 清洗 → 分块 → 持久化，返回片段列表供后续索引使用
      */
-    private List<ContentFragment> extractAndChunk(String documentMd5, InputStream in)
-        throws IOException, TikaException {
+    private List<ContentFragment> extractAndChunk(String documentMd5,
+                                                  String originalFileName,
+                                                  InputStream in) {
+        String raw = extractText(in, originalFileName, null);
+        String cleaned = textCleaningService.clean(raw, fileParseProperties.getMaxCleanedChars());
+        if (!StringUtils.hasText(cleaned)) {
+            throw new ServiceException("文档内容为空或不可解析", DOCUMENT_PARSE_FAILED);
+        }
+        log.info("文本提取成功，字符数: {}", cleaned.length());
+
+        List<String> chunks = textChunkingService.chunk(cleaned, fileParseProperties.getChunkSize());
+        if (chunks.isEmpty()) {
+            throw new ServiceException("文档切分后为空", DOCUMENT_PARSE_FAILED);
+        }
+        log.info("文本分块完成，片段数: {}", chunks.size());
+
+        deleteSegments(documentMd5);
+        persistSegments(documentMd5, chunks);
+
+        return toFragments(chunks);
+    }
+
+    private String extractText(InputStream stream, String fileName, String mimeType) {
+        DocumentParser parser = documentParserSelector.selectByMimeType(mimeType, fileName);
+        if (parser == null) {
+            throw new ServiceException("未找到可用文档解析器", DOCUMENT_PARSE_FAILED);
+        }
+        Map<String, Object> parserOptions = buildParserOptions();
         try {
-            String raw = extractText(in);
-            String cleaned = textCleaningService.clean(raw, fileParseProperties.getMaxCleanedChars());
-            if (!StringUtils.hasText(cleaned)) {
-                throw new ServiceException("文档内容为空或不可解析", DOCUMENT_PARSE_FAILED);
-            }
-            log.info("文本提取成功，字符数: {}", cleaned.length());
-
-            List<String> chunks = textChunkingService.chunk(cleaned, fileParseProperties.getChunkSize());
-            if (chunks.isEmpty()) {
-                throw new ServiceException("文档切分后为空", DOCUMENT_PARSE_FAILED);
-            }
-            log.info("文本分块完成，片段数: {}", chunks.size());
-
-            deleteSegments(documentMd5);
-            persistSegments(documentMd5, chunks);
-
-            return toFragments(chunks);
-        } catch (SAXException e) {
-            throw new ServiceException("文档解析错误", e, DOCUMENT_PARSE_FAILED);
+            DocumentParseResult result = parser.parse(stream, fileName, mimeType, parserOptions);
+            return result == null ? "" : result.text();
+        } catch (ServiceException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ServiceException("文档解析错误: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
         }
     }
 
-    private String extractText(InputStream stream) throws IOException, TikaException, SAXException {
-        int writeLimit = Math.max(2048, fileParseProperties.getMaxExtractedChars());
-        BodyContentHandler handler = new BodyContentHandler(writeLimit);
-        Metadata metadata = new Metadata();
-        AutoDetectParser parser = new AutoDetectParser();
-        ParseContext ctx = new ParseContext();
-        ctx.set(Parser.class, parser);
-        ctx.set(EmbeddedDocumentExtractor.class, new NoOpEmbeddedExtractor());
-        ctx.set(PDFParserConfig.class, buildPdfParserConfig());
-
-        try {
-            parser.parse(stream, handler, metadata, ctx);
-        } catch (SAXException e) {
-            if (isWriteLimitReached(e)) {
-                log.warn("文档内容超过解析上限，已截断至 {} 字符", writeLimit);
-            } else {
-                throw e;
-            }
-        }
-        return handler.toString();
+    private Map<String, Object> buildParserOptions() {
+        Map<String, Object> options = new HashMap<>();
+        options.put("maxExtractedChars", fileParseProperties.getMaxExtractedChars());
+        options.put("enableOcr", fileParseProperties.isEnableOcr());
+        return options;
     }
 
     private void persistSegments(String documentMd5, List<String> chunks) {
@@ -382,30 +378,12 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         return String.format("uploads/%s/source%s", md5, suffix);
     }
 
-    private boolean isWriteLimitReached(SAXException e) {
-        if (e == null || e.getMessage() == null) {
-            return false;
-        }
-        String msg = e.getMessage().toLowerCase(Locale.ROOT);
-        return msg.contains("write limit") || msg.contains("more than");
-    }
-
     private byte[] readFileHeader(MultipartFile file) {
         try (InputStream inputStream = file.getInputStream()) {
             return inputStream.readNBytes(MAGIC_HEADER_BYTES);
         } catch (IOException e) {
             throw new ServiceException("文件头读取失败: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
         }
-    }
-
-    private PDFParserConfig buildPdfParserConfig() {
-        PDFParserConfig config = new PDFParserConfig();
-        config.setExtractInlineImages(false);
-        config.setSortByPosition(true);
-        config.setOcrStrategy(fileParseProperties.isEnableOcr()
-                ? PDFParserConfig.OCR_STRATEGY.AUTO
-                : PDFParserConfig.OCR_STRATEGY.NO_OCR);
-        return config;
     }
 
     private InputStream downloadForIngestion(String md5, String filename) throws Exception {
@@ -539,21 +517,4 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         return current;
     }
 
-    // ═══════════════════ 内部类 ═══════════════════
-
-    /**
-     * 禁止递归解析嵌入对象，避免异常文件导致解析放大
-     */
-    private static class NoOpEmbeddedExtractor implements EmbeddedDocumentExtractor {
-        @Override
-        public boolean shouldParseEmbedded(Metadata metadata) {
-            return false;
-        }
-
-        @Override
-        public void parseEmbedded(InputStream stream, ContentHandler handler,
-                                  Metadata metadata, boolean outputHtml) {
-            // no-op
-        }
-    }
 }

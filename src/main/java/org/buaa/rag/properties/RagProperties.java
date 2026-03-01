@@ -21,6 +21,7 @@ public class RagProperties {
     private Feedback feedback = new Feedback();
     private Decomposition decomposition = new Decomposition();
     private SemanticCache semanticCache = new SemanticCache();
+    private Memory memory = new Memory();
 
     @Data
     public static class Rewrite {
@@ -81,5 +82,33 @@ public class RagProperties {
         private double minSimilarity = 0.92;
         private int maxEntries = 300;
         private long ttlMinutes = 120;
+    }
+
+    @Data
+    public static class Memory {
+        /**
+         * 短期记忆保留轮数（1轮=用户+助手）
+         */
+        private int historyKeepTurns = 4;
+        /**
+         * 是否启用长期摘要
+         */
+        private boolean summaryEnabled = true;
+        /**
+         * 触发摘要的轮数阈值（需大于 historyKeepTurns）
+         */
+        private int summaryStartTurns = 8;
+        /**
+         * 摘要最大字符数
+         */
+        private int summaryMaxChars = 320;
+        /**
+         * 摘要生成时的最大输出 token
+         */
+        private int summaryMaxTokens = 180;
+        /**
+         * 两次摘要生成之间最小新增消息数
+         */
+        private int minDeltaMessages = 4;
     }
 }

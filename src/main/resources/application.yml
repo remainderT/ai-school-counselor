@@ -65,7 +65,13 @@ storage:
 
 file:
   parsing:
+    chunk-mode: structure_aware
     chunk-size: 512
+    overlap-size: 128
+    semantic-target-chars: 1400
+    semantic-max-chars: 1800
+    semantic-min-chars: 600
+    semantic-overlap-chars: 0
     buffer-size: 8192
     max-memory-threshold: 0.8
     max-upload-bytes: 104857600
@@ -179,3 +185,23 @@ rag:
     min-similarity: 0.92
     max-entries: 300
     ttl-minutes: 120
+  memory:
+    history-keep-turns: 4
+    summary-enabled: true
+    summary-start-turns: 8
+    summary-max-chars: 320
+    summary-max-tokens: 180
+    min-delta-messages: 4
+  search:
+    channels:
+      intent-directed:
+        enabled: true
+        min-intent-score: 0.55
+        top-k-multiplier: 2
+      vector-global:
+        enabled: true
+        confidence-threshold: 0.65
+        top-k-multiplier: 2
+    post-processor:
+      deduplicate: true
+      rerank: true

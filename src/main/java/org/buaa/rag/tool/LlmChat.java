@@ -5,11 +5,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 import org.buaa.rag.properties.LlmProperties;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.beans.factory.ObjectProvider;
@@ -24,6 +26,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Service
 public class LlmChat {
+    private static final Pattern MEANINGFUL_PATTERN = Pattern.compile("[\\p{IsHan}\\p{L}\\p{N}]");
     private final LlmProperties llmProperties;
     private final ObjectProvider<ChatClient.Builder> chatClientBuilderProvider;
 
@@ -57,15 +60,26 @@ public class LlmChat {
                 request = request.messages(historyMessages);
             }
 
+            StreamChunkProbe streamProbe = new StreamChunkProbe();
             AtomicBoolean completionFlag = new AtomicBoolean(false);
             request.user(userQuery)
                 .stream()
                 .content()
-                .doOnComplete(() -> notifyCompletion(completionFlag, completionHandler))
+                .doOnComplete(() -> {
+                    String remaining = streamProbe.flush();
+                    if (chunkHandler != null && remaining != null && !remaining.isEmpty()) {
+                        chunkHandler.accept(remaining);
+                    }
+                    notifyCompletion(completionFlag, completionHandler);
+                })
                 .subscribe(
                     chunk -> {
-                        if (chunkHandler != null && chunk != null && !chunk.isEmpty()) {
-                            chunkHandler.accept(chunk);
+                        if (chunkHandler == null || chunk == null || chunk.isEmpty()) {
+                            return;
+                        }
+                        String cleaned = streamProbe.accept(chunk);
+                        if (cleaned != null && !cleaned.isEmpty()) {
+                            chunkHandler.accept(cleaned);
                         }
                     },
                     error -> {
@@ -148,6 +162,8 @@ public class LlmChat {
                 messages.add(new AssistantMessage(content));
             } else if ("user".equalsIgnoreCase(role)) {
                 messages.add(new UserMessage(content));
+            } else if ("system".equalsIgnoreCase(role)) {
+                messages.add(new SystemMessage(content));
             }
         }
         return messages;
@@ -191,6 +207,68 @@ public class LlmChat {
     private void notifyCompletion(AtomicBoolean flag, Runnable completionHandler) {
         if (completionHandler != null && flag.compareAndSet(false, true)) {
             completionHandler.run();
+        }
+    }
+
+    private static String sanitizeChunk(String rawChunk) {
+        if (rawChunk == null || rawChunk.isBlank()) {
+            return "";
+        }
+        return rawChunk
+            .replace("<|im_start|>", "")
+            .replace("<|im_end|>", "")
+            .replace("<|endoftext|>", "")
+            .replace("\u0000", "")
+            .replaceAll("(?i)^assistant\\s*", "")
+            .replaceAll("(?i)^user\\s*", "");
+    }
+
+    private static boolean hasMeaningfulText(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        return MEANINGFUL_PATTERN.matcher(text).find();
+    }
+
+    private static final class StreamChunkProbe {
+        private final StringBuilder buffer = new StringBuilder();
+        private boolean firstPayloadSent;
+
+        String accept(String rawChunk) {
+            String cleaned = sanitizeChunk(rawChunk);
+            if (cleaned.isEmpty()) {
+                return "";
+            }
+
+            if (firstPayloadSent) {
+                return cleaned;
+            }
+
+            buffer.append(cleaned);
+            if (!hasMeaningfulText(buffer.toString())) {
+                if (buffer.length() > 256) {
+                    buffer.delete(0, buffer.length() - 64);
+                }
+                return "";
+            }
+
+            firstPayloadSent = true;
+            String firstChunk = sanitizeChunk(buffer.toString());
+            buffer.setLength(0);
+            return firstChunk;
+        }
+
+        String flush() {
+            if (firstPayloadSent || buffer.isEmpty()) {
+                return "";
+            }
+            String candidate = sanitizeChunk(buffer.toString());
+            if (!hasMeaningfulText(candidate)) {
+                return "";
+            }
+            buffer.setLength(0);
+            firstPayloadSent = true;
+            return candidate;
         }
     }
 }

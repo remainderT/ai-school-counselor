@@ -11,6 +11,8 @@ public interface ConversationService {
 
     List<Map<String, String>> loadConversationHistory(String sessionId);
 
+    List<Map<String, String>> loadConversationContext(String sessionId);
+
     Long appendUserMessage(String sessionId,
                            String userId,
                            String userMessage);
