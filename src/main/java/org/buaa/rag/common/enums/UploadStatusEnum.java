@@ -11,7 +11,6 @@ public enum UploadStatusEnum {
     PENDING(0, "待处理"),
     PROCESSING(1, "处理中"),
     COMPLETED(2, "已完成"),
-    FAILED_RETRYABLE(-2, "失败（可重试）"),
     FAILED_FINAL(-1, "失败（最终）");
 
     private final int code;

@@ -13,7 +13,7 @@ public interface DocumentService {
     /**
      * 上传文档
      */
-    void upload(MultipartFile file, String visibility);
+    void upload(MultipartFile file, Long knowledgeId);
 
     /**
      * 列出用户的文档
@@ -26,12 +26,12 @@ public interface DocumentService {
     void delete(String id);
 
     /**
-     * 处理文档摄取任务
+     * 异步摄取文档任务
      */
     void ingestDocumentTask(String documentMd5, String originalFileName);
 
     /**
-     * 将文档状态标记为最终失败（不可继续重试）
+     * 标记文档摄取最终失败
      */
     void markIngestionFinalFailure(String documentMd5, String failureReason);
 }

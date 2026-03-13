@@ -1,5 +1,5 @@
 server:
-  port: 8000
+  port: 8001
 
 spring:
   web:
@@ -58,8 +58,8 @@ spring:
 
 storage:
   service-endpoint: http://localhost:9000
-  access-key-id: rustfs-access-key
-  secret-access-key: rustfs-secret-key
+  access-key-id: rustfsadmin
+  secret-access-key: rustfsadmin
   storage-bucket: uploads
   region: cn-beijing
 
@@ -90,6 +90,26 @@ flow-limit:
   time-window: 1
   max-access-count: 10
 
+ingestion:
+  stream:
+    enabled: true
+    key: rag:document:ingestion
+    group: document-ingestion-group
+    consumer: document-ingestion-consumer
+    batch-size: 5
+    block-ms: 1000
+    poll-interval-ms: 500
+    max-retries: 3
+
+mcp:
+  weather:
+    enabled: true
+    server-url: http://localhost:18080/mcp
+    tool-name: weather_query
+    connect-timeout-ms: 1500
+    read-timeout-ms: 3000
+    fallback-enabled: true
+
 
 ai:
   prompt:
@@ -108,18 +128,6 @@ ai:
     temperature: 0.3
     max-token: 2000
     top-p: 0.9
-
-
-ingestion:
-  stream:
-    enabled: true
-    key: rag:stream:document-ingestion
-    group: document-ingestion-group
-    consumer: document-worker-1
-    batch-size: 5
-    block-ms: 1500
-    poll-interval-ms: 500
-    max-retries: 3
 
 rag:
   embedding:

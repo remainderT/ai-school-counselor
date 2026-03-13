@@ -5,10 +5,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.buaa.rag.core.chunk.ChunkingMode;
-import org.buaa.rag.core.chunk.ChunkingOptions;
-import org.buaa.rag.core.chunk.ChunkingStrategy;
-import org.buaa.rag.core.chunk.ChunkingStrategyFactory;
+import org.buaa.rag.module.chunk.ChunkingMode;
+import org.buaa.rag.module.chunk.ChunkingOptions;
+import org.buaa.rag.module.chunk.ChunkingStrategy;
+import org.buaa.rag.module.chunk.ChunkingStrategyFactory;
 import org.buaa.rag.properties.FIleParseProperties;
 import org.buaa.rag.service.TextChunkingService;
 import org.springframework.stereotype.Service;
@@ -18,7 +18,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 分块服务实现：支持固定窗口、结构感知、句子、段落多策略
+ * 分块服务实现：支持 fixed_size 与 structure_aware 双策略
  */
 @Slf4j
 @Service

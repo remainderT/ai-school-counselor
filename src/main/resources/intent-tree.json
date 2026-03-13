@@ -150,7 +150,7 @@
     "type": "GROUP",
     "description": "宿舍 校园卡 网络 后勤 校医院",
     "keywords": ["宿舍", "校园卡", "网络", "后勤", "医保", "校车"],
-    "children": ["life_dorm", "life_card_net", "life_medical"]
+    "children": ["life_dorm", "life_card_net", "life_medical", "life_weather_mcp"]
   },
   {
     "nodeId": "life_dorm",
@@ -196,6 +196,15 @@
     "description": "校医院医保报销 校车时刻表",
     "keywords": ["校医院", "医保", "报销", "校车"],
     "knowledgeBaseId": "knowledge"
+  },
+  {
+    "nodeId": "life_weather_mcp",
+    "nodeName": "天气查询",
+    "parentId": "campus_life",
+    "type": "API_ACTION",
+    "description": "查询城市当前天气与未来天气预报",
+    "keywords": ["天气", "气温", "温度", "下雨", "降雨", "预报"],
+    "actionService": "weather"
   },
   {
     "nodeId": "career",

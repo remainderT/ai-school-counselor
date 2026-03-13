@@ -42,6 +42,12 @@
     "samples": ["校级奖学金有哪些", "校奖怎么申请", "校级奖学金评选条件"]
   },
   {
+    "intentCode": "life:weather",
+    "level1": "校园生活服务",
+    "level2": "天气查询",
+    "samples": ["北京今天天气怎么样", "上海明天会下雨吗", "杭州未来三天天气"]
+  },
+  {
     "intentCode": "life:crisis",
     "level1": "心理与生活",
     "level2": "危机求助",

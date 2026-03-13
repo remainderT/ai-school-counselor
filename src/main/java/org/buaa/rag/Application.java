@@ -7,8 +7,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 
 @SpringBootApplication
-@MapperScan("org.buaa.rag.dao.mapper")
 @EnableScheduling
+@MapperScan("org.buaa.rag.dao.mapper")
 public class Application {
 
     public static void main(String[] args) {

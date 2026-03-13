@@ -29,11 +29,11 @@ public class DocumentDO extends BaseDO {
 
     private long fileSizeBytes;
 
-    private int processingStatus; // 0-待处理 1-处理中 2-已完成 -2-失败可重试 -1-失败最终
+    private int processingStatus; // 0-待处理 1-处理中 2-已完成 -1-失败
 
     private Long userId;
 
-    private String visibility;
+    private Long knowledgeId;
 
     private String failureReason;
 

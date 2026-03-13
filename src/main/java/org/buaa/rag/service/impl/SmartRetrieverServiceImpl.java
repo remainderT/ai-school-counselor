@@ -13,7 +13,7 @@ import java.util.stream.Collectors;
 import org.buaa.rag.properties.EsProperties;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.dao.entity.DocumentDO;
-import org.buaa.rag.dao.entity.IndexedContentDO;
+import org.buaa.rag.dao.entity.ESIndexDO;
 import org.buaa.rag.dao.entity.MessageFeedbackDO;
 import org.buaa.rag.dao.entity.MessageSourceDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
@@ -95,7 +95,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             }
 
             int recallSize = calculateRecallSize(queryText, topK);
-            SearchResponse<IndexedContentDO> response = esClient.search(searchBuilder -> {
+            SearchResponse<ESIndexDO> response = esClient.search(searchBuilder -> {
                 searchBuilder.index(esProperties.getIndex());
                 searchBuilder.knn(knnBuilder -> knnBuilder
                         .field("vectorEmbedding")
@@ -105,7 +105,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                 );
                 searchBuilder.size(topK);
                 return searchBuilder;
-            }, IndexedContentDO.class);
+            }, ESIndexDO.class);
 
             List<RetrievalMatch> results = response.hits().hits().stream()
                     .filter(hit -> hit.source() != null)
@@ -172,7 +172,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         Operator matchOperator = resolveOperator(query);
 
         try {
-            SearchResponse<IndexedContentDO> response = esClient.search(searchBuilder -> {
+            SearchResponse<ESIndexDO> response = esClient.search(searchBuilder -> {
                 // kNN向量召回
                 searchBuilder.index(esProperties.getIndex());
                 searchBuilder.knn(knnBuilder -> knnBuilder
@@ -209,7 +209,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
                 searchBuilder.size(topK);
                 return searchBuilder;
-            }, IndexedContentDO.class);
+            }, ESIndexDO.class);
 
             return response.hits().hits().stream()
                     .filter(hit -> hit.source() != null)
@@ -254,7 +254,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                                                           String userId)
             throws Exception {
         try {
-            SearchResponse<IndexedContentDO> response = esClient.search(searchBuilder ->
+            SearchResponse<ESIndexDO> response = esClient.search(searchBuilder ->
                             searchBuilder
                                     .index(esProperties.getIndex())
                                     .query(queryBuilder -> queryBuilder
@@ -264,7 +264,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                                             )
                                     )
                                     .size(topK),
-                    IndexedContentDO.class
+                    ESIndexDO.class
             );
 
             List<RetrievalMatch> results = response.hits().hits().stream()
@@ -369,15 +369,13 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     /**
      * 获取用户可访问的文档 MD5 列表。
      *
-     * <p>仅允许 PUBLIC 或用户本人上传的文档。</p>
+     * <p>仅允许用户本人上传的文档。</p>
      *
      * @param userId 用户标识
      * @return 可访问文档的 MD5 集合
      */
     private Set<String> resolveAccessibleDocuments(String userId) {
         Set<String> md5Set = new HashSet<>();
-
-        md5Set.addAll(loadMd5ByVisibility("public"));
         md5Set.addAll(loadMd5ByOwnerId(userId));
 
         return md5Set;
@@ -516,20 +514,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             boostMap.put(md5, boost);
         }
         return boostMap;
-    }
-
-    private List<String> loadMd5ByVisibility(String visibility) {
-        LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
-                .eq(DocumentDO::getVisibility, visibility)
-                .select(DocumentDO::getMd5Hash);
-        List<DocumentDO> rows = documentMapper.selectList(queryWrapper);
-        if (rows == null || rows.isEmpty()) {
-            return List.of();
-        }
-        return rows.stream()
-                .map(DocumentDO::getMd5Hash)
-                .filter(md5 -> md5 != null && !md5.isBlank())
-                .toList();
     }
 
     private List<String> loadMd5ByOwnerId(String userId) {

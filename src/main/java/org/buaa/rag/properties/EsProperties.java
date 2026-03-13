@@ -26,7 +26,7 @@ public class EsProperties {
     /**
      * 协议（http / https）
      */
-    private String scheme = "https";
+    private String scheme = "http";
 
     /**
      * 索引名称

@@ -27,5 +27,4 @@ public class UserDO extends BaseDO {
     private String mail;
 
     private String salt;
-
 }

@@ -95,15 +95,15 @@ public class DocumentIngestionConsumer {
 
     private void processSafely(MapRecord<String, Object, Object> record) {
         try {
-            handleRecord(record);
+            if (handleRecord(record)) {
+                acknowledge(record);
+            }
         } catch (Exception e) {
             log.error("处理文档摄取任务异常: recordId={}", record.getId(), e);
-        } finally {
-            acknowledge(record);
         }
     }
 
-    private void handleRecord(MapRecord<String, Object, Object> record) {
+    private boolean handleRecord(MapRecord<String, Object, Object> record) {
         Map<Object, Object> body = record.getValue();
         String documentMd5 = Objects.toString(body.get(FIELD_DOCUMENT_MD5), null);
         String fileName = Objects.toString(body.get(FIELD_FILE_NAME), null);
@@ -111,21 +111,23 @@ public class DocumentIngestionConsumer {
 
         if (!StringUtils.hasText(documentMd5) || !StringUtils.hasText(fileName)) {
             log.debug("忽略无效文档任务: recordId={}", record.getId());
-            return;
+            return true;
         }
 
         try {
             documentService.ingestDocumentTask(documentMd5, fileName);
+            return true;
         } catch (Exception ex) {
-            handleFailure(documentMd5, fileName, retryCount, ex);
+            return handleFailure(documentMd5, fileName, retryCount, ex);
         }
     }
 
-    private void handleFailure(String md5, String fileName, int retryCount, Exception ex) {
+    private boolean handleFailure(String md5, String fileName, int retryCount, Exception ex) {
         boolean retryable = isRetryable(ex);
         if (retryable && retryCount < props.getMaxRetries()) {
             producer.enqueue(md5, fileName, retryCount + 1);
             log.warn("文档摄取失败，已重试入队: md5={}, retry={}/{}", md5, retryCount + 1, props.getMaxRetries(), ex);
+            return true;
         } else {
             documentService.markIngestionFinalFailure(md5, summarizeFailureReason(ex));
             if (retryable) {
@@ -133,6 +135,7 @@ public class DocumentIngestionConsumer {
             } else {
                 log.error("文档摄取失败，不可重试: md5={}, retries={}", md5, retryCount, ex);
             }
+            return true;
         }
     }
 

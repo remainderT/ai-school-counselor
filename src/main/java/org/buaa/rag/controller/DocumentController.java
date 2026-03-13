@@ -26,8 +26,8 @@ public class DocumentController {
 
     @PostMapping("/upload")
     public Result<Void> upload(@RequestParam("file") MultipartFile uploadedFile,
-                               @RequestParam(defaultValue = "PRIVATE") String visibility) {
-        documentService.upload(uploadedFile, visibility);
+                               @RequestParam("knowledgeId") Long knowledgeId) {
+        documentService.upload(uploadedFile, knowledgeId);
         return Results.success();
     }
 

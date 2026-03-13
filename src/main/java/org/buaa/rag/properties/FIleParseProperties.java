@@ -13,7 +13,7 @@ import lombok.Data;
 @ConfigurationProperties(prefix = "file.parsing")
 public class FIleParseProperties {
 
-    /** 分块模式: fixed_size / structure_aware / sentence / paragraph */
+    /** 分块模式: fixed_size / structure_aware */
     private String chunkMode = "structure_aware";
 
     /** 文本分块大小 */

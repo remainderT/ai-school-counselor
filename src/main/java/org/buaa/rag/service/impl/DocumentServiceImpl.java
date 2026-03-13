@@ -9,14 +9,15 @@ import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_SIZE_EXCE
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_TYPE_NOT_SUPPORTED;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_UPLOAD_FAILED;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_UPLOAD_NULL;
+import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_ACCESS_DENIED;
+import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_ID_REQUIRED;
+import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_NOT_EXISTS;
 import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.STORAGE_SERVICE_ERROR;
 import static org.buaa.rag.common.enums.UploadStatusEnum.COMPLETED;
 import static org.buaa.rag.common.enums.UploadStatusEnum.FAILED_FINAL;
-import static org.buaa.rag.common.enums.UploadStatusEnum.FAILED_RETRYABLE;
 import static org.buaa.rag.common.enums.UploadStatusEnum.PENDING;
 import static org.buaa.rag.common.enums.UploadStatusEnum.PROCESSING;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.LocalDateTime;
@@ -24,81 +25,77 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.tika.Tika;
-import org.apache.tika.exception.TikaException;
-import org.buaa.rag.core.parser.DocumentParseResult;
-import org.buaa.rag.core.parser.DocumentParser;
-import org.buaa.rag.core.parser.DocumentParserSelector;
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.exception.DocumentIngestionException;
 import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.common.user.UserContext;
+import org.buaa.rag.dao.entity.ChunkDO;
 import org.buaa.rag.dao.entity.DocumentDO;
-import org.buaa.rag.dao.entity.TextSegmentDO;
+import org.buaa.rag.dao.entity.KnowledgeDO;
+import org.buaa.rag.dao.mapper.ChunkMapper;
 import org.buaa.rag.dao.mapper.DocumentMapper;
-import org.buaa.rag.dao.mapper.TextSegmentMapper;
+import org.buaa.rag.dao.mapper.KnowledgeMapper;
 import org.buaa.rag.dto.ContentFragment;
 import org.buaa.rag.mq.DocumentIngestionProducer;
+import org.buaa.rag.module.parser.TextCleaningService;
+import org.buaa.rag.module.vector.DocumentIndexingService;
 import org.buaa.rag.properties.FIleParseProperties;
-import org.buaa.rag.service.DocumentIndexingService;
 import org.buaa.rag.service.DocumentService;
 import org.buaa.rag.service.TextChunkingService;
-import org.buaa.rag.service.TextCleaningService;
+import org.buaa.rag.module.parser.DocumentParseResult;
+import org.buaa.rag.module.parser.DocumentParser;
+import org.buaa.rag.module.parser.DocumentParserSelector;
 import org.buaa.rag.tool.FileTypeValidate;
 import org.buaa.rag.tool.RustfsStorage;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
-import org.xml.sax.SAXException;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import software.amazon.awssdk.core.exception.SdkException;
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
 /**
  * 文档服务实现层
  * <p>
- * 负责文档的上传、解析、分块持久化以及生命周期管理。
- * 向量索引委托给 {@link DocumentIndexingService}，
- * 文本分块委托给 {@link TextChunkingService}。
+ * 上传阶段仅负责校验、存储和入队；解析、分块与索引由 Redis Stream 异步完成。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO> implements DocumentService {
 
-    private static final String DEFAULT_VISIBILITY = "private";
     private static final int MAGIC_HEADER_BYTES = 16;
     private static final int MAX_FAILURE_REASON_LENGTH = 512;
 
     private final RustfsStorage rustfsStorage;
-    private final DocumentIngestionProducer ingestionProducer;
     private final TextCleaningService textCleaningService;
     private final TextChunkingService textChunkingService;
     private final DocumentParserSelector documentParserSelector;
     private final DocumentIndexingService indexingService;
-    private final TextSegmentMapper segmentMapper;
+    private final ChunkMapper chunkMapper;
+    private final KnowledgeMapper knowledgeMapper;
     private final FIleParseProperties fileParseProperties;
+    private final DocumentIngestionProducer producer;
 
 
     private final Tika tika = new Tika();
 
     @Override
-    public void upload(MultipartFile file, String visibility) {
+    public void upload(MultipartFile file, Long knowledgeId) {
         if (file == null || file.isEmpty()) {
             throw new ClientException(DOCUMENT_UPLOAD_NULL);
         }
         if (file.getSize() > fileParseProperties.getMaxUploadBytes()) {
             throw new ClientException(DOCUMENT_SIZE_EXCEEDED);
         }
+
+        KnowledgeDO knowledge = verifyUploadKnowledge(knowledgeId);
 
         String originalFilename = file.getOriginalFilename();
         if (!StringUtils.hasText(originalFilename)) {
@@ -134,14 +131,20 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             rustfsStorage.upload(buildObjectPath(md5, originalFilename), file.getInputStream(), file.getSize(),
                     StringUtils.hasText(mimeType) ? mimeType : file.getContentType()
             );
-
-            insertDocumentRecord(md5, originalFilename, file.getSize(), visibility);
-            ingestionProducer.enqueue(md5, originalFilename, 0);
+            insertDocument(md5, originalFilename, file.getSize(), knowledge.getId());
         } catch (ClientException e) {
             throw e;
         } catch (Exception e) {
             markFailed(md5, "文件上传失败", e);
             throw new ServiceException("文件上传失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
+        }
+
+        try {
+            producer.enqueue(md5, originalFilename, 0);
+
+        } catch (Exception e) {
+            markFailed(md5, "文档入队失败", e);
+            throw new ServiceException("文档入队失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
         }
     }
 
@@ -172,48 +175,136 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     }
 
     @Override
-    @Transactional
     public void ingestDocumentTask(String documentMd5, String originalFileName) {
-        String objectPath = buildObjectPath(documentMd5, originalFileName);
-        log.info("异步摄取开始: {} -> {}", documentMd5, objectPath);
-
+        DocumentDO record = findByMd5(documentMd5);
+        if (record == null) {
+            log.info("文档记录不存在，跳过异步摄取: {}", documentMd5);
+            return;
+        }
         if (!markProcessing(documentMd5)) {
-            log.warn("文档记录不存在，跳过摄取: {}", documentMd5);
+            log.info("文档状态不可更新，跳过异步摄取: {}", documentMd5);
             return;
         }
 
-        try (InputStream in = downloadForIngestion(documentMd5, originalFileName)) {
+        try (InputStream in = downloadStoredDocument(documentMd5, originalFileName)) {
             List<ContentFragment> fragments = extractAndChunk(documentMd5, originalFileName, in);
             indexingService.index(documentMd5, fragments);
             markCompleted(documentMd5);
-            log.info("文档摄取完成: {}", documentMd5);
         } catch (Exception e) {
-            boolean retryable = isRetryableIngestionFailure(e);
-            if (retryable) {
-                markRetryableFailure(documentMd5, "文档摄取失败", e);
-            } else {
-                markFinalFailure(documentMd5, "文档摄取失败", e);
-            }
-            throw new DocumentIngestionException("文档摄取失败: " + e.getMessage(), e, retryable);
+            rollbackIngestionArtifacts(documentMd5);
+            throw toIngestionException(e);
         }
     }
 
     @Override
     public void markIngestionFinalFailure(String documentMd5, String failureReason) {
+        rollbackIngestionArtifacts(documentMd5);
         updateStatus(documentMd5, FAILED_FINAL.getCode(), LocalDateTime.now(), failureReason);
     }
+
+    private KnowledgeDO verifyUploadKnowledge(Long knowledgeId) {
+        if (knowledgeId == null) {
+            throw new ClientException(KNOWLEDGE_ID_REQUIRED);
+        }
+        KnowledgeDO knowledge = knowledgeMapper.selectOne(
+            Wrappers.lambdaQuery(KnowledgeDO.class)
+                .eq(KnowledgeDO::getId, knowledgeId)
+                .eq(KnowledgeDO::getDelFlag, 0)
+        );
+        if (knowledge == null) {
+            throw new ClientException(KNOWLEDGE_NOT_EXISTS);
+        }
+        Long currentUserId = UserContext.getUserId();
+        if (currentUserId == null || !currentUserId.equals(knowledge.getUserId())) {
+            throw new ClientException(KNOWLEDGE_ACCESS_DENIED);
+        }
+        return knowledge;
+    }
+
+    private void rollbackIngestionArtifacts(String documentMd5) {
+        try {
+            indexingService.removeIndex(documentMd5);
+        } catch (Exception e) {
+            log.warn("回滚索引失败: {}", documentMd5, e);
+        }
+        try {
+            deleteSegments(documentMd5);
+        } catch (Exception e) {
+            log.warn("回滚chunk失败: {}", documentMd5, e);
+        }
+    }
+
+    private InputStream downloadStoredDocument(String documentMd5, String originalFileName) {
+        String primaryPath = buildObjectPath(documentMd5, originalFileName);
+        try {
+            return rustfsStorage.download(primaryPath);
+        } catch (Exception primaryException) {
+            String legacyPath = buildLegacyObjectPath(documentMd5, originalFileName);
+            if (StringUtils.hasText(legacyPath) && !primaryPath.equals(legacyPath)) {
+                try {
+                    log.info("主路径下载失败，回退历史路径: {}", legacyPath);
+                    return rustfsStorage.download(legacyPath);
+                } catch (Exception legacyException) {
+                    primaryException.addSuppressed(legacyException);
+                }
+            }
+            throw new DocumentIngestionException(
+                "对象存储下载失败: " + primaryException.getMessage(),
+                primaryException,
+                true,
+                STORAGE_SERVICE_ERROR
+            );
+        }
+    }
+
+    private DocumentIngestionException toIngestionException(Exception exception) {
+        if (exception instanceof DocumentIngestionException ingestionException) {
+            return ingestionException;
+        }
+        boolean retryable = isRetryableIngestionException(exception);
+        if (exception instanceof ServiceException serviceException) {
+            return new DocumentIngestionException(
+                serviceException.getErrorMessage(),
+                serviceException,
+                retryable
+            );
+        }
+        return new DocumentIngestionException(
+            "文档处理失败: " + exception.getMessage(),
+            exception,
+            retryable
+        );
+    }
+
+    private boolean isRetryableIngestionException(Throwable throwable) {
+        if (throwable instanceof ClientException) {
+            return false;
+        }
+        if (throwable instanceof ServiceException serviceException) {
+            String errorCode = serviceException.getErrorCode();
+            return !DOCUMENT_PARSE_FAILED.code().equals(errorCode)
+                && !DOCUMENT_TYPE_NOT_SUPPORTED.code().equals(errorCode)
+                && !DOCUMENT_SIZE_EXCEEDED.code().equals(errorCode)
+                && !DOCUMENT_UPLOAD_NULL.code().equals(errorCode);
+        }
+        return true;
+    }
+
 
     // ═══════════════════ 上传辅助 ═══════════════════
 
 
-    private void insertDocumentRecord(String md5, String filename, long size, String visibility) {
+    private void insertDocument(String md5,
+                                      String filename,
+                                      long size,
+                                      Long knowledgeId) {
         DocumentDO record = new DocumentDO();
         record.setMd5Hash(md5);
         record.setOriginalFileName(filename);
         record.setFileSizeBytes(size);
         record.setProcessingStatus(PENDING.getCode());
-        record.setVisibility(visibility == null ? DEFAULT_VISIBILITY : visibility);
         record.setUserId(UserContext.getUserId());
+        record.setKnowledgeId(knowledgeId);
         record.setFailureReason(null);
         baseMapper.insert(record);
     }
@@ -270,13 +361,13 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
 
     private void persistSegments(String documentMd5, List<String> chunks) {
         for (int i = 0; i < chunks.size(); i++) {
-            TextSegmentDO seg = new TextSegmentDO();
-            seg.setDocumentMd5(documentMd5);
-            seg.setFragmentIndex(i + 1);
-            seg.setTextData(chunks.get(i));
-            segmentMapper.insert(seg);
+            ChunkDO chunk = new ChunkDO();
+            chunk.setDocumentMd5(documentMd5);
+            chunk.setFragmentIndex(i + 1);
+            chunk.setTextData(chunks.get(i));
+            chunkMapper.insert(chunk);
         }
-        log.info("已保存 {} 个文本片段", chunks.size());
+        log.info("已保存 {} 个chunk", chunks.size());
     }
 
     private List<ContentFragment> toFragments(List<String> chunks) {
@@ -307,11 +398,11 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         if (!StringUtils.hasText(documentMd5)) {
             return;
         }
-        segmentMapper.delete(
-            Wrappers.lambdaQuery(TextSegmentDO.class)
-                .eq(TextSegmentDO::getDocumentMd5, documentMd5)
+        chunkMapper.delete(
+            Wrappers.lambdaQuery(ChunkDO.class)
+                .eq(ChunkDO::getDocumentMd5, documentMd5)
         );
-        log.debug("已删除文档分块: {}", documentMd5);
+        log.debug("已删除文档chunk: {}", documentMd5);
     }
 
     // ═══════════════════ 状态管理 ═══════════════════
@@ -324,26 +415,13 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         updateStatus(md5, COMPLETED.getCode(), LocalDateTime.now(), null);
     }
 
-    private void markRetryableFailure(String md5, String message, Exception error) {
-        if (!StringUtils.hasText(md5)) {
-            log.warn(message, error);
-            return;
-        }
-        log.warn("{}: {}", message, md5, error);
-        updateStatus(md5, FAILED_RETRYABLE.getCode(), null, summarizeFailureReason(error));
-    }
-
-    private void markFinalFailure(String md5, String message, Exception error) {
+    private void markFailed(String md5, String message, Exception error) {
         if (!StringUtils.hasText(md5)) {
             log.error(message, error);
             return;
         }
         log.error("{}: {}", message, md5, error);
         updateStatus(md5, FAILED_FINAL.getCode(), LocalDateTime.now(), summarizeFailureReason(error));
-    }
-
-    private void markFailed(String md5, String message, Exception error) {
-        markFinalFailure(md5, message, error);
     }
 
     private boolean updateStatus(String md5, Integer status, LocalDateTime processedAt, String failureReason) {
@@ -354,11 +432,8 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         record.setProcessingStatus(status);
         record.setProcessedAt(processedAt);
         record.setFailureReason(normalizeFailureReason(failureReason));
-        baseMapper.updateById(record);
-        return true;
+        return baseMapper.updateById(record) > 0;
     }
-
-    // ═══════════════════ 通用工具 ═══════════════════
 
     private DocumentDO findByMd5(String md5) {
         if (!StringUtils.hasText(md5)) {
@@ -367,6 +442,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         return baseMapper.selectOne(
             Wrappers.lambdaQuery(DocumentDO.class)
                 .eq(DocumentDO::getMd5Hash, md5)
+                .eq(DocumentDO::getDelFlag, 0)
                 .last("limit 1")
         );
     }
@@ -374,7 +450,6 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private String buildObjectPath(String md5, String filename) {
         String extension = extractExtension(filename);
         String suffix = StringUtils.hasText(extension) ? "." + extension : "";
-        // 使用服务端命名，避免原始文件名带来的路径与特殊字符风险
         return String.format("uploads/%s/source%s", md5, suffix);
     }
 
@@ -386,68 +461,11 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         }
     }
 
-    private InputStream downloadForIngestion(String md5, String filename) throws Exception {
-        String primaryPath = buildObjectPath(md5, filename);
-        try {
-            return rustfsStorage.download(primaryPath);
-        } catch (Exception primaryError) {
-            String legacyPath = buildLegacyObjectPath(md5, filename);
-            if (!StringUtils.hasText(legacyPath) || primaryPath.equals(legacyPath) || !isNoSuchKey(primaryError)) {
-                throw primaryError;
-            }
-            log.warn("主路径下载失败，回退 legacy 路径下载: md5={}, legacyPath={}", md5, legacyPath);
-            return rustfsStorage.download(legacyPath);
-        }
-    }
-
-    private boolean isRetryableIngestionFailure(Throwable throwable) {
-        if (containsCause(throwable, ClientException.class)) {
-            return false;
-        }
-        if (containsCause(throwable, TikaException.class) || containsCause(throwable, SAXException.class)) {
-            return false;
-        }
-        ServiceException serviceException = findCause(throwable, ServiceException.class);
-        if (serviceException != null && DOCUMENT_PARSE_FAILED.code().equals(serviceException.getErrorCode())) {
-            return false;
-        }
-        Throwable root = rootCause(throwable);
-        if (root instanceof NoSuchKeyException || root instanceof FileNotFoundException) {
-            return false;
-        }
-        if (root instanceof NullPointerException && isFromTika(root)) {
-            return false;
-        }
-        if (root instanceof IOException) {
-            return isTransientIo((IOException) root);
-        }
-        return root instanceof SdkException;
-    }
-
-    private boolean isTransientIo(IOException ioException) {
-        String msg = ioException.getMessage();
-        if (!StringUtils.hasText(msg)) {
-            return true;
-        }
-        String normalized = msg.toLowerCase(Locale.ROOT);
-        return normalized.contains("timeout")
-                || normalized.contains("timed out")
-                || normalized.contains("connection reset")
-                || normalized.contains("broken pipe")
-                || normalized.contains("temporarily unavailable");
-    }
-
-    private boolean isFromTika(Throwable throwable) {
-        for (StackTraceElement element : throwable.getStackTrace()) {
-            if (element.getClassName().startsWith("org.apache.tika.")) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private String summarizeFailureReason(Throwable throwable) {
-        Throwable root = rootCause(throwable);
+        Throwable root = throwable;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
         String message = root.getMessage();
         String prefix = root.getClass().getSimpleName();
         String summary = StringUtils.hasText(message) ? prefix + ": " + message : prefix;
@@ -481,40 +499,6 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             return null;
         }
         return String.format("uploads/%s/%s", md5, filename);
-    }
-
-    private boolean isNoSuchKey(Throwable throwable) {
-        Throwable current = throwable;
-        while (current != null) {
-            if (current instanceof NoSuchKeyException) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
-    }
-
-    private <T extends Throwable> boolean containsCause(Throwable throwable, Class<T> type) {
-        return findCause(throwable, type) != null;
-    }
-
-    private <T extends Throwable> T findCause(Throwable throwable, Class<T> type) {
-        Throwable current = throwable;
-        while (current != null) {
-            if (type.isInstance(current)) {
-                return type.cast(current);
-            }
-            current = current.getCause();
-        }
-        return null;
-    }
-
-    private Throwable rootCause(Throwable throwable) {
-        Throwable current = throwable;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current;
     }
 
 }

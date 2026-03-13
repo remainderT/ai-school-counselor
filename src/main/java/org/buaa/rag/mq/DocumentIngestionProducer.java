@@ -30,16 +30,8 @@ public class DocumentIngestionProducer {
 
     /**
      * 将文档摄取任务入队
-     *
-     * @param documentMd5 文档 MD5
-     * @param fileName    原始文件名
-     * @param retryCount  当前重试次数
-     * @return Stream RecordId
      */
     public RecordId enqueue(String documentMd5, String fileName, int retryCount) {
-        Assert.hasText(documentMd5, "documentMd5 不能为空");
-        Assert.hasText(fileName, "fileName 不能为空");
-
         Map<String, String> payload = Map.of(
             FIELD_DOCUMENT_MD5, documentMd5.trim(),
             FIELD_FILE_NAME, fileName.trim(),

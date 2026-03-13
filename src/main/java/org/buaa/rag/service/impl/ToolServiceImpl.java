@@ -52,6 +52,7 @@ public class ToolServiceImpl implements ToolService {
             case "leave" -> handleLeave(userId, userQuery);
             case "repair" -> handleRepair(userId, userQuery);
             case "score" -> handleScore(userId);
+            case "weather" -> handleWeather(userId, userQuery);
             default -> "该需求暂未接入自动处理，请稍后再试。";
         };
     }
@@ -98,6 +99,7 @@ public class ToolServiceImpl implements ToolService {
             case "score" -> "queryGrade";
             case "leave" -> "createLeaveDraft";
             case "repair" -> "createRepairTicket";
+            case "weather" -> "queryWeatherByMcp";
             default -> null;
         };
     }
@@ -133,6 +135,25 @@ public class ToolServiceImpl implements ToolService {
         return "成绩查询结果：当前绩点 " + result.gpa()
             + "，已修学分 " + result.creditCompleted()
             + "，风险课程 " + result.riskCourses() + " 门。";
+    }
+
+    private String handleWeather(String userId, String userQuery) {
+        log.info("触发天气查询工具, userId={}, query={}", userId, userQuery);
+        CounselorTools.WeatherToolResult result = counselorTools.queryWeatherByMcp(
+            null,
+            "current",
+            3,
+            safeValue(userId, "anonymous"),
+            userQuery
+        );
+        if ("NEED_CITY".equals(result.status())) {
+            return result.summary();
+        }
+        if ("UNAVAILABLE".equals(result.status())) {
+            return result.summary();
+        }
+        String source = result.source() == null || result.source().isBlank() ? "unknown" : result.source();
+        return result.summary() + "\n（天气数据来源: " + source + "）";
     }
 
     private String safeValue(String value, String fallback) {
