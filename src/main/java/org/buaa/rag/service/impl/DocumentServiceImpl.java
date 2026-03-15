@@ -39,9 +39,10 @@ import org.buaa.rag.dao.mapper.ChunkMapper;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
 import org.buaa.rag.dto.ContentFragment;
-import org.buaa.rag.mq.DocumentIngestionProducer;
+import org.buaa.rag.mq.IngestionProducer;
 import org.buaa.rag.module.parser.TextCleaningService;
 import org.buaa.rag.module.vector.DocumentIndexingService;
+import org.buaa.rag.module.vector.MilvusVectorStoreService;
 import org.buaa.rag.properties.FIleParseProperties;
 import org.buaa.rag.service.DocumentService;
 import org.buaa.rag.service.TextChunkingService;
@@ -81,8 +82,8 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final ChunkMapper chunkMapper;
     private final KnowledgeMapper knowledgeMapper;
     private final FIleParseProperties fileParseProperties;
-    private final DocumentIngestionProducer producer;
-
+    private final IngestionProducer producer;
+    private final MilvusVectorStoreService milvusVectorStoreService;
 
     private final Tika tika = new Tika();
 
@@ -132,20 +133,12 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
                     StringUtils.hasText(mimeType) ? mimeType : file.getContentType()
             );
             insertDocument(md5, originalFilename, file.getSize(), knowledge.getId());
-        } catch (ClientException e) {
-            throw e;
+            producer.enqueue(md5, originalFilename, 0);
         } catch (Exception e) {
             markFailed(md5, "文件上传失败", e);
             throw new ServiceException("文件上传失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
         }
 
-        try {
-            producer.enqueue(md5, originalFilename, 0);
-
-        } catch (Exception e) {
-            markFailed(md5, "文档入队失败", e);
-            throw new ServiceException("文档入队失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
-        }
     }
 
     @Override
@@ -170,12 +163,13 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         String md5 = doc.getMd5Hash();
         deleteFromStorage(md5, doc.getOriginalFileName());
         indexingService.removeIndex(md5);
+        deleteFromMilvus(md5);
         deleteSegments(md5);
         baseMapper.deleteById(id);
     }
 
     @Override
-    public void ingestDocumentTask(String documentMd5, String originalFileName) {
+    public void ingestDocument(String documentMd5, String originalFileName) {
         DocumentDO record = findByMd5(documentMd5);
         if (record == null) {
             log.info("文档记录不存在，跳过异步摄取: {}", documentMd5);
@@ -188,7 +182,9 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
 
         try (InputStream in = downloadStoredDocument(documentMd5, originalFileName)) {
             List<ContentFragment> fragments = extractAndChunk(documentMd5, originalFileName, in);
-            indexingService.index(documentMd5, fragments);
+            List<float[]> vectors = indexingService.encodeFragments(fragments);
+            indexingService.index(documentMd5, fragments, vectors);
+            milvusVectorStoreService.upsertDocument(record, fragments, vectors);
             markCompleted(documentMd5);
         } catch (Exception e) {
             rollbackIngestionArtifacts(documentMd5);
@@ -228,10 +224,19 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             log.warn("回滚索引失败: {}", documentMd5, e);
         }
         try {
+            deleteFromMilvus(documentMd5);
+        } catch (Exception e) {
+            log.warn("回滚 Milvus 向量失败: {}", documentMd5, e);
+        }
+        try {
             deleteSegments(documentMd5);
         } catch (Exception e) {
             log.warn("回滚chunk失败: {}", documentMd5, e);
         }
+    }
+
+    private void deleteFromMilvus(String documentMd5) {
+        milvusVectorStoreService.deleteByDocumentMd5(documentMd5);
     }
 
     private InputStream downloadStoredDocument(String documentMd5, String originalFileName) {
@@ -239,15 +244,6 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         try {
             return rustfsStorage.download(primaryPath);
         } catch (Exception primaryException) {
-            String legacyPath = buildLegacyObjectPath(documentMd5, originalFileName);
-            if (StringUtils.hasText(legacyPath) && !primaryPath.equals(legacyPath)) {
-                try {
-                    log.info("主路径下载失败，回退历史路径: {}", legacyPath);
-                    return rustfsStorage.download(legacyPath);
-                } catch (Exception legacyException) {
-                    primaryException.addSuppressed(legacyException);
-                }
-            }
             throw new DocumentIngestionException(
                 "对象存储下载失败: " + primaryException.getMessage(),
                 primaryException,

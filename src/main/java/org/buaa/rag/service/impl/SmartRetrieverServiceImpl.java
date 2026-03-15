@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -20,6 +21,7 @@ import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.MessageFeedbackMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
 import org.buaa.rag.dto.RetrievalMatch;
+import org.buaa.rag.module.vector.MilvusRetrieverService;
 import org.buaa.rag.service.SmartRetrieverService;
 import org.buaa.rag.tool.VectorEncoding;
 import org.slf4j.Logger;
@@ -52,6 +54,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     private final MessageFeedbackMapper feedbackRepository;
     private final MessageSourceMapper sourceRepository;
     private final EsProperties esProperties;
+    private final MilvusRetrieverService milvusRetrieverService;
 
     @Override
     public List<RetrievalMatch> retrieve(String queryText, int topK) {
@@ -72,7 +75,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                 return performTextOnlyRetrieval(queryText, topK, userId);
             }
 
-            // 执行混合检索
             List<RetrievalMatch> matches = performHybridRetrieval(queryText, queryVector, topK);
 
             return filterAndEnrichMatches(matches, userId, topK);
@@ -94,37 +96,11 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                 return Collections.emptyList();
             }
 
-            int recallSize = calculateRecallSize(queryText, topK);
-            SearchResponse<ESIndexDO> response = esClient.search(searchBuilder -> {
-                searchBuilder.index(esProperties.getIndex());
-                searchBuilder.knn(knnBuilder -> knnBuilder
-                        .field("vectorEmbedding")
-                        .queryVector(vector)
-                        .k(recallSize)
-                        .numCandidates(recallSize)
-                );
-                searchBuilder.size(topK);
-                return searchBuilder;
-            }, ESIndexDO.class);
-
-            List<RetrievalMatch> results = response.hits().hits().stream()
-                    .filter(hit -> hit.source() != null)
-                    .map(hit -> new RetrievalMatch(
-                            hit.source().getSourceMd5(),
-                            hit.source().getSegmentNumber(),
-                            hit.source().getTextPayload(),
-                            hit.score()
-                    ))
-                    .collect(Collectors.toList());
-
+            List<RetrievalMatch> results = performVectorOnlyRetrievalRaw(queryText, vector, topK);
             return filterAndEnrichMatches(results, userId, topK);
         } catch (Exception e) {
-            if (isIndexMissing(e)) {
-                log.warn("索引 {} 不存在，向量检索返回空结果", esProperties.getIndex());
-                return Collections.emptyList();
-            }
             log.error("向量检索失败", e);
-            return Collections.emptyList();
+            throw new RuntimeException("向量检索过程发生异常", e);
         }
     }
 
@@ -169,64 +145,9 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                                                         List<Float> vector,
                                                         int topK) throws Exception {
         int recallSize = calculateRecallSize(query, topK);
-        Operator matchOperator = resolveOperator(query);
-
-        try {
-            SearchResponse<ESIndexDO> response = esClient.search(searchBuilder -> {
-                // kNN向量召回
-                searchBuilder.index(esProperties.getIndex());
-                searchBuilder.knn(knnBuilder -> knnBuilder
-                        .field("vectorEmbedding")
-                        .queryVector(vector)
-                        .k(recallSize)
-                        .numCandidates(recallSize)
-                );
-
-                // 文本匹配过滤
-                searchBuilder.query(queryBuilder -> queryBuilder
-                        .match(matchBuilder -> matchBuilder
-                                .field("textPayload")
-                                .query(query)
-                                .operator(matchOperator)
-                        )
-                );
-
-                // BM25重排序
-                searchBuilder.rescore(rescoreBuilder -> rescoreBuilder
-                        .windowSize(recallSize)
-                        .query(rescoreQueryBuilder -> rescoreQueryBuilder
-                                .queryWeight(0.2)  // 向量得分权重
-                                .rescoreQueryWeight(1.0)  // BM25得分权重
-                                .query(innerQueryBuilder -> innerQueryBuilder
-                                        .match(matchBuilder -> matchBuilder
-                                                .field("textPayload")
-                                                .query(query)
-                                                .operator(matchOperator)
-                                        )
-                                )
-                        )
-                );
-
-                searchBuilder.size(topK);
-                return searchBuilder;
-            }, ESIndexDO.class);
-
-            return response.hits().hits().stream()
-                    .filter(hit -> hit.source() != null)
-                    .map(hit -> new RetrievalMatch(
-                            hit.source().getSourceMd5(),
-                            hit.source().getSegmentNumber(),
-                            hit.source().getTextPayload(),
-                            hit.score()
-                    ))
-                    .collect(Collectors.toList());
-        } catch (Exception e) {
-            if (isIndexMissing(e)) {
-                log.warn("索引 {} 不存在，混合检索返回空结果", esProperties.getIndex());
-                return Collections.emptyList();
-            }
-            throw e;
-        }
+        List<RetrievalMatch> textMatches = performTextOnlyRetrievalRaw(query, recallSize);
+        List<RetrievalMatch> vectorMatches = milvusRetrieverService.search(vector, recallSize);
+        return fuseRetrievalMatches(List.of(textMatches, vectorMatches), topK);
     }
 
     private int calculateRecallSize(String query, int topK) {
@@ -253,6 +174,13 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                                                           int topK,
                                                           String userId)
             throws Exception {
+        List<RetrievalMatch> results = performTextOnlyRetrievalRaw(query, topK);
+        return filterAndEnrichMatches(results, userId, topK);
+    }
+
+    private List<RetrievalMatch> performTextOnlyRetrievalRaw(String query,
+                                                             int topK)
+            throws Exception {
         try {
             SearchResponse<ESIndexDO> response = esClient.search(searchBuilder ->
                             searchBuilder
@@ -261,6 +189,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                                             .match(matchBuilder -> matchBuilder
                                                     .field("textPayload")
                                                     .query(query)
+                                                    .operator(resolveOperator(query))
                                             )
                                     )
                                     .size(topK),
@@ -276,8 +205,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                             hit.score()
                     ))
                     .collect(Collectors.toList());
-
-            return filterAndEnrichMatches(results, userId, topK);
+            return results;
         } catch (Exception e) {
             if (isIndexMissing(e)) {
                 log.warn("索引 {} 不存在，文本检索返回空结果", esProperties.getIndex());
@@ -285,6 +213,13 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             }
             throw e;
         }
+    }
+
+    private List<RetrievalMatch> performVectorOnlyRetrievalRaw(String queryText,
+                                                               List<Float> vector,
+                                                               int topK) throws Exception {
+        int recallSize = calculateRecallSize(queryText, topK);
+        return milvusRetrieverService.search(vector, recallSize);
     }
 
     /**
@@ -514,6 +449,46 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             boostMap.put(md5, boost);
         }
         return boostMap;
+    }
+
+    private List<RetrievalMatch> fuseRetrievalMatches(List<List<RetrievalMatch>> resultLists, int topK) {
+        if (resultLists == null || resultLists.isEmpty()) {
+            return Collections.emptyList();
+        }
+        int rrfK = Math.max(1, ragProperties.getFusion().getRrfK());
+        Map<String, RetrievalMatch> fused = new LinkedHashMap<>();
+        Map<String, Double> scores = new HashMap<>();
+
+        for (List<RetrievalMatch> resultList : resultLists) {
+            if (resultList == null || resultList.isEmpty()) {
+                continue;
+            }
+            for (int i = 0; i < resultList.size(); i++) {
+                RetrievalMatch match = resultList.get(i);
+                String key = buildMatchKey(match);
+                fused.computeIfAbsent(key, ignored -> new RetrievalMatch(
+                    match.getFileMd5(),
+                    match.getChunkId(),
+                    match.getTextContent(),
+                    0.0
+                ));
+                scores.merge(key, 1.0 / (rrfK + i + 1), Double::sum);
+            }
+        }
+
+        return fused.entrySet().stream()
+            .peek(entry -> entry.getValue().setRelevanceScore(scores.getOrDefault(entry.getKey(), 0.0)))
+            .map(Map.Entry::getValue)
+            .sorted((left, right) -> Double.compare(
+                right.getRelevanceScore() != null ? right.getRelevanceScore() : 0.0,
+                left.getRelevanceScore() != null ? left.getRelevanceScore() : 0.0
+            ))
+            .limit(topK)
+            .collect(Collectors.toList());
+    }
+
+    private String buildMatchKey(RetrievalMatch match) {
+        return match.getFileMd5() + "#" + (match.getChunkId() == null ? "null" : match.getChunkId());
     }
 
     private List<String> loadMd5ByOwnerId(String userId) {

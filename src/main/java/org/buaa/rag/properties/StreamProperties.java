@@ -10,8 +10,8 @@ import lombok.Data;
  */
 @Data
 @Component
-@ConfigurationProperties(prefix = "ingestion.stream")
-public class IngestionStreamProperties {
+@ConfigurationProperties(prefix = "stream")
+public class StreamProperties {
 
     /**
      * 是否启用 Redis Stream 异步摄取
@@ -51,5 +51,5 @@ public class IngestionStreamProperties {
     /**
      * 最大重试次数
      */
-    private int maxRetries = 3;
+    private int maxRetries = 1;
 }

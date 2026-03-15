@@ -20,6 +20,7 @@
         <spring-ai-alibaba.version>1.0.0.2</spring-ai-alibaba.version>
         <lombok.version>1.18.34</lombok.version>
         <mybatis-plus.version>3.5.9</mybatis-plus.version>
+        <milvus-sdk.version>2.6.6</milvus-sdk.version>
         <slf4j.version>2.0.16</slf4j.version>
         <aws.sdk.version>2.25.57</aws.sdk.version>
         <commons-codec.version>1.16.1</commons-codec.version>
@@ -130,6 +131,12 @@
             <groupId>co.elastic.clients</groupId>
             <artifactId>elasticsearch-java</artifactId>
             <version>${elasticsearch-java.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.milvus</groupId>
+            <artifactId>milvus-sdk-java</artifactId>
+            <version>${milvus-sdk.version}</version>
         </dependency>
 
         <dependency>

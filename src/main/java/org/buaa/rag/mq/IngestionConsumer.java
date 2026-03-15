@@ -6,7 +6,7 @@ import java.util.Map;
 import java.util.Objects;
 
 import org.buaa.rag.common.convention.exception.DocumentIngestionException;
-import org.buaa.rag.properties.IngestionStreamProperties;
+import org.buaa.rag.properties.StreamProperties;
 import org.buaa.rag.service.DocumentService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.connection.stream.Consumer;
@@ -35,12 +35,12 @@ import lombok.extern.slf4j.Slf4j;
 @Component
 @RequiredArgsConstructor
 @ConditionalOnProperty(prefix = "ingestion.stream", name = "enabled", havingValue = "true", matchIfMissing = true)
-public class DocumentIngestionConsumer {
+public class IngestionConsumer {
 
     private final StringRedisTemplate redisTemplate;
     private final DocumentService documentService;
-    private final DocumentIngestionProducer producer;
-    private final IngestionStreamProperties props;
+    private final IngestionProducer producer;
+    private final StreamProperties props;
 
     public static final String FIELD_DOCUMENT_MD5 = "documentMd5";
     public static final String FIELD_FILE_NAME = "fileName";
@@ -115,7 +115,7 @@ public class DocumentIngestionConsumer {
         }
 
         try {
-            documentService.ingestDocumentTask(documentMd5, fileName);
+            documentService.ingestDocument(documentMd5, fileName);
             return true;
         } catch (Exception ex) {
             return handleFailure(documentMd5, fileName, retryCount, ex);

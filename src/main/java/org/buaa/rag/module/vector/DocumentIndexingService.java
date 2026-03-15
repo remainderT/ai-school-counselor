@@ -49,21 +49,38 @@ public class DocumentIndexingService  {
     // ─────────────────── 公共接口 ───────────────────
 
     public void index(String documentMd5, List<ContentFragment> fragments) {
+        index(documentMd5, fragments, null);
+    }
+
+    public void index(String documentMd5,
+                      List<ContentFragment> fragments,
+                      List<float[]> precomputedVectors) {
         if (fragments == null || fragments.isEmpty()) {
             log.warn("未发现文本片段，跳过索引: {}", documentMd5);
             return;
         }
         log.info("启动文档索引: {}, 片段数: {}", documentMd5, fragments.size());
 
-        List<String> texts = fragments.stream()
-            .map(ContentFragment::getTextContent)
-            .collect(Collectors.toList());
-
-        List<float[]> vectors = encodeWithRetry(texts);
+        List<float[]> vectors = precomputedVectors;
+        if (vectors == null || vectors.isEmpty()) {
+            vectors = encodeFragments(fragments);
+        } else {
+            validateVectors(vectors, fragments.size());
+        }
         List<ESIndexDO> docs = buildIndexDocs(documentMd5, fragments, vectors);
         bulkIndex(docs);
 
         log.info("文档索引完成: {}, 片段数: {}", documentMd5, fragments.size());
+    }
+
+    public List<float[]> encodeFragments(List<ContentFragment> fragments) {
+        if (fragments == null || fragments.isEmpty()) {
+            return List.of();
+        }
+        List<String> texts = fragments.stream()
+            .map(ContentFragment::getTextContent)
+            .collect(Collectors.toList());
+        return encodeWithRetry(texts);
     }
 
     public void removeIndex(String documentMd5) {

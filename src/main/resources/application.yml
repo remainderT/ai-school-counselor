@@ -56,6 +56,16 @@ spring:
     properties:
       mail.smtp.socketFactoryClass: javax.net.ssl.SSLSocketFactory
 
+milvus:
+  uri: http://localhost:19530
+  token:
+  collection-name: knowledge_milvus
+  metric-type: COSINE
+  index-m: 48
+  ef-construction: 200
+  search-ef: 128
+  max-text-length: 65535
+
 storage:
   service-endpoint: http://localhost:9000
   access-key-id: rustfsadmin
@@ -90,16 +100,15 @@ flow-limit:
   time-window: 1
   max-access-count: 10
 
-ingestion:
-  stream:
-    enabled: true
-    key: rag:document:ingestion
-    group: document-ingestion-group
-    consumer: document-ingestion-consumer
-    batch-size: 5
-    block-ms: 1000
-    poll-interval-ms: 500
-    max-retries: 3
+stream:
+  enabled: true
+  key: rag:document:ingestion
+  group: document-ingestion-group
+  consumer: document-ingestion-consumer
+  batch-size: 5
+  block-ms: 1000
+  poll-interval-ms: 500
+  max-retries: 1
 
 mcp:
   weather:

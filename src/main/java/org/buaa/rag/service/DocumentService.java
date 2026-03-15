@@ -26,9 +26,9 @@ public interface DocumentService {
     void delete(String id);
 
     /**
-     * 异步摄取文档任务
+     * 异步摄取文档
      */
-    void ingestDocumentTask(String documentMd5, String originalFileName);
+    void ingestDocument(String documentMd5, String originalFileName);
 
     /**
      * 标记文档摄取最终失败

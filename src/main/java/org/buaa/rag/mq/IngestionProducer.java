@@ -3,12 +3,11 @@ package org.buaa.rag.mq;
 import java.time.Instant;
 import java.util.Map;
 
-import org.buaa.rag.properties.IngestionStreamProperties;
+import org.buaa.rag.properties.StreamProperties;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.util.Assert;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,10 +18,10 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class DocumentIngestionProducer {
+public class IngestionProducer {
 
     private final StringRedisTemplate stringRedisTemplate;
-    private final IngestionStreamProperties properties;
+    private final StreamProperties properties;
     public static final String FIELD_DOCUMENT_MD5 = "documentMd5";
     public static final String FIELD_FILE_NAME = "fileName";
     public static final String FIELD_RETRY_COUNT = "retryCount";
