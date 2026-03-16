@@ -3,11 +3,11 @@ package org.buaa.rag.mq;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
-import org.buaa.rag.common.convention.exception.DocumentIngestionException;
+import org.buaa.rag.module.ingestion.DocumentIngestionFailureResolver;
+import org.buaa.rag.module.ingestion.DocumentIngestionTask;
+import org.buaa.rag.module.ingestion.DocumentIngestionWorkflow;
 import org.buaa.rag.properties.StreamProperties;
-import org.buaa.rag.service.DocumentService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.connection.stream.Consumer;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -19,7 +19,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
-import org.springframework.util.StringUtils;
 
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -34,17 +33,14 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@ConditionalOnProperty(prefix = "ingestion.stream", name = "enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "stream", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class IngestionConsumer {
 
     private final StringRedisTemplate redisTemplate;
-    private final DocumentService documentService;
+    private final DocumentIngestionWorkflow ingestionWorkflow;
+    private final DocumentIngestionFailureResolver failureResolver;
     private final IngestionProducer producer;
     private final StreamProperties props;
-
-    public static final String FIELD_DOCUMENT_MD5 = "documentMd5";
-    public static final String FIELD_FILE_NAME = "fileName";
-    public static final String FIELD_RETRY_COUNT = "retryCount";
     // ─────────────────── 生命周期 ───────────────────
 
     @PostConstruct
@@ -54,7 +50,7 @@ public class IngestionConsumer {
 
     // ─────────────────── 消费循环 ───────────────────
 
-    @Scheduled(fixedDelayString = "${ingestion.stream.poll-interval-ms:500}")
+    @Scheduled(fixedDelayString = "${stream.poll-interval-ms:500}")
     public void poll() {
         drainPending();
         drainNew();
@@ -90,83 +86,50 @@ public class IngestionConsumer {
         if (CollectionUtils.isEmpty(records)) {
             return;
         }
-        records.forEach(this::processSafely);
-    }
-
-    private void processSafely(MapRecord<String, Object, Object> record) {
-        try {
-            if (handleRecord(record)) {
-                acknowledge(record);
+        for (MapRecord<String, Object, Object> record : records) {
+            try {
+                if (handleRecord(record)) {
+                    acknowledge(record);
+                }
+            } catch (Exception e) {
+                log.error("处理文档摄取任务异常: recordId={}", record.getId(), e);
             }
-        } catch (Exception e) {
-            log.error("处理文档摄取任务异常: recordId={}", record.getId(), e);
         }
     }
 
-    private boolean handleRecord(MapRecord<String, Object, Object> record) {
-        Map<Object, Object> body = record.getValue();
-        String documentMd5 = Objects.toString(body.get(FIELD_DOCUMENT_MD5), null);
-        String fileName = Objects.toString(body.get(FIELD_FILE_NAME), null);
-        int retryCount = parseIntSafely(body.get(FIELD_RETRY_COUNT));
 
-        if (!StringUtils.hasText(documentMd5) || !StringUtils.hasText(fileName)) {
+    private boolean handleRecord(MapRecord<String, Object, Object> record) {
+        DocumentIngestionTask task = DocumentIngestionTask.from(record.getValue());
+        if (!task.isValid()) {
             log.debug("忽略无效文档任务: recordId={}", record.getId());
             return true;
         }
 
         try {
-            documentService.ingestDocument(documentMd5, fileName);
+            ingestionWorkflow.process(task);
             return true;
         } catch (Exception ex) {
-            return handleFailure(documentMd5, fileName, retryCount, ex);
+            return handleFailure(task, ex);
         }
     }
 
-    private boolean handleFailure(String md5, String fileName, int retryCount, Exception ex) {
-        boolean retryable = isRetryable(ex);
-        if (retryable && retryCount < props.getMaxRetries()) {
-            producer.enqueue(md5, fileName, retryCount + 1);
-            log.warn("文档摄取失败，已重试入队: md5={}, retry={}/{}", md5, retryCount + 1, props.getMaxRetries(), ex);
+    private boolean handleFailure(DocumentIngestionTask task, Exception ex) {
+        boolean retryable = failureResolver.isRetryable(ex);
+        if (retryable && task.retryCount() < props.getMaxRetries()) {
+            DocumentIngestionTask retryTask = task.nextRetry();
+            producer.enqueue(retryTask);
+            log.warn("文档摄取失败，已重试入队: md5={}, retry={}/{}", task.documentMd5(),
+                retryTask.retryCount(), props.getMaxRetries(), ex);
             return true;
         } else {
-            documentService.markIngestionFinalFailure(md5, summarizeFailureReason(ex));
+            ingestionWorkflow.markFailed(task.documentMd5(), failureResolver.summarizeFailureReason(ex));
             if (retryable) {
-                log.error("文档摄取失败，达到最大重试次数: md5={}, retries={}", md5, retryCount, ex);
+                log.error("文档摄取失败，达到最大重试次数: md5={}, retries={}", task.documentMd5(), task.retryCount(), ex);
             } else {
-                log.error("文档摄取失败，不可重试: md5={}, retries={}", md5, retryCount, ex);
+                log.error("文档摄取失败，不可重试: md5={}, retries={}", task.documentMd5(), task.retryCount(), ex);
             }
             return true;
         }
-    }
-
-    private boolean isRetryable(Exception ex) {
-        if (ex instanceof DocumentIngestionException ingestionException) {
-            return ingestionException.isRetryable();
-        }
-        Throwable current = ex;
-        while (current != null) {
-            if (current instanceof DocumentIngestionException ingestionException) {
-                return ingestionException.isRetryable();
-            }
-            current = current.getCause();
-        }
-        return true;
-    }
-
-    private String summarizeFailureReason(Exception ex) {
-        Throwable root = ex;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        String msg = root.getMessage();
-        if (!StringUtils.hasText(msg)) {
-            return root.getClass().getSimpleName();
-        }
-        String summary = root.getClass().getSimpleName() + ": " + msg.trim();
-        if (summary.length() > 512) {
-            return summary.substring(0, 512);
-        }
-        return summary;
     }
 
     private void acknowledge(MapRecord<String, Object, Object> record) {
@@ -218,16 +181,5 @@ public class IngestionConsumer {
 
     private int safeBatchSize() {
         return Math.max(1, props.getBatchSize());
-    }
-
-    private static int parseIntSafely(Object value) {
-        if (value == null) {
-            return 0;
-        }
-        try {
-            return Integer.parseInt(value.toString());
-        } catch (NumberFormatException e) {
-            return 0;
-        }
     }
 }

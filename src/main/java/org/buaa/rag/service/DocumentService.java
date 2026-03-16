@@ -25,13 +25,4 @@ public interface DocumentService {
      */
     void delete(String id);
 
-    /**
-     * 异步摄取文档
-     */
-    void ingestDocument(String documentMd5, String originalFileName);
-
-    /**
-     * 标记文档摄取最终失败
-     */
-    void markIngestionFinalFailure(String documentMd5, String failureReason);
 }

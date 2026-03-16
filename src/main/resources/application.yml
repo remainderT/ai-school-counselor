@@ -87,7 +87,6 @@ file:
     max-upload-bytes: 104857600
     max-extracted-chars: 800000
     max-cleaned-chars: 500000
-    enable-ocr: false
 
 elasticsearch:
   host: localhost

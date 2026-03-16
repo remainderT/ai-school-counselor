@@ -48,7 +48,4 @@ public class FIleParseProperties {
 
     /** 清洗后文本最大字符数 */
     private int maxCleanedChars = 500000;
-
-    /** 是否启用 PDF OCR */
-    private boolean enableOcr = false;
 }

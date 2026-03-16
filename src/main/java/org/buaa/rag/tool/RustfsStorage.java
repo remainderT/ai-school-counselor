@@ -2,10 +2,12 @@ package org.buaa.rag.tool;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Locale;
 
 import org.buaa.rag.properties.StorageProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -74,5 +76,29 @@ public class RustfsStorage {
         }
         log.debug("文件大小未知,回退为全量读取字节流");
         return RequestBody.fromBytes(data.readAllBytes());
+    }
+
+    public String buildPrimaryPath(String md5, String filename) {
+        String extension = extractExtension(filename);
+        String suffix = StringUtils.hasText(extension) ? "." + extension : "";
+        return String.format("uploads/%s/source%s", md5, suffix);
+    }
+
+    public String buildLegacyPath(String md5, String filename) {
+        if (!StringUtils.hasText(filename)) {
+            return null;
+        }
+        return String.format("uploads/%s/%s", md5, filename);
+    }
+
+    private String extractExtension(String filename) {
+        if (!StringUtils.hasText(filename)) {
+            return "";
+        }
+        int dotIndex = filename.lastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == filename.length() - 1) {
+            return "";
+        }
+        return filename.substring(dotIndex + 1).toLowerCase(Locale.ROOT);
     }
 }
