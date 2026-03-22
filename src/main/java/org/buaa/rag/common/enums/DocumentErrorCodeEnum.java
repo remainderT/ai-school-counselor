@@ -21,6 +21,8 @@ public enum DocumentErrorCodeEnum implements IErrorCode {
 
     DOCUMENT_EXISTS("C000107", "文档已经存在，请勿重复上传"),
 
+    DOCUMENT_URL_INVALID("C000108", "文档地址不合法"),
+
     DOCUMENT_NOT_EXISTS("C000201", "文档不存在"),
 
     DOCUMENT_ACCESS_CONTROL_ERROR("C000202", "文档权限错误");

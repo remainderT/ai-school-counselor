@@ -22,16 +22,14 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 文档向量索引服务实现
+ * 文档 ES 索引服务
  * <p>
- * 职责：文本 → 向量编码 → Elasticsearch 批量写入 / 删除。
+ * 职责：文本片段稀疏索引写入、向量编码以及 ES 文档删除。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class DocumentIndexingService  {
-
-    private static final String MODEL_VERSION = "text-embedding-v4";
+public class EsIndexService {
 
     private final VectorEncoding encodingService;
     private final ElasticsearchClient esClient;
@@ -49,28 +47,20 @@ public class DocumentIndexingService  {
     // ─────────────────── 公共接口 ───────────────────
 
     public void index(String documentMd5, List<ContentFragment> fragments) {
-        index(documentMd5, fragments, null);
-    }
-
-    public void index(String documentMd5,
-                      List<ContentFragment> fragments,
-                      List<float[]> precomputedVectors) {
         if (fragments == null || fragments.isEmpty()) {
             log.warn("未发现文本片段，跳过索引: {}", documentMd5);
             return;
         }
-        log.info("启动文档索引: {}, 片段数: {}", documentMd5, fragments.size());
-
-        List<float[]> vectors = precomputedVectors;
-        if (vectors == null || vectors.isEmpty()) {
-            vectors = encodeFragments(fragments);
-        } else {
-            validateVectors(vectors, fragments.size());
-        }
-        List<ESIndexDO> docs = buildIndexDocs(documentMd5, fragments, vectors);
+        log.info("启动 ES 文本索引: {}, 片段数: {}", documentMd5, fragments.size());
+        List<ESIndexDO> docs = buildIndexDocs(documentMd5, fragments);
         bulkIndex(docs);
+        log.info("ES 文本索引完成: {}, 片段数: {}", documentMd5, fragments.size());
+    }
 
-        log.info("文档索引完成: {}, 片段数: {}", documentMd5, fragments.size());
+    public void index(String documentMd5,
+                      List<ContentFragment> fragments,
+                      List<float[]> ignoredVectors) {
+        index(documentMd5, fragments);
     }
 
     public List<float[]> encodeFragments(List<ContentFragment> fragments) {
@@ -190,26 +180,15 @@ public class DocumentIndexingService  {
     // ─────────────────── 构建索引文档 ───────────────────
 
     private List<ESIndexDO> buildIndexDocs(String md5,
-                                           List<ContentFragment> fragments,
-                                           List<float[]> vectors) {
-        if (fragments.size() != vectors.size()) {
-            throw new RuntimeException("文本片段与向量数量不匹配");
-        }
+                                           List<ContentFragment> fragments) {
         return IntStream.range(0, fragments.size())
             .mapToObj(index -> {
                 ContentFragment fragment = fragments.get(index);
-                float[] vector = vectors.get(index);
-                List<Float> vectorEmbedding = new ArrayList<>(vector.length);
-                for (float value : vector) {
-                    vectorEmbedding.add(value);
-                }
                 return ESIndexDO.builder()
                     .documentId(md5 + "_" + fragment.getFragmentId())
                     .sourceMd5(md5)
                     .segmentNumber(fragment.getFragmentId())
                     .textPayload(fragment.getTextContent())
-                    .encoderVersion(MODEL_VERSION)
-                    .vectorEmbedding(vectorEmbedding)
                     .build();
             })
             .collect(Collectors.toList());

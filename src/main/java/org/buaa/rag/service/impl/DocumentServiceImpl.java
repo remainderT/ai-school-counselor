@@ -20,6 +20,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.tika.Tika;
@@ -30,14 +33,19 @@ import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.KnowledgeDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
+import org.buaa.rag.dto.req.DocumentUrlUploadReqDTO;
 import org.buaa.rag.module.ingestion.DocumentIngestionFailureResolver;
 import org.buaa.rag.module.ingestion.DocumentIngestionTask;
 import org.buaa.rag.module.ingestion.DocumentIngestionWorkflow;
+import org.buaa.rag.module.ingestion.RemoteDocumentFetcher;
+import org.buaa.rag.module.ingestion.RemoteDocumentFetcher.FetchedRemoteDocument;
 import org.buaa.rag.mq.IngestionProducer;
 import org.buaa.rag.properties.FIleParseProperties;
 import org.buaa.rag.service.DocumentService;
 import org.buaa.rag.tool.FileTypeValidate;
 import org.buaa.rag.tool.RustfsStorage;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.InputStreamSource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -59,6 +67,26 @@ import lombok.extern.slf4j.Slf4j;
 public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO> implements DocumentService {
 
     private static final int MAGIC_HEADER_BYTES = 16;
+    private static final String REMOTE_FILE_BASENAME = "remote-document";
+    private static final Set<String> SUPPORTED_EXTENSIONS = Set.of(
+        "pdf", "doc", "docx", "txt", "md", "html", "htm",
+        "xls", "xlsx", "ppt", "pptx", "rtf", "csv"
+    );
+    private static final Map<String, String> MIME_EXTENSION_MAPPING = Map.ofEntries(
+        Map.entry("application/pdf", "pdf"),
+        Map.entry("application/msword", "doc"),
+        Map.entry("application/rtf", "rtf"),
+        Map.entry("text/rtf", "rtf"),
+        Map.entry("application/vnd.ms-excel", "xls"),
+        Map.entry("application/vnd.ms-powerpoint", "ppt"),
+        Map.entry("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+        Map.entry("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"),
+        Map.entry("application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"),
+        Map.entry("text/plain", "txt"),
+        Map.entry("text/csv", "csv"),
+        Map.entry("text/markdown", "md"),
+        Map.entry("text/html", "html")
+    );
 
     private final RustfsStorage rustfsStorage;
     private final KnowledgeMapper knowledgeMapper;
@@ -66,35 +94,32 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final IngestionProducer ingestionProducer;
     private final DocumentIngestionWorkflow ingestionWorkflow;
     private final DocumentIngestionFailureResolver failureResolver;
+    private final RemoteDocumentFetcher remoteDocumentFetcher;
 
     private final Tika tika = new Tika();
 
+    private record UploadPayload(String originalFilename,
+                                 String mimeType,
+                                 long size,
+                                 String md5,
+                                 InputStreamSource source) {
+    }
+
     @Override
     public void upload(MultipartFile file, Long knowledgeId) {
-        if (file == null || file.isEmpty()) {
+        KnowledgeDO knowledge = verifyUploadKnowledge(knowledgeId);
+        UploadPayload payload = buildMultipartUploadPayload(file);
+        persistUploadPayload(payload, knowledge.getId());
+    }
+
+    @Override
+    public void uploadByUrl(DocumentUrlUploadReqDTO requestParam) {
+        if (requestParam == null) {
             throw new ClientException(DOCUMENT_UPLOAD_NULL);
         }
-        if (file.getSize() > fileParseProperties.getMaxUploadBytes()) {
-            throw new ClientException(DOCUMENT_SIZE_EXCEEDED);
-        }
-
-        KnowledgeDO knowledge = verifyUploadKnowledge(knowledgeId);
-        String originalFilename = requireOriginalFilename(file);
-        byte[] fileHeader = readFileHeader(file);
-        String mimeType = detectMimeType(file, originalFilename);
-        FileTypeValidate.validate(originalFilename, mimeType, fileHeader);
-
-        String md5 = calculateMd5(file);
-        ensureDocumentNotExists(md5);
-
-        try {
-            storeDocument(file, md5, originalFilename, mimeType);
-            createPendingDocument(md5, originalFilename, file.getSize(), knowledge.getId());
-            enqueueIngestionTask(md5, originalFilename);
-        } catch (Exception e) {
-            markFinalFailure(md5, "文件上传失败", e);
-            throw new ServiceException("文件上传失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
-        }
+        KnowledgeDO knowledge = verifyUploadKnowledge(requestParam.getKnowledgeId());
+        UploadPayload payload = buildUrlUploadPayload(requestParam.getUrl());
+        persistUploadPayload(payload, knowledge.getId());
     }
 
     @Override
@@ -121,6 +146,47 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         baseMapper.deleteById(id);
     }
 
+    private UploadPayload buildMultipartUploadPayload(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new ClientException(DOCUMENT_UPLOAD_NULL);
+        }
+        if (file.getSize() > fileParseProperties.getMaxUploadBytes()) {
+            throw new ClientException(DOCUMENT_SIZE_EXCEEDED);
+        }
+        String originalFilename = requireOriginalFilename(file.getOriginalFilename());
+        String mimeType = detectMimeType(file, originalFilename, null);
+        validateUploadPayload(originalFilename, mimeType, file);
+        String md5 = calculateMd5(file);
+        return new UploadPayload(originalFilename, mimeType, file.getSize(), md5, file);
+    }
+
+    private UploadPayload buildUrlUploadPayload(String sourceUrl) {
+        FetchedRemoteDocument remoteDocument = remoteDocumentFetcher.fetch(sourceUrl, fileParseProperties.getMaxUploadBytes());
+        byte[] body = remoteDocument.body();
+        if (body == null || body.length == 0) {
+            throw new ClientException(DOCUMENT_UPLOAD_NULL);
+        }
+        ByteArrayResource source = new ByteArrayResource(body);
+        String suggestedFileName = normalizeRemoteFileName(remoteDocument.fileName());
+        String mimeType = detectMimeType(source, defaultMimeDetectionName(suggestedFileName), remoteDocument.contentType());
+        String originalFilename = resolveRemoteFilename(suggestedFileName, mimeType);
+        validateUploadPayload(originalFilename, mimeType, source);
+        String md5 = DigestUtils.md5Hex(body);
+        return new UploadPayload(originalFilename, mimeType, body.length, md5, source);
+    }
+
+    private void persistUploadPayload(UploadPayload payload, Long knowledgeId) {
+        ensureDocumentNotExists(payload.md5());
+        try {
+            storeDocument(payload);
+            createPendingDocument(payload.md5(), payload.originalFilename(), payload.size(), knowledgeId);
+            enqueueIngestionTask(payload.md5(), payload.originalFilename());
+        } catch (Exception e) {
+            markFinalFailure(payload.md5(), "文件上传失败", e);
+            throw new ServiceException("文件上传失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
+        }
+    }
+
     private KnowledgeDO verifyUploadKnowledge(Long knowledgeId) {
         if (knowledgeId == null) {
             throw new ClientException(KNOWLEDGE_ID_REQUIRED);
@@ -140,26 +206,34 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         return knowledge;
     }
 
-    private String requireOriginalFilename(MultipartFile file) {
-        String originalFilename = file.getOriginalFilename();
+    private String requireOriginalFilename(String originalFilename) {
         if (!StringUtils.hasText(originalFilename)) {
             throw new ClientException("文件名不能为空", DOCUMENT_TYPE_NOT_SUPPORTED);
         }
-        return originalFilename;
+        return originalFilename.trim();
     }
 
-    private String detectMimeType(MultipartFile file, String originalFilename) {
-        try (InputStream inputStream = file.getInputStream()) {
-            return tika.detect(inputStream, originalFilename);
+    private String detectMimeType(InputStreamSource source, String originalFilename, String fallbackMimeType) {
+        try (InputStream inputStream = source.getInputStream()) {
+            String detectedMimeType = normalizeMimeType(tika.detect(inputStream, originalFilename));
+            if (StringUtils.hasText(detectedMimeType) && !"application/octet-stream".equalsIgnoreCase(detectedMimeType)) {
+                return detectedMimeType;
+            }
+            String normalizedFallback = normalizeMimeType(fallbackMimeType);
+            return StringUtils.hasText(normalizedFallback) ? normalizedFallback : detectedMimeType;
         } catch (IOException e) {
             log.warn("MIME 检测失败: {}", e.getMessage());
             throw new ServiceException(DOCUMENT_MIME_FAILED);
         }
     }
 
-    private String calculateMd5(MultipartFile file) {
-        try {
-            return DigestUtils.md5Hex(file.getInputStream());
+    private void validateUploadPayload(String originalFilename, String mimeType, InputStreamSource source) {
+        FileTypeValidate.validate(originalFilename, mimeType, readFileHeader(source));
+    }
+
+    private String calculateMd5(InputStreamSource source) {
+        try (InputStream inputStream = source.getInputStream()) {
+            return DigestUtils.md5Hex(inputStream);
         } catch (IOException e) {
             throw new ServiceException("文档解析失败: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
         }
@@ -176,13 +250,13 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         }
     }
 
-    private void storeDocument(MultipartFile file, String md5, String originalFilename, String mimeType) {
+    private void storeDocument(UploadPayload payload) {
         try {
             rustfsStorage.upload(
-                rustfsStorage.buildPrimaryPath(md5, originalFilename),
-                file.getInputStream(),
-                file.getSize(),
-                StringUtils.hasText(mimeType) ? mimeType : file.getContentType()
+                rustfsStorage.buildPrimaryPath(payload.md5(), payload.originalFilename()),
+                payload.source().getInputStream(),
+                payload.size(),
+                StringUtils.hasText(payload.mimeType()) ? payload.mimeType() : null
             );
         } catch (IOException e) {
             throw new ServiceException("文件读取失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
@@ -252,11 +326,87 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         );
     }
 
-    private byte[] readFileHeader(MultipartFile file) {
-        try (InputStream inputStream = file.getInputStream()) {
+    private byte[] readFileHeader(InputStreamSource source) {
+        try (InputStream inputStream = source.getInputStream()) {
             return inputStream.readNBytes(MAGIC_HEADER_BYTES);
         } catch (IOException e) {
             throw new ServiceException("文件头读取失败: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
         }
+    }
+
+    private String normalizeRemoteFileName(String fileName) {
+        if (!StringUtils.hasText(fileName)) {
+            return null;
+        }
+        String normalized = fileName.trim();
+        int queryIndex = normalized.indexOf('?');
+        if (queryIndex >= 0) {
+            normalized = normalized.substring(0, queryIndex);
+        }
+        return StringUtils.hasText(normalized) ? normalized : null;
+    }
+
+    private String defaultMimeDetectionName(String suggestedFileName) {
+        return StringUtils.hasText(suggestedFileName) ? suggestedFileName : REMOTE_FILE_BASENAME;
+    }
+
+    private String resolveRemoteFilename(String suggestedFileName, String mimeType) {
+        String normalizedFileName = normalizeRemoteFileName(suggestedFileName);
+        String resolvedExtension = resolveExtensionFromMimeType(mimeType);
+
+        if (StringUtils.hasText(normalizedFileName)) {
+            String currentExtension = extractExtension(normalizedFileName);
+            if (StringUtils.hasText(currentExtension) && SUPPORTED_EXTENSIONS.contains(currentExtension)) {
+                return normalizedFileName;
+            }
+            if (StringUtils.hasText(resolvedExtension)) {
+                String baseName = stripExtension(normalizedFileName);
+                return requireOriginalFilename(baseName + "." + resolvedExtension);
+            }
+            return requireOriginalFilename(normalizedFileName);
+        }
+
+        if (StringUtils.hasText(resolvedExtension)) {
+            return REMOTE_FILE_BASENAME + "." + resolvedExtension;
+        }
+        throw new ClientException("无法识别 URL 文档类型", DOCUMENT_TYPE_NOT_SUPPORTED);
+    }
+
+    private String resolveExtensionFromMimeType(String mimeType) {
+        if (!StringUtils.hasText(mimeType)) {
+            return null;
+        }
+        return MIME_EXTENSION_MAPPING.get(normalizeMimeType(mimeType));
+    }
+
+    private String normalizeMimeType(String mimeType) {
+        if (!StringUtils.hasText(mimeType)) {
+            return null;
+        }
+        int separator = mimeType.indexOf(';');
+        String normalized = separator >= 0 ? mimeType.substring(0, separator) : mimeType;
+        return normalized.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String extractExtension(String fileName) {
+        if (!StringUtils.hasText(fileName)) {
+            return "";
+        }
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == fileName.length() - 1) {
+            return "";
+        }
+        return fileName.substring(dotIndex + 1).toLowerCase(Locale.ROOT);
+    }
+
+    private String stripExtension(String fileName) {
+        if (!StringUtils.hasText(fileName)) {
+            return REMOTE_FILE_BASENAME;
+        }
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex <= 0) {
+            return fileName;
+        }
+        return fileName.substring(0, dotIndex);
     }
 }

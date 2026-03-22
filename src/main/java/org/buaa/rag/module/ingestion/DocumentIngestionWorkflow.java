@@ -24,7 +24,7 @@ import org.buaa.rag.module.parser.DocumentParseResult;
 import org.buaa.rag.module.parser.DocumentParser;
 import org.buaa.rag.module.parser.DocumentParserSelector;
 import org.buaa.rag.module.parser.TextCleaningService;
-import org.buaa.rag.module.vector.DocumentIndexingService;
+import org.buaa.rag.module.vector.EsIndexService;
 import org.buaa.rag.module.vector.MilvusVectorStoreService;
 import org.buaa.rag.properties.FIleParseProperties;
 import org.buaa.rag.service.TextChunkingService;
@@ -49,7 +49,7 @@ public class DocumentIngestionWorkflow {
     private final TextCleaningService textCleaningService;
     private final DocumentParserSelector documentParserSelector;
     private final TextChunkingService textChunkingService;
-    private final DocumentIndexingService indexingService;
+    private final EsIndexService indexingService;
     private final MilvusVectorStoreService milvusVectorStoreService;
     private final ChunkMapper chunkMapper;
     private final DocumentMapper documentMapper;
@@ -185,7 +185,7 @@ public class DocumentIngestionWorkflow {
     }
 
     private void persistArtifacts(DocumentDO document, IngestionPayload payload) {
-        indexingService.index(document.getMd5Hash(), payload.fragments(), payload.vectors());
+        indexingService.index(document.getMd5Hash(), payload.fragments());
         milvusVectorStoreService.upsertDocument(document, payload.fragments(), payload.vectors());
     }
 

@@ -59,7 +59,7 @@ spring:
 milvus:
   uri: http://localhost:19530
   token:
-  collection-name: knowledge_milvus
+  collection-name: knowledge
   metric-type: COSINE
   index-m: 48
   ef-construction: 200

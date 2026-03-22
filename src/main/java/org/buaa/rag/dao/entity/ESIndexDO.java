@@ -1,7 +1,5 @@
 package org.buaa.rag.dao.entity;
 
-import java.util.List;
-
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -23,8 +21,4 @@ public class ESIndexDO {
     private Integer segmentNumber;
 
     private String textPayload;
-
-    private String encoderVersion;
-
-    private List<Float> vectorEmbedding;
 }
