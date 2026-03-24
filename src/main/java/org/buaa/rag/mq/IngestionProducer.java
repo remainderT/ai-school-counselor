@@ -30,7 +30,7 @@ public class IngestionProducer {
         Map<String, String> payload = task.toPayload();
         RecordId recordId = stringRedisTemplate.opsForStream()
             .add(StreamRecords.string(payload).withStreamKey(properties.getKey()));
-        log.info("文档摄取任务入队: md5={}, retry={}, record={}", task.documentMd5(), task.retryCount(), recordId);
+        log.info("文档摄取任务入队: documentId={}, retry={}, record={}", task.documentId(), task.retryCount(), recordId);
         return recordId;
     }
 }

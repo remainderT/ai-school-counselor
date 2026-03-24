@@ -21,7 +21,7 @@ import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.MessageFeedbackMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
 import org.buaa.rag.dto.RetrievalMatch;
-import org.buaa.rag.module.vector.MilvusRetrieverService;
+import org.buaa.rag.module.index.MilvusRetrieverService;
 import org.buaa.rag.service.SmartRetrieverService;
 import org.buaa.rag.tool.VectorEncoding;
 import org.slf4j.Logger;

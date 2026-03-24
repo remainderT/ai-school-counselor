@@ -26,19 +26,14 @@ public class DocumentParserSelector {
         ));
     }
 
-    public DocumentParser select(String parserType) {
-        return parserMap.get(parserType);
-    }
-
     public DocumentParser selectByMimeType(String mimeType, String fileName) {
         return parsers.stream()
             .filter(parser -> parser.supports(mimeType, fileName))
             .min(Comparator.comparingInt(DocumentParser::getPriority))
-            .orElseGet(() -> select(ParserType.TIKA.getType()));
+            .orElseGet(this::defaultParser);
     }
 
-    public List<String> getAvailableTypes() {
-        return parsers.stream().map(DocumentParser::getParserType).toList();
+    private DocumentParser defaultParser() {
+        return parserMap.get(ParserType.TIKA.getType());
     }
 }
-

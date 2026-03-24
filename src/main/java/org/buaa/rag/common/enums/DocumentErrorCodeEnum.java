@@ -23,6 +23,8 @@ public enum DocumentErrorCodeEnum implements IErrorCode {
 
     DOCUMENT_URL_INVALID("C000108", "文档地址不合法"),
 
+    DOCUMENT_NAME_NULL("C000109", "文档名不能为空"),
+
     DOCUMENT_NOT_EXISTS("C000201", "文档不存在"),
 
     DOCUMENT_ACCESS_CONTROL_ERROR("C000202", "文档权限错误");

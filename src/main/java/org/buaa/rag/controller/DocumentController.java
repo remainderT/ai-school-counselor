@@ -5,7 +5,7 @@ import java.util.List;
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.dao.entity.DocumentDO;
-import org.buaa.rag.dto.req.DocumentUrlUploadReqDTO;
+import org.buaa.rag.dto.req.DocumentUploadReqDTO;
 import org.buaa.rag.service.DocumentService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,13 +29,13 @@ public class DocumentController {
     @PostMapping("/upload")
     public Result<Void> upload(@RequestParam("file") MultipartFile uploadedFile,
                                @RequestParam("knowledgeId") Long knowledgeId) {
-        documentService.upload(uploadedFile, knowledgeId);
+        documentService.upload(DocumentUploadReqDTO.forFile(uploadedFile, knowledgeId));
         return Results.success();
     }
 
     @PostMapping("/upload/url")
-    public Result<Void> uploadByUrl(@RequestBody DocumentUrlUploadReqDTO requestParam) {
-        documentService.uploadByUrl(requestParam);
+    public Result<Void> uploadByUrl(@RequestBody DocumentUploadReqDTO requestParam) {
+        documentService.upload(requestParam);
         return Results.success();
     }
 

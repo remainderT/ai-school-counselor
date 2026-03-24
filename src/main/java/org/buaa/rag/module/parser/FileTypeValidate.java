@@ -1,7 +1,8 @@
-package org.buaa.rag.tool;
+package org.buaa.rag.module.parser;
 
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_TYPE_NOT_SUPPORTED;
 
+import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 
@@ -13,6 +14,22 @@ public class FileTypeValidate {
     private static final Set<String> ALLOWED_FILE_TYPES = Set.of(
             "pdf", "doc", "docx", "txt", "md", "html", "htm",
             "xls", "xlsx", "ppt", "pptx", "rtf", "csv"
+    );
+
+    private static final Map<String, String> MIME_EXTENSION_MAPPING = Map.ofEntries(
+            Map.entry("application/pdf", "pdf"),
+            Map.entry("application/msword", "doc"),
+            Map.entry("application/rtf", "rtf"),
+            Map.entry("text/rtf", "rtf"),
+            Map.entry("application/vnd.ms-excel", "xls"),
+            Map.entry("application/vnd.ms-powerpoint", "ppt"),
+            Map.entry("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+            Map.entry("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"),
+            Map.entry("application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"),
+            Map.entry("text/plain", "txt"),
+            Map.entry("text/csv", "csv"),
+            Map.entry("text/markdown", "md"),
+            Map.entry("text/html", "html")
     );
 
     private static final Set<String> STRICT_MIME_TYPES = Set.of(
@@ -56,7 +73,51 @@ public class FileTypeValidate {
         }
     }
 
-    private static String extractExtension(String fileName) {
+    public static String resolveRemoteFilename(String suggestedFileName, String mimeType, String defaultBaseName) {
+        String normalizedFileName = normalizeRemoteFileName(suggestedFileName);
+        String resolvedExtension = resolveExtensionFromMimeType(mimeType);
+        String fallbackBaseName = StringUtils.hasText(defaultBaseName) ? defaultBaseName.trim() : "remote-document";
+
+        if (StringUtils.hasText(normalizedFileName)) {
+            String currentExtension = extractExtension(normalizedFileName);
+            if (StringUtils.hasText(currentExtension) && isSupportedExtension(currentExtension)) {
+                return normalizedFileName;
+            }
+            if (StringUtils.hasText(resolvedExtension)) {
+                String baseName = stripExtension(normalizedFileName, fallbackBaseName);
+                return requireFilename(baseName + "." + resolvedExtension);
+            }
+            return requireFilename(normalizedFileName);
+        }
+
+        if (StringUtils.hasText(resolvedExtension)) {
+            return fallbackBaseName + "." + resolvedExtension;
+        }
+        throw new ClientException("无法识别 URL 文档类型", DOCUMENT_TYPE_NOT_SUPPORTED);
+    }
+
+    public static String normalizeRemoteFileName(String fileName) {
+        if (!StringUtils.hasText(fileName)) {
+            return null;
+        }
+        String normalized = fileName.trim();
+        int queryIndex = normalized.indexOf('?');
+        if (queryIndex >= 0) {
+            normalized = normalized.substring(0, queryIndex);
+        }
+        return StringUtils.hasText(normalized) ? normalized : null;
+    }
+
+    public static String normalizeMimeType(String mimeType) {
+        if (!StringUtils.hasText(mimeType)) {
+            return null;
+        }
+        int separator = mimeType.indexOf(';');
+        String normalized = separator >= 0 ? mimeType.substring(0, separator) : mimeType;
+        return normalized.trim().toLowerCase(Locale.ROOT);
+    }
+
+    public static String extractExtension(String fileName) {
         if (!StringUtils.hasText(fileName)) {
             return "";
         }
@@ -67,11 +128,23 @@ public class FileTypeValidate {
         return fileName.substring(dotIndex + 1).toLowerCase(Locale.ROOT);
     }
 
+    public static boolean isSupportedExtension(String extension) {
+        return StringUtils.hasText(extension)
+                && ALLOWED_FILE_TYPES.contains(extension.trim().toLowerCase(Locale.ROOT));
+    }
+
+    public static String resolveExtensionFromMimeType(String mimeType) {
+        if (!StringUtils.hasText(mimeType)) {
+            return null;
+        }
+        return MIME_EXTENSION_MAPPING.get(normalizeMimeType(mimeType));
+    }
+
     private static boolean isMimeAllowed(String mimeType, String extension) {
         if (!StringUtils.hasText(mimeType)) {
             return false;
         }
-        String normalized = mimeType.toLowerCase(Locale.ROOT);
+        String normalized = normalizeMimeType(mimeType);
         if (normalized.startsWith("text/")) {
             return true;
         }
@@ -126,5 +199,23 @@ public class FileTypeValidate {
             }
         }
         return printable >= Math.max(1, (header.length * 7) / 10);
+    }
+
+    private static String stripExtension(String fileName, String fallbackBaseName) {
+        if (!StringUtils.hasText(fileName)) {
+            return fallbackBaseName;
+        }
+        int dotIndex = fileName.lastIndexOf('.');
+        if (dotIndex <= 0) {
+            return fileName;
+        }
+        return fileName.substring(0, dotIndex);
+    }
+
+    private static String requireFilename(String fileName) {
+        if (!StringUtils.hasText(fileName)) {
+            throw new ClientException("文件名不能为空", DOCUMENT_TYPE_NOT_SUPPORTED);
+        }
+        return fileName.trim();
     }
 }

@@ -18,7 +18,7 @@ public class VectorEncoding {
 
     private static final Logger log = LoggerFactory.getLogger(VectorEncoding.class);
 
-    @Value("${embedding.batch-size:100}")
+    @Value("${rag.embedding.batch-size:10}")
     private int processingBatchSize;
 
     private final EmbeddingModel embeddingModel;
@@ -63,9 +63,10 @@ public class VectorEncoding {
      */
     private List<List<String>> partitionIntoBatches(List<String> textList) {
         List<List<String>> batches = new ArrayList<>();
+        int batchSize = Math.max(1, processingBatchSize);
 
-        for (int i = 0; i < textList.size(); i += processingBatchSize) {
-            int endIndex = Math.min(i + processingBatchSize, textList.size());
+        for (int i = 0; i < textList.size(); i += batchSize) {
+            int endIndex = Math.min(i + batchSize, textList.size());
             batches.add(textList.subList(i, endIndex));
         }
 

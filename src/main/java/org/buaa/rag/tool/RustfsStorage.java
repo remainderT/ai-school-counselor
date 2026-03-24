@@ -84,13 +84,6 @@ public class RustfsStorage {
         return String.format("uploads/%s/source%s", md5, suffix);
     }
 
-    public String buildLegacyPath(String md5, String filename) {
-        if (!StringUtils.hasText(filename)) {
-            return null;
-        }
-        return String.format("uploads/%s/%s", md5, filename);
-    }
-
     private String extractExtension(String filename) {
         if (!StringUtils.hasText(filename)) {
             return "";

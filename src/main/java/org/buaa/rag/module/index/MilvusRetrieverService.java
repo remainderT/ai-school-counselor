@@ -1,4 +1,4 @@
-package org.buaa.rag.module.vector;
+package org.buaa.rag.module.index;
 
 import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.SEARCH_SERVICE_ERROR;
 

@@ -118,15 +118,17 @@ public class IngestionConsumer {
         if (retryable && task.retryCount() < props.getMaxRetries()) {
             DocumentIngestionTask retryTask = task.nextRetry();
             producer.enqueue(retryTask);
-            log.warn("文档摄取失败，已重试入队: md5={}, retry={}/{}", task.documentMd5(),
+            log.warn("文档摄取失败，已重试入队: documentId={}, retry={}/{}", task.documentId(),
                 retryTask.retryCount(), props.getMaxRetries(), ex);
             return true;
         } else {
-            ingestionWorkflow.markFailed(task.documentMd5(), failureResolver.summarizeFailureReason(ex));
+            ingestionWorkflow.markFailed(task.documentId(), failureResolver.summarizeFailureReason(ex));
             if (retryable) {
-                log.error("文档摄取失败，达到最大重试次数: md5={}, retries={}", task.documentMd5(), task.retryCount(), ex);
+                log.error("文档摄取失败，达到最大重试次数: documentId={}, retries={}",
+                    task.documentId(), task.retryCount(), ex);
             } else {
-                log.error("文档摄取失败，不可重试: md5={}, retries={}", task.documentMd5(), task.retryCount(), ex);
+                log.error("文档摄取失败，不可重试: documentId={}, retries={}",
+                    task.documentId(), task.retryCount(), ex);
             }
             return true;
         }

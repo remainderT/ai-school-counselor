@@ -3,8 +3,7 @@ package org.buaa.rag.service;
 import java.util.List;
 
 import org.buaa.rag.dao.entity.DocumentDO;
-import org.buaa.rag.dto.req.DocumentUrlUploadReqDTO;
-import org.springframework.web.multipart.MultipartFile;
+import org.buaa.rag.dto.req.DocumentUploadReqDTO;
 
 /**
  * 文档服务接口
@@ -12,14 +11,11 @@ import org.springframework.web.multipart.MultipartFile;
 public interface DocumentService {
 
     /**
-     * 上传文档
+     * 统一上传文档
+     * <p>
+     * 支持文件上传和 URL 上传。
      */
-    void upload(MultipartFile file, Long knowledgeId);
-
-    /**
-     * 通过 URL 上传文档
-     */
-    void uploadByUrl(DocumentUrlUploadReqDTO requestParam);
+    void upload(DocumentUploadReqDTO requestParam);
 
     /**
      * 列出用户的文档

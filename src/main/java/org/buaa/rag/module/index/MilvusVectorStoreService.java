@@ -1,4 +1,4 @@
-package org.buaa.rag.module.vector;
+package org.buaa.rag.module.index;
 
 import java.util.ArrayList;
 import java.util.List;
