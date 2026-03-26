@@ -187,7 +187,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                                     .index(esProperties.getIndex())
                                     .query(queryBuilder -> queryBuilder
                                             .match(matchBuilder -> matchBuilder
-                                                    .field("textPayload")
+                                                    .field("text_data")
                                                     .query(query)
                                                     .operator(resolveOperator(query))
                                             )
@@ -196,14 +196,21 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                     ESIndexDO.class
             );
 
+            Set<Long> documentIds = response.hits().hits().stream()
+                    .filter(hit -> hit.source() != null && hit.source().getDocumentId() != null)
+                    .map(hit -> hit.source().getDocumentId())
+                    .collect(Collectors.toSet());
+            Map<Long, String> md5Map = loadMd5MapByDocumentIds(documentIds);
+
             List<RetrievalMatch> results = response.hits().hits().stream()
                     .filter(hit -> hit.source() != null)
                     .map(hit -> new RetrievalMatch(
-                            hit.source().getSourceMd5(),
-                            hit.source().getSegmentNumber(),
-                            hit.source().getTextPayload(),
+                            md5Map.get(hit.source().getDocumentId()),
+                            hit.source().getFragmentIndex(),
+                            hit.source().getTextData(),
                             hit.score()
                     ))
+                    .filter(match -> match.getFileMd5() != null && !match.getFileMd5().isBlank())
                     .collect(Collectors.toList());
             return results;
         } catch (Exception e) {
@@ -338,6 +345,22 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         }
         return documentDOS.stream()
                 .collect(Collectors.toMap(DocumentDO::getMd5Hash, doc -> doc));
+    }
+
+    private Map<Long, String> loadMd5MapByDocumentIds(Set<Long> documentIds) {
+        if (documentIds == null || documentIds.isEmpty()) {
+            return Map.of();
+        }
+        LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
+                .in(DocumentDO::getId, documentIds)
+                .select(DocumentDO::getId, DocumentDO::getMd5Hash);
+        List<DocumentDO> documentDOS = documentMapper.selectList(queryWrapper);
+        if (documentDOS == null || documentDOS.isEmpty()) {
+            return Map.of();
+        }
+        return documentDOS.stream()
+                .filter(doc -> doc.getId() != null && doc.getMd5Hash() != null && !doc.getMd5Hash().isBlank())
+                .collect(Collectors.toMap(DocumentDO::getId, DocumentDO::getMd5Hash));
     }
 
     private boolean isIndexMissing(Throwable error) {

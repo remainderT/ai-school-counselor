@@ -41,7 +41,7 @@ public class MilvusVectorStoreService {
             return;
         }
         validateVectors(fragments, vectors);
-        collectionManager.ensureCollection(vectors.get(0).length);
+        collectionManager.ensureReady();
 
         List<JsonObject> rows = new ArrayList<>(fragments.size());
         for (int i = 0; i < fragments.size(); i++) {
@@ -75,10 +75,7 @@ public class MilvusVectorStoreService {
         if (documentMd5 == null || documentMd5.isBlank()) {
             return;
         }
-        if (!collectionManager.collectionExists()) {
-            throw new ServiceException("Milvus collection 不存在: " + milvusProperties.getCollectionName(),
-                SEARCH_SERVICE_ERROR);
-        }
+        collectionManager.ensureReady();
         try {
             DeleteResp response = milvusClient.delete(
                 DeleteReq.builder()

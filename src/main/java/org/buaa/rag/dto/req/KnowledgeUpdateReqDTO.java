@@ -9,8 +9,4 @@ public class KnowledgeUpdateReqDTO {
 
     private String description;
 
-    /**
-     * private / public
-     */
-    private String visibility;
 }

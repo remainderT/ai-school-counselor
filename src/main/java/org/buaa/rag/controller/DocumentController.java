@@ -28,14 +28,9 @@ public class DocumentController {
 
     @PostMapping("/upload")
     public Result<Void> upload(@RequestParam("file") MultipartFile uploadedFile,
+                               @RequestParam("url") String url,
                                @RequestParam("knowledgeId") Long knowledgeId) {
-        documentService.upload(DocumentUploadReqDTO.forFile(uploadedFile, knowledgeId));
-        return Results.success();
-    }
-
-    @PostMapping("/upload/url")
-    public Result<Void> uploadByUrl(@RequestBody DocumentUploadReqDTO requestParam) {
-        documentService.upload(requestParam);
+        documentService.upload(uploadedFile, url, knowledgeId);
         return Results.success();
     }
 

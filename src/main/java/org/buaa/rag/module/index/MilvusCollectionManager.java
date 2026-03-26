@@ -7,6 +7,7 @@ import java.util.Map;
 import org.buaa.rag.properties.MilvusProperties;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PostConstruct;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.common.ConsistencyLevel;
 import io.milvus.v2.common.DataType;
@@ -26,24 +27,29 @@ public class MilvusCollectionManager {
 
     private final MilvusClientV2 milvusClient;
     private final MilvusProperties milvusProperties;
+    private final EmbeddingService embeddingService;
+    private volatile boolean ready;
 
-    public void ensureCollection(int dimension) {
-        if (dimension <= 0) {
-            throw new IllegalArgumentException("Milvus 向量维度必须大于 0");
-        }
+    @PostConstruct
+    public void initializeOnStartup() {
         if (collectionExists()) {
+            ready = true;
+            log.info("Milvus collection 已就绪: {}", milvusProperties.getCollectionName());
             return;
         }
-
-        synchronized (this) {
-            if (collectionExists()) {
-                return;
-            }
-            createCollection(dimension);
-        }
+        int dimension = detectEmbeddingDimension();
+        createCollection(dimension);
+        ready = true;
     }
 
-    public boolean collectionExists() {
+    public void ensureReady() {
+        if (ready) {
+            return;
+        }
+        throw new IllegalStateException("Milvus collection 未就绪: " + milvusProperties.getCollectionName());
+    }
+
+    private boolean collectionExists() {
         return Boolean.TRUE.equals(
             milvusClient.hasCollection(
                 HasCollectionReq.builder()
@@ -130,6 +136,18 @@ public class MilvusCollectionManager {
             }
             throw e;
         }
+    }
+
+    private int detectEmbeddingDimension() {
+        List<float[]> vectors = embeddingService.encodeFragments(
+            List.of(new org.buaa.rag.dto.ContentFragment(1, "milvus-init-probe"))
+        );
+        if (vectors == null || vectors.isEmpty() || vectors.get(0) == null || vectors.get(0).length <= 0) {
+            throw new IllegalStateException("无法探测 embedding 向量维度，Milvus 初始化失败");
+        }
+        int dimension = vectors.get(0).length;
+        log.info("Milvus 初始化探测到 embedding 维度: {}", dimension);
+        return dimension;
     }
 
     private IndexParam.MetricType resolveMetricType() {

@@ -39,7 +39,7 @@ public class DocumentIngestionWorkflow {
             artifactService.replace(document, fragments);
             lifecycleService.markCompleted(document.getId());
         } catch (Exception exception) {
-            artifactService.cleanup(document.getMd5Hash());
+            artifactService.cleanup(document);
             throw failureResolver.toIngestionException(exception);
         }
     }
@@ -49,7 +49,7 @@ public class DocumentIngestionWorkflow {
         if (document == null) {
             return;
         }
-        artifactService.cleanup(document.getMd5Hash());
+        artifactService.cleanup(document);
         lifecycleService.markFailed(documentId, failureReason);
     }
 

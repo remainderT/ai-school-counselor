@@ -28,8 +28,7 @@ CREATE TABLE knowledge (
                         `update_time` datetime       DEFAULT NULL COMMENT '修改时间',
                         `del_flag`    tinyint(1)     DEFAULT 0 COMMENT '删除标识 0：未删除 1：已删除',
                         PRIMARY KEY (id),
-                        UNIQUE KEY uk_user_name (user_id, name) COMMENT '同一用户下知识库名唯一',
-                        INDEX idx_user_visibility (user_id, visibility)
+                        UNIQUE KEY uk_user_name (user_id, name) COMMENT '同一用户下知识库名唯一'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库表';
 
 DROP TABLE IF EXISTS document;
@@ -54,13 +53,16 @@ CREATE TABLE document (
 DROP TABLE IF EXISTS chunk;
 CREATE TABLE chunk (
                         id      BIGINT(20)          NOT NULL AUTO_INCREMENT COMMENT 'chunk唯一标识',
-                        document_md5    VARCHAR(32)      NOT NULL COMMENT '关联文档的MD5值',
+                        document_id     BIGINT(20)       NOT NULL COMMENT '关联文档ID',
                         fragment_index  INT              NOT NULL COMMENT 'chunk序号',
                         text_data       TEXT             COMMENT 'chunk文本内容',
                         encoding_model  VARCHAR(32)      COMMENT 'chunk编码模型版本',
+                        md5_hash         VARCHAR(32)     COMMENT 'chunk文本MD5哈希值',
+                        token_estimate   INT             COMMENT 'chunk token 估算值',
+                        `del_flag`       tinyint(1)      DEFAULT 0 COMMENT '删除标识 0：未删除 1：已删除',
                         PRIMARY KEY (id),
-                        INDEX idx_document_md5 (document_md5) COMMENT '文档MD5索引',
-                        INDEX idx_chunk (document_md5, fragment_index) COMMENT '文档和chunk序号组合索引'
+                        INDEX idx_document_id (document_id) COMMENT '文档ID索引',
+                        INDEX idx_chunk (document_id, fragment_index) COMMENT '文档和chunk序号组合索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档chunk存储表';
 
 DROP TABLE IF EXISTS messages;

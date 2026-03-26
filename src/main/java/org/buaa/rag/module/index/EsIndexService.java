@@ -7,11 +7,11 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import org.buaa.rag.common.convention.exception.ServiceException;
+import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.ESIndexDO;
 import org.buaa.rag.dto.ContentFragment;
 import org.buaa.rag.properties.EsProperties;
 import org.springframework.stereotype.Service;
-import org.springframework.util.StringUtils;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
@@ -35,31 +35,31 @@ public class EsIndexService {
     private final ElasticsearchClient esClient;
     private final EsProperties esProperties;
 
-    public void index(String documentMd5, List<ContentFragment> fragments) {
-        if (!StringUtils.hasText(documentMd5)) {
-            throw new ServiceException("文档 md5 不能为空", SEARCH_SERVICE_ERROR);
+    public void index(DocumentDO document, List<ContentFragment> fragments) {
+        if (document == null || document.getId() == null || document.getId() <= 0) {
+            throw new ServiceException("文档 ID 不能为空", SEARCH_SERVICE_ERROR);
         }
         if (fragments == null || fragments.isEmpty()) {
-            log.warn("未发现文本片段，跳过索引: {}", documentMd5);
+            log.warn("未发现文本片段，跳过索引: documentId={}", document.getId());
             return;
         }
 
-        log.info("启动 ES 文本索引: {}, 片段数: {}", documentMd5, fragments.size());
-        bulkIndex(buildIndexDocs(documentMd5, fragments));
-        log.info("ES 文本索引完成: {}, 片段数: {}", documentMd5, fragments.size());
+        log.info("启动 ES 文本索引: documentId={}, 片段数={}", document.getId(), fragments.size());
+        bulkIndex(buildIndexDocs(document, fragments));
+        log.info("ES 文本索引完成: documentId={}, 片段数={}", document.getId(), fragments.size());
     }
 
-    public void deleteByDocumentMd5(String documentMd5) {
-        if (!StringUtils.hasText(documentMd5)) {
+    public void deleteByDocumentId(Long documentId) {
+        if (documentId == null || documentId <= 0) {
             return;
         }
         try {
             DeleteByQueryResponse response = esClient.deleteByQuery(b -> b
                 .index(esProperties.getIndex())
-                .query(q -> q.term(t -> t.field("sourceMd5").value(documentMd5)))
+                .query(q -> q.term(t -> t.field("document_id").value(documentId)))
                 .refresh(true)
             );
-            log.info("ES 文本索引删除完成: {}, 删除数: {}", documentMd5, response.deleted());
+            log.info("ES 文本索引删除完成: documentId={}, 删除数={}", documentId, response.deleted());
         } catch (Exception e) {
             throw new ServiceException("删除 ES 文本索引失败: " + e.getMessage(), e, SEARCH_SERVICE_ERROR);
         }
@@ -70,7 +70,7 @@ public class EsIndexService {
             List<BulkOperation> operations = docs.stream()
                 .map(doc -> BulkOperation.of(op -> op.index(idx -> idx
                     .index(esProperties.getIndex())
-                    .id(doc.getDocumentId())
+                    .id(doc.getId())
                     .document(doc))))
                 .collect(Collectors.toList());
 
@@ -96,17 +96,21 @@ public class EsIndexService {
         }
     }
 
-    private List<ESIndexDO> buildIndexDocs(String documentMd5, List<ContentFragment> fragments) {
+    private List<ESIndexDO> buildIndexDocs(DocumentDO document, List<ContentFragment> fragments) {
         return IntStream.range(0, fragments.size())
             .mapToObj(index -> {
                 ContentFragment fragment = fragments.get(index);
                 return ESIndexDO.builder()
-                    .documentId(documentMd5 + "_" + fragment.getFragmentId())
-                    .sourceMd5(documentMd5)
-                    .segmentNumber(fragment.getFragmentId())
-                    .textPayload(fragment.getTextContent())
+                    .id(buildEsDocId(document.getId(), fragment.getFragmentId()))
+                    .documentId(document.getId())
+                    .fragmentIndex(fragment.getFragmentId())
+                    .textData(fragment.getTextContent())
                     .build();
             })
             .toList();
+    }
+
+    private String buildEsDocId(Long documentId, Integer fragmentIndex) {
+        return documentId + "_" + fragmentIndex;
     }
 }

@@ -22,7 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class DocumentEmbeddingService {
+public class EmbeddingService {
 
     private final VectorEncoding encodingService;
 

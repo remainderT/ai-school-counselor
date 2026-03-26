@@ -2,7 +2,6 @@ package org.buaa.rag.service.impl;
 
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_ACCESS_CONTROL_ERROR;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_EXISTS;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_MIME_FAILED;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_NAME_NULL;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_NOT_EXISTS;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_PARSE_FAILED;
@@ -18,7 +17,6 @@ import java.io.InputStream;
 import java.util.List;
 
 import org.apache.commons.codec.digest.DigestUtils;
-import org.apache.tika.Tika;
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.common.user.UserContext;
@@ -26,7 +24,6 @@ import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.KnowledgeDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
-import org.buaa.rag.dto.req.DocumentUploadReqDTO;
 import org.buaa.rag.module.ingestion.DocumentArtifactService;
 import org.buaa.rag.module.ingestion.DocumentLifecycleService;
 import org.buaa.rag.module.ingestion.DocumentIngestionTask;
@@ -36,6 +33,7 @@ import org.buaa.rag.mq.IngestionProducer;
 import org.buaa.rag.properties.FIleParseProperties;
 import org.buaa.rag.service.DocumentService;
 import org.buaa.rag.module.parser.FileTypeValidate;
+import org.buaa.rag.module.parser.FileTypeValidate.InspectedFile;
 import org.buaa.rag.tool.RustfsStorage;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamSource;
@@ -59,7 +57,6 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO> implements DocumentService {
 
-    private static final int MAGIC_HEADER_BYTES = 16;
     private static final String REMOTE_FILE_BASENAME = "remote-document";
 
     private final RustfsStorage rustfsStorage;
@@ -70,7 +67,6 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final DocumentArtifactService artifactService;
     private final RemoteURLFetcher remoteURLFetcher;
 
-    private final Tika tika = new Tika();
 
     private record UploadPayload(String originalFilename,
                                  String mimeType,
@@ -80,12 +76,9 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     }
 
     @Override
-    public void upload(DocumentUploadReqDTO requestParam) {
-        if (requestParam == null) {
-            throw new ClientException(DOCUMENT_UPLOAD_NULL);
-        }
-        KnowledgeDO knowledge = verifyUploadKnowledge(requestParam.getKnowledgeId());
-        UploadPayload payload = buildUploadPayload(requestParam);
+    public void upload(MultipartFile uploadedFile, String url, Long knowledgeId) {
+        KnowledgeDO knowledge = verifyUploadKnowledge(knowledgeId);
+        UploadPayload payload = uploadedFile != null ? buildMultipartUploadPayload(uploadedFile) : buildUrlUploadPayload(url);
         persistUploadPayload(payload, knowledge.getId());
     }
 
@@ -109,18 +102,18 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         }
 
         deleteStoredDocument(document.getMd5Hash(), document.getOriginalFileName());
-        artifactService.cleanup(document.getMd5Hash());
-        baseMapper.deleteById(id);
+        artifactService.cleanup(document);
+        markDeleted(document.getId());
     }
 
-    private UploadPayload buildUploadPayload(DocumentUploadReqDTO requestParam) {
-        if (requestParam.hasFile()) {
-            return buildMultipartUploadPayload(requestParam.getFile());
-        }
-        if (requestParam.hasUrl()) {
-            return buildUrlUploadPayload(requestParam.getUrl());
-        }
-        throw new ClientException(DOCUMENT_UPLOAD_NULL);
+    private void markDeleted(Long documentId) {
+        baseMapper.update(
+            null,
+            Wrappers.lambdaUpdate(DocumentDO.class)
+                .eq(DocumentDO::getId, documentId)
+                .eq(DocumentDO::getDelFlag, 0)
+                .set(DocumentDO::getDelFlag, 1)
+        );
     }
 
     private UploadPayload buildMultipartUploadPayload(MultipartFile file) {
@@ -134,10 +127,9 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         if (!StringUtils.hasText(originalFilename)) {
             throw new ClientException(DOCUMENT_NAME_NULL);
         }
-        String mimeType = detectMimeType(file, originalFilename, null);
-        validateUploadPayload(originalFilename, mimeType, file);
+        InspectedFile inspectedFile = FileTypeValidate.inspectLocal(file, originalFilename);
         String md5 = calculateMd5(file);
-        return new UploadPayload(originalFilename, mimeType, file.getSize(), md5, file);
+        return new UploadPayload(inspectedFile.fileName(), inspectedFile.mimeType(), file.getSize(), md5, file);
     }
 
     private UploadPayload buildUrlUploadPayload(String sourceUrl) {
@@ -147,12 +139,13 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw new ClientException(DOCUMENT_UPLOAD_NULL);
         }
         ByteArrayResource source = new ByteArrayResource(body);
-        String suggestedFileName = FileTypeValidate.normalizeRemoteFileName(remoteDocument.fileName());
-        String mimeType = detectMimeType(source, defaultMimeDetectionName(suggestedFileName), remoteDocument.contentType());
-        String originalFilename = FileTypeValidate.resolveRemoteFilename(suggestedFileName, mimeType, REMOTE_FILE_BASENAME);
-        validateUploadPayload(originalFilename, mimeType, source);
+        InspectedFile inspectedFile = FileTypeValidate.inspectRemote(
+            source,
+            remoteDocument.fileName(),
+            remoteDocument.contentType(),
+            REMOTE_FILE_BASENAME);
         String md5 = DigestUtils.md5Hex(body);
-        return new UploadPayload(originalFilename, mimeType, body.length, md5, source);
+        return new UploadPayload(inspectedFile.fileName(), inspectedFile.mimeType(), body.length, md5, source);
     }
 
     private void persistUploadPayload(UploadPayload payload, Long knowledgeId) {
@@ -188,24 +181,6 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw new ClientException(KNOWLEDGE_ACCESS_DENIED);
         }
         return knowledge;
-    }
-
-    private String detectMimeType(InputStreamSource source, String originalFilename, String fallbackMimeType) {
-        try (InputStream inputStream = source.getInputStream()) {
-            String detectedMimeType = FileTypeValidate.normalizeMimeType(tika.detect(inputStream, originalFilename));
-            if (StringUtils.hasText(detectedMimeType) && !"application/octet-stream".equalsIgnoreCase(detectedMimeType)) {
-                return detectedMimeType;
-            }
-            String normalizedFallback = FileTypeValidate.normalizeMimeType(fallbackMimeType);
-            return StringUtils.hasText(normalizedFallback) ? normalizedFallback : detectedMimeType;
-        } catch (IOException e) {
-            log.warn("MIME 检测失败: {}", e.getMessage());
-            throw new ServiceException(DOCUMENT_MIME_FAILED);
-        }
-    }
-
-    private void validateUploadPayload(String originalFilename, String mimeType, InputStreamSource source) {
-        FileTypeValidate.validate(originalFilename, mimeType, readFileHeader(source));
     }
 
     private String calculateMd5(InputStreamSource source) {
@@ -279,17 +254,5 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         }
         log.error("文件上传失败: documentId={}", document.getId(), error);
         lifecycleService.markFailed(document.getId(), error);
-    }
-
-    private byte[] readFileHeader(InputStreamSource source) {
-        try (InputStream inputStream = source.getInputStream()) {
-            return inputStream.readNBytes(MAGIC_HEADER_BYTES);
-        } catch (IOException e) {
-            throw new ServiceException("文件头读取失败: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
-        }
-    }
-
-    private String defaultMimeDetectionName(String suggestedFileName) {
-        return StringUtils.hasText(suggestedFileName) ? suggestedFileName : REMOTE_FILE_BASENAME;
     }
 }

@@ -20,11 +20,26 @@ public class ChunkDO {
 
     private Long id;
 
-    private String documentMd5;
+    private Long documentId;
 
     private Integer fragmentIndex;
 
     private String textData;
 
     private String encodingModel;
+
+    /**
+     * chunk 文本 MD5 哈希值
+     */
+    private String md5Hash;
+
+    /**
+     * token 估算值
+     */
+    private Integer tokenEstimate;
+
+    /**
+     * 删除标识 0：未删除 1：已删除
+     */
+    private Integer delFlag;
 }

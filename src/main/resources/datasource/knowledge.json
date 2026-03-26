@@ -1,19 +1,22 @@
 {
   "mappings": {
     "properties": {
-      "documentId": {
+      "id": {
         "type": "keyword"
       },
-      "sourceMd5": {
-        "type": "keyword"
+      "document_id": {
+        "type": "long"
       },
-      "chunkIndex": {
+      "fragment_index": {
         "type": "integer"
       },
-      "textPayload": {
+      "text_data": {
         "type": "text",
         "analyzer": "ik_max_word",
         "search_analyzer": "ik_smart"
+      },
+      "encoding_model": {
+        "type": "keyword"
       }
     }
   }

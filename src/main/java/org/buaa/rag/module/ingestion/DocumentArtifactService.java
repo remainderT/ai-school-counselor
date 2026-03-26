@@ -1,16 +1,17 @@
 package org.buaa.rag.module.ingestion;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import org.apache.commons.codec.digest.DigestUtils;
 import org.buaa.rag.dao.entity.ChunkDO;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.mapper.ChunkMapper;
 import org.buaa.rag.dto.ContentFragment;
-import org.buaa.rag.module.index.DocumentEmbeddingService;
+import org.buaa.rag.module.index.EmbeddingService;
 import org.buaa.rag.module.index.EsIndexService;
 import org.buaa.rag.module.index.MilvusVectorStoreService;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
@@ -29,50 +30,57 @@ public class DocumentArtifactService {
 
     private final ChunkMapper chunkMapper;
     private final EsIndexService esIndexService;
-    private final DocumentEmbeddingService documentEmbeddingService;
+    private final EmbeddingService documentEmbeddingService;
     private final MilvusVectorStoreService milvusVectorStoreService;
 
     public void replace(DocumentDO document, List<ContentFragment> fragments) {
         if (document == null || fragments == null || fragments.isEmpty()) {
             return;
         }
-        replaceChunks(document.getMd5Hash(), fragments);
-        esIndexService.index(document.getMd5Hash(), fragments);
+        replaceChunks(document.getId(), fragments);
+        esIndexService.index(document, fragments);
         List<float[]> vectors = documentEmbeddingService.encodeFragments(fragments);
         milvusVectorStoreService.upsertDocument(document, fragments, vectors);
     }
 
-    private void replaceChunks(String documentMd5, List<ContentFragment> fragments) {
-        deleteChunks(documentMd5);
+    private void replaceChunks(Long documentId, List<ContentFragment> fragments) {
+        deleteChunks(documentId);
         for (ContentFragment fragment : fragments) {
             ChunkDO chunk = new ChunkDO();
-            chunk.setDocumentMd5(documentMd5);
+            chunk.setDocumentId(documentId);
             chunk.setFragmentIndex(fragment.getFragmentId());
             chunk.setTextData(fragment.getTextContent());
+            chunk.setMd5Hash(calculateMd5(fragment.getTextContent()));
+            chunk.setTokenEstimate(estimateTokenCount(fragment.getTextContent()));
             chunkMapper.insert(chunk);
         }
-        log.info("已保存 {} 个 chunk", fragments.size());
+        log.info("已保存 {} 个 chunk: documentId={}", fragments.size(), documentId);
     }
 
-    private void deleteChunks(String documentMd5) {
-        if (!StringUtils.hasText(documentMd5)) {
+    private void deleteChunks(Long documentId) {
+        if (documentId == null || documentId <= 0) {
             return;
         }
-        chunkMapper.delete(
-            Wrappers.lambdaQuery(ChunkDO.class)
-                .eq(ChunkDO::getDocumentMd5, documentMd5)
+        chunkMapper.update(
+            null,
+            Wrappers.lambdaUpdate(ChunkDO.class)
+                .eq(ChunkDO::getDocumentId, documentId)
+                .eq(ChunkDO::getDelFlag, 0)
+                .set(ChunkDO::getDelFlag, 1)
         );
-        log.debug("已删除文档 chunk: {}", documentMd5);
+        log.debug("已逻辑删除文档 chunk: documentId={}", documentId);
     }
 
-    public void cleanup(String documentMd5) {
-        if (!StringUtils.hasText(documentMd5)) {
+    public void cleanup(DocumentDO document) {
+        if (document == null) {
             return;
         }
+        Long documentId = document.getId();
+        String documentMd5 = document.getMd5Hash();
         try {
-            esIndexService.deleteByDocumentMd5(documentMd5);
+            esIndexService.deleteByDocumentId(documentId);
         } catch (Exception e) {
-            log.warn("回滚 ES 文本索引失败: {}", documentMd5, e);
+            log.warn("回滚 ES 文本索引失败: documentId={}", documentId, e);
         }
         try {
             milvusVectorStoreService.deleteByDocumentMd5(documentMd5);
@@ -80,13 +88,22 @@ public class DocumentArtifactService {
             log.warn("回滚 Milvus 向量失败: {}", documentMd5, e);
         }
         try {
-            chunkMapper.delete(
-                    Wrappers.lambdaQuery(ChunkDO.class)
-                            .eq(ChunkDO::getDocumentMd5, documentMd5)
-            );
-            log.debug("已删除文档 chunk: {}", documentMd5);
+            deleteChunks(documentId);
         } catch (Exception e) {
-            log.warn("回滚 chunk 失败: {}", documentMd5, e);
+            log.warn("回滚 chunk 失败: documentId={}", documentId, e);
         }
+    }
+
+    private String calculateMd5(String text) {
+        String normalized = text == null ? "" : text;
+        return DigestUtils.md5Hex(normalized.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private Integer estimateTokenCount(String text) {
+        if (text == null || text.isBlank()) {
+            return 0;
+        }
+        int codePointCount = text.codePointCount(0, text.length());
+        return Math.max(1, (int) Math.ceil(codePointCount / 1.8d));
     }
 }

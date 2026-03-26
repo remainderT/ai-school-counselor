@@ -1,15 +1,26 @@
 package org.buaa.rag.module.parser;
 
+import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_MIME_FAILED;
+import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_PARSE_FAILED;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_TYPE_NOT_SUPPORTED;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 
 import org.buaa.rag.common.convention.exception.ClientException;
+import org.buaa.rag.common.convention.exception.ServiceException;
+import org.apache.tika.Tika;
+import org.springframework.core.io.InputStreamSource;
 import org.springframework.util.StringUtils;
 
 public class FileTypeValidate {
+
+    private static final int MAGIC_HEADER_BYTES = 16;
+
+    private static final Tika tika = new Tika();
 
     private static final Set<String> ALLOWED_FILE_TYPES = Set.of(
             "pdf", "doc", "docx", "txt", "md", "html", "htm",
@@ -58,6 +69,29 @@ public class FileTypeValidate {
     private static final byte[] UTF8_BOM = new byte[] {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
     private static final byte[] UTF16_LE_BOM = new byte[] {(byte) 0xFF, (byte) 0xFE};
     private static final byte[] UTF16_BE_BOM = new byte[] {(byte) 0xFE, (byte) 0xFF};
+
+    public record InspectedFile(String fileName, String mimeType) {
+    }
+
+    public static InspectedFile inspectLocal(InputStreamSource source,
+                                             String originalFileName) {
+        String fileName = requireFilename(originalFileName);
+        String mimeType = detectMimeType(source, fileName, null);
+        validateSource(source, fileName, mimeType);
+        return new InspectedFile(fileName, mimeType);
+    }
+
+    public static InspectedFile inspectRemote(InputStreamSource source,
+                                              String suggestedFileName,
+                                              String fallbackMimeType,
+                                              String defaultBaseName) {
+        String normalizedFileName = normalizeRemoteFileName(suggestedFileName);
+        String detectionName = StringUtils.hasText(normalizedFileName) ? normalizedFileName : defaultBaseName;
+        String mimeType = detectMimeType(source, detectionName, fallbackMimeType);
+        String resolvedFileName = resolveRemoteFilename(normalizedFileName, mimeType, defaultBaseName);
+        validateSource(source, resolvedFileName, mimeType);
+        return new InspectedFile(resolvedFileName, mimeType);
+    }
 
     public static void validate(String originalFileName, String detectedMimeType, byte[] fileHeader) {
         String extension = extractExtension(originalFileName);
@@ -199,6 +233,33 @@ public class FileTypeValidate {
             }
         }
         return printable >= Math.max(1, (header.length * 7) / 10);
+    }
+
+    private static String detectMimeType(InputStreamSource source,
+                                         String originalFileName,
+                                         String fallbackMimeType) {
+        try (InputStream inputStream = source.getInputStream()) {
+            String detectedMimeType = normalizeMimeType(tika.detect(inputStream, originalFileName));
+            if (StringUtils.hasText(detectedMimeType) && !"application/octet-stream".equalsIgnoreCase(detectedMimeType)) {
+                return detectedMimeType;
+            }
+            String normalizedFallback = normalizeMimeType(fallbackMimeType);
+            return StringUtils.hasText(normalizedFallback) ? normalizedFallback : detectedMimeType;
+        } catch (IOException e) {
+            throw new ServiceException(DOCUMENT_MIME_FAILED);
+        }
+    }
+
+    private static void validateSource(InputStreamSource source, String originalFileName, String detectedMimeType) {
+        validate(originalFileName, detectedMimeType, readFileHeader(source));
+    }
+
+    private static byte[] readFileHeader(InputStreamSource source) {
+        try (InputStream inputStream = source.getInputStream()) {
+            return inputStream.readNBytes(MAGIC_HEADER_BYTES);
+        } catch (IOException e) {
+            throw new ServiceException("文件头读取失败: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
+        }
     }
 
     private static String stripExtension(String fileName, String fallbackBaseName) {

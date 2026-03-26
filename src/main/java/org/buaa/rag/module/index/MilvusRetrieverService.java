@@ -37,11 +37,7 @@ public class MilvusRetrieverService {
         if (queryVector == null || queryVector.isEmpty() || topK <= 0) {
             return Collections.emptyList();
         }
-
-        if (!collectionManager.collectionExists()) {
-            throw new ServiceException("Milvus collection 不存在: " + milvusProperties.getCollectionName(),
-                SEARCH_SERVICE_ERROR);
-        }
+        collectionManager.ensureReady();
 
         try {
             float[] vector = normalize(toArray(queryVector));

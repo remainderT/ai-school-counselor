@@ -1,5 +1,7 @@
 package org.buaa.rag.dao.entity;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -14,11 +16,17 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class ESIndexDO {
 
-    private String documentId;
+    private String id;
 
-    private String sourceMd5;
+    @JsonProperty("document_id")
+    private Long documentId;
 
-    private Integer segmentNumber;
+    @JsonProperty("fragment_index")
+    private Integer fragmentIndex;
 
-    private String textPayload;
+    @JsonProperty("text_data")
+    private String textData;
+
+    @JsonProperty("encoding_model")
+    private String encodingModel;
 }
