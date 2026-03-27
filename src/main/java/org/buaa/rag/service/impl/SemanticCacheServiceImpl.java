@@ -12,7 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.dto.RetrievalMatch;
 import org.buaa.rag.service.SemanticCacheService;
-import org.buaa.rag.tool.VectorEncoding;
+import org.buaa.rag.module.index.VectorEncoding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

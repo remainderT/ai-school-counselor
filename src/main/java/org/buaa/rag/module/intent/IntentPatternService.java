@@ -10,7 +10,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.buaa.rag.dto.IntentDecision;
-import org.buaa.rag.tool.VectorEncoding;
+import org.buaa.rag.module.index.VectorEncoding;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;

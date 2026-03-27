@@ -15,7 +15,7 @@ import org.buaa.rag.dto.IntentClassifyResult;
 import org.buaa.rag.dto.IntentDecision;
 import org.buaa.rag.dto.IntentNode;
 import org.buaa.rag.tool.LlmChat;
-import org.buaa.rag.tool.VectorEncoding;
+import org.buaa.rag.module.index.VectorEncoding;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.converter.BeanOutputConverter;

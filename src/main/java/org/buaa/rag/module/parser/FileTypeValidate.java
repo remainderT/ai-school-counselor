@@ -6,6 +6,8 @@ import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_TYPE_NOT_
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
@@ -15,6 +17,7 @@ import org.buaa.rag.common.convention.exception.ServiceException;
 import org.apache.tika.Tika;
 import org.springframework.core.io.InputStreamSource;
 import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
 public class FileTypeValidate {
 
@@ -22,41 +25,10 @@ public class FileTypeValidate {
 
     private static final Tika tika = new Tika();
 
-    private static final Set<String> ALLOWED_FILE_TYPES = Set.of(
-            "pdf", "doc", "docx", "txt", "md", "html", "htm",
-            "xls", "xlsx", "ppt", "pptx", "rtf", "csv"
-    );
-
-    private static final Map<String, String> MIME_EXTENSION_MAPPING = Map.ofEntries(
-            Map.entry("application/pdf", "pdf"),
-            Map.entry("application/msword", "doc"),
-            Map.entry("application/rtf", "rtf"),
-            Map.entry("text/rtf", "rtf"),
-            Map.entry("application/vnd.ms-excel", "xls"),
-            Map.entry("application/vnd.ms-powerpoint", "ppt"),
-            Map.entry("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
-            Map.entry("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"),
-            Map.entry("application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"),
-            Map.entry("text/plain", "txt"),
-            Map.entry("text/csv", "csv"),
-            Map.entry("text/markdown", "md"),
-            Map.entry("text/html", "html")
-    );
-
-    private static final Set<String> STRICT_MIME_TYPES = Set.of(
-            "application/pdf",
-            "application/msword",
-            "application/rtf",
-            "application/vnd.ms-excel",
-            "application/vnd.ms-powerpoint",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            "text/plain",
-            "text/csv",
-            "text/markdown",
-            "text/html"
-    );
+    /**
+     * 单一来源：每个扩展名允许的 MIME 集合
+     */
+    private static final Map<String, Set<String>> EXTENSION_MIME_MAPPING = createExtensionMimeMapping();
 
     private static final Set<String> TEXT_LIKE_EXTENSIONS = Set.of("txt", "md", "html", "htm", "csv");
 
@@ -73,11 +45,10 @@ public class FileTypeValidate {
     public record InspectedFile(String fileName, String mimeType) {
     }
 
-    public static InspectedFile inspectLocal(InputStreamSource source,
-                                             String originalFileName) {
-        String fileName = requireFilename(originalFileName);
-        String mimeType = detectMimeType(source, fileName, null);
-        validateSource(source, fileName, mimeType);
+    public static InspectedFile inspectLocal(MultipartFile file) {
+        String fileName = requireFilename(file.getOriginalFilename());
+        String mimeType = detectMimeType(file, fileName, null);
+        validateSource(file, fileName, mimeType);
         return new InspectedFile(fileName, mimeType);
     }
 
@@ -95,7 +66,7 @@ public class FileTypeValidate {
 
     public static void validate(String originalFileName, String detectedMimeType, byte[] fileHeader) {
         String extension = extractExtension(originalFileName);
-        if (!ALLOWED_FILE_TYPES.contains(extension)) {
+        if (!isSupportedExtension(extension)) {
             throw new ClientException(DOCUMENT_TYPE_NOT_SUPPORTED);
         }
 
@@ -164,14 +135,20 @@ public class FileTypeValidate {
 
     public static boolean isSupportedExtension(String extension) {
         return StringUtils.hasText(extension)
-                && ALLOWED_FILE_TYPES.contains(extension.trim().toLowerCase(Locale.ROOT));
+                && EXTENSION_MIME_MAPPING.containsKey(extension.trim().toLowerCase(Locale.ROOT));
     }
 
     public static String resolveExtensionFromMimeType(String mimeType) {
         if (!StringUtils.hasText(mimeType)) {
             return null;
         }
-        return MIME_EXTENSION_MAPPING.get(normalizeMimeType(mimeType));
+        String normalized = normalizeMimeType(mimeType);
+        for (Map.Entry<String, Set<String>> entry : EXTENSION_MIME_MAPPING.entrySet()) {
+            if (entry.getValue().contains(normalized)) {
+                return entry.getKey();
+            }
+        }
+        return null;
     }
 
     private static boolean isMimeAllowed(String mimeType, String extension) {
@@ -182,7 +159,8 @@ public class FileTypeValidate {
         if (normalized.startsWith("text/")) {
             return true;
         }
-        if (STRICT_MIME_TYPES.contains(normalized)) {
+        Set<String> allowedMimes = EXTENSION_MIME_MAPPING.getOrDefault(extension, Set.of());
+        if (allowedMimes.contains(normalized)) {
             return true;
         }
         // md/csv 在不同平台可能被识别为 octet-stream，放宽一次兜底
@@ -279,4 +257,23 @@ public class FileTypeValidate {
         }
         return fileName.trim();
     }
+
+    private static Map<String, Set<String>> createExtensionMimeMapping() {
+        Map<String, Set<String>> mapping = new LinkedHashMap<>();
+        mapping.put("pdf", Set.of("application/pdf"));
+        mapping.put("doc", Set.of("application/msword"));
+        mapping.put("docx", Set.of("application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
+        mapping.put("xls", Set.of("application/vnd.ms-excel"));
+        mapping.put("xlsx", Set.of("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+        mapping.put("ppt", Set.of("application/vnd.ms-powerpoint"));
+        mapping.put("pptx", Set.of("application/vnd.openxmlformats-officedocument.presentationml.presentation"));
+        mapping.put("rtf", Set.of("application/rtf", "text/rtf"));
+        mapping.put("txt", Set.of("text/plain"));
+        mapping.put("csv", Set.of("text/csv"));
+        mapping.put("md", Set.of("text/markdown"));
+        mapping.put("html", Set.of("text/html"));
+        mapping.put("htm", Set.of("text/html"));
+        return Collections.unmodifiableMap(mapping);
+    }
+
 }

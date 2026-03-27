@@ -6,9 +6,7 @@ import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.STORAGE_SERVICE_ERR
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.dao.entity.DocumentDO;
@@ -83,7 +81,11 @@ public class DocumentContentPipeline {
             throw new ServiceException("文档切分后为空", DOCUMENT_PARSE_FAILED);
         }
         log.info("文本分块完成，片段数: {}", chunks.size());
-        return toFragments(chunks);
+        List<ContentFragment> fragments = new ArrayList<>(chunks.size());
+        for (int index = 0; index < chunks.size(); index++) {
+            fragments.add(new ContentFragment(index + 1, chunks.get(index)));
+        }
+        return fragments;
     }
 
     private String extractText(InputStream stream, String fileName, String mimeType) {
@@ -92,26 +94,17 @@ public class DocumentContentPipeline {
             throw new ServiceException("未找到可用文档解析器", DOCUMENT_PARSE_FAILED);
         }
         try {
-            DocumentParseResult result = parser.parse(stream, fileName, mimeType, buildParserOptions());
+            DocumentParseResult result = parser.parse(
+                stream,
+                fileName,
+                mimeType,
+                java.util.Map.of("maxExtractedChars", fileParseProperties.getMaxExtractedChars())
+            );
             return result == null ? "" : result.text();
         } catch (ServiceException e) {
             throw e;
         } catch (Exception e) {
             throw new ServiceException("文档解析错误: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
         }
-    }
-
-    private Map<String, Object> buildParserOptions() {
-        Map<String, Object> options = new HashMap<>();
-        options.put("maxExtractedChars", fileParseProperties.getMaxExtractedChars());
-        return options;
-    }
-
-    private List<ContentFragment> toFragments(List<String> chunks) {
-        List<ContentFragment> fragments = new ArrayList<>(chunks.size());
-        for (int index = 0; index < chunks.size(); index++) {
-            fragments.add(new ContentFragment(index + 1, chunks.get(index)));
-        }
-        return fragments;
     }
 }

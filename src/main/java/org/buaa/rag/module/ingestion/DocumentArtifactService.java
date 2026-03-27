@@ -50,8 +50,10 @@ public class DocumentArtifactService {
             chunk.setDocumentId(documentId);
             chunk.setFragmentIndex(fragment.getFragmentId());
             chunk.setTextData(fragment.getTextContent());
-            chunk.setMd5Hash(calculateMd5(fragment.getTextContent()));
-            chunk.setTokenEstimate(estimateTokenCount(fragment.getTextContent()));
+            String normalizedText = fragment.getTextContent() == null ? "" : fragment.getTextContent();
+            chunk.setMd5Hash(DigestUtils.md5Hex(normalizedText.getBytes(StandardCharsets.UTF_8)));
+            int codePointCount = normalizedText.codePointCount(0, normalizedText.length());
+            chunk.setTokenEstimate(normalizedText.isBlank() ? 0 : Math.max(1, (int) Math.ceil(codePointCount / 1.8d)));
             chunkMapper.insert(chunk);
         }
         log.info("已保存 {} 个 chunk: documentId={}", fragments.size(), documentId);
@@ -92,18 +94,5 @@ public class DocumentArtifactService {
         } catch (Exception e) {
             log.warn("回滚 chunk 失败: documentId={}", documentId, e);
         }
-    }
-
-    private String calculateMd5(String text) {
-        String normalized = text == null ? "" : text;
-        return DigestUtils.md5Hex(normalized.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private Integer estimateTokenCount(String text) {
-        if (text == null || text.isBlank()) {
-            return 0;
-        }
-        int codePointCount = text.codePointCount(0, text.length());
-        return Math.max(1, (int) Math.ceil(codePointCount / 1.8d));
     }
 }

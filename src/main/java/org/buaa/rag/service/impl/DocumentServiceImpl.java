@@ -2,7 +2,6 @@ package org.buaa.rag.service.impl;
 
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_ACCESS_CONTROL_ERROR;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_EXISTS;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_NAME_NULL;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_NOT_EXISTS;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_PARSE_FAILED;
 import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_SIZE_EXCEEDED;
@@ -103,14 +102,10 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
 
         deleteStoredDocument(document.getMd5Hash(), document.getOriginalFileName());
         artifactService.cleanup(document);
-        markDeleted(document.getId());
-    }
-
-    private void markDeleted(Long documentId) {
         baseMapper.update(
             null,
             Wrappers.lambdaUpdate(DocumentDO.class)
-                .eq(DocumentDO::getId, documentId)
+                .eq(DocumentDO::getId, document.getId())
                 .eq(DocumentDO::getDelFlag, 0)
                 .set(DocumentDO::getDelFlag, 1)
         );
@@ -123,12 +118,14 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         if (file.getSize() > fileParseProperties.getMaxUploadBytes()) {
             throw new ClientException(DOCUMENT_SIZE_EXCEEDED);
         }
-        String originalFilename = file.getOriginalFilename();
-        if (!StringUtils.hasText(originalFilename)) {
-            throw new ClientException(DOCUMENT_NAME_NULL);
+        String md5;
+        try (InputStream inputStream = file.getInputStream()) {
+            md5 = DigestUtils.md5Hex(inputStream);
+        } catch (IOException e) {
+            throw new ServiceException("文档解析失败: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
         }
-        InspectedFile inspectedFile = FileTypeValidate.inspectLocal(file, originalFilename);
-        String md5 = calculateMd5(file);
+
+        InspectedFile inspectedFile = FileTypeValidate.inspectLocal(file);
         return new UploadPayload(inspectedFile.fileName(), inspectedFile.mimeType(), file.getSize(), md5, file);
     }
 
@@ -149,12 +146,21 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     }
 
     private void persistUploadPayload(UploadPayload payload, Long knowledgeId) {
-        ensureDocumentNotExists(payload.md5());
-        DocumentDO document = null;
+        DocumentDO document = lifecycleService.findActiveByMd5AndUserId(payload.md5, UserContext.getUserId());
+        if (document != null) {
+            throw new ClientException(DOCUMENT_EXISTS);
+        }
         try {
             storeDocument(payload);
-            document = createPendingDocument(payload.md5(), payload.originalFilename(), payload.size(), knowledgeId);
-            enqueueIngestionTask(document.getId());
+            document = lifecycleService.createPendingDocument(
+                payload.md5(),
+                payload.originalFilename(),
+                payload.size(),
+                knowledgeId,
+                UserContext.getUserId()
+            );
+            DocumentIngestionTask task = DocumentIngestionTask.initial(document.getId());
+            ingestionProducer.enqueue(task);
         } catch (Exception e) {
             if (document == null) {
                 cleanupStoredDocumentQuietly(payload.md5(), payload.originalFilename());
@@ -183,21 +189,6 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         return knowledge;
     }
 
-    private String calculateMd5(InputStreamSource source) {
-        try (InputStream inputStream = source.getInputStream()) {
-            return DigestUtils.md5Hex(inputStream);
-        } catch (IOException e) {
-            throw new ServiceException("文档解析失败: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
-        }
-    }
-
-    private void ensureDocumentNotExists(String md5) {
-        DocumentDO existing = lifecycleService.findActiveByMd5AndUserId(md5, UserContext.getUserId());
-        if (existing != null) {
-            throw new ClientException(DOCUMENT_EXISTS);
-        }
-    }
-
     private void storeDocument(UploadPayload payload) {
         try {
             rustfsStorage.upload(
@@ -211,20 +202,6 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         } catch (Exception e) {
             throw new ServiceException("对象存储上传失败: " + e.getMessage(), e, STORAGE_SERVICE_ERROR);
         }
-    }
-
-    private DocumentDO createPendingDocument(String md5, String filename, long size, Long knowledgeId) {
-        return lifecycleService.createPendingDocument(
-            md5,
-            filename,
-            size,
-            knowledgeId,
-            UserContext.getUserId()
-        );
-    }
-
-    private void enqueueIngestionTask(Long documentId) {
-        ingestionProducer.enqueue(DocumentIngestionTask.initial(documentId));
     }
 
     private void deleteStoredDocument(String md5, String filename) {

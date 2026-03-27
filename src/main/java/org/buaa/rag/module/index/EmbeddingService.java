@@ -7,7 +7,6 @@ import java.util.List;
 
 import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.dto.ContentFragment;
-import org.buaa.rag.tool.VectorEncoding;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
