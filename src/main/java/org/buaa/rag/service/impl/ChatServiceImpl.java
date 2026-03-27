@@ -18,7 +18,9 @@ import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
 import org.buaa.rag.module.intent.IntentPatternService;
+import org.buaa.rag.module.intent.IntentResolutionService;
 import org.buaa.rag.module.intent.IntentRouterService;
+import org.buaa.rag.module.intent.SubQueryIntent;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.dto.CragDecision;
 import org.buaa.rag.dto.FeedbackRequest;
@@ -77,6 +79,7 @@ public class ChatServiceImpl implements ChatService {
     private final LlmChat llmService;
     private final QueryAnalysisService queryAnalysisService;
     private final IntentRouterService intentRouterService;
+    private final IntentResolutionService intentResolutionService;
     private final ToolService toolService;
     private final IntentPatternService intentPatternService;
     private final QueryDecomposer queryDecomposer;
@@ -580,15 +583,16 @@ public class ChatServiceImpl implements ChatService {
         List<SubQueryExecution> executions = new ArrayList<>();
         List<RetrievalMatch> mergedSources = new ArrayList<>();
 
-        for (String subquery : subqueries) {
-            if (subquery == null || subquery.isBlank()) {
+        List<SubQueryIntent> resolvedSubQueries = intentResolutionService.resolve(userId, subqueries);
+        for (SubQueryIntent subQueryIntent : resolvedSubQueries) {
+            if (subQueryIntent == null || subQueryIntent.subQuery() == null || subQueryIntent.subQuery().isBlank()) {
                 continue;
             }
-            IntentDecision subIntent = intentRouterService.decide(userId, subquery);
-            ExecutionResult subResult = executeIntentRoute(userId, subquery, subIntent, conversationHistory);
-            executions.add(new SubQueryExecution(subquery, subIntent, subResult.response(), subResult.sources()));
+            IntentDecision primaryIntent = selectPrimaryIntent(userId, subQueryIntent);
+            ExecutionResult subResult = executeIntentRoute(userId, subQueryIntent.subQuery(), primaryIntent, conversationHistory);
+            executions.add(new SubQueryExecution(subQueryIntent.subQuery(), primaryIntent, subResult.response(), subResult.sources()));
             mergedSources.addAll(subResult.sources());
-            recordHighConfidencePattern(subIntent, subquery);
+            recordHighConfidencePattern(primaryIntent, subQueryIntent.subQuery());
         }
 
         if (executions.isEmpty()) {
@@ -742,11 +746,12 @@ public class ChatServiceImpl implements ChatService {
     private List<RetrievalMatch> retrieveMatches(String userId,
                                                  String message,
                                                  int topK,
-                                                 IntentDecision intent) {
+                                                 IntentDecision intent,
+                                                 List<IntentDecision> intentCandidates) {
         QueryPlan plan = queryAnalysisService.createPlan(message);
         List<List<RetrievalMatch>> resultSets = new ArrayList<>();
 
-        resultSets.add(retrieveWithFallback(userId, message, topK, intent));
+        resultSets.add(retrieveWithFallback(userId, message, topK, intent, intentCandidates));
 
         int remainingQueries = ragProperties.getFusion().getMaxQueries() - 1;
         if (ragProperties.getHyde().isEnabled()) {
@@ -756,9 +761,9 @@ public class ChatServiceImpl implements ChatService {
         if (ragProperties.getRewrite().isEnabled() && remainingQueries > 0) {
             List<String> rewrites = plan.getRewrittenQueries();
             if (rewrites != null && !rewrites.isEmpty()) {
-                int limit = Math.min(remainingQueries, rewrites.size());
-                for (int i = 0; i < limit; i++) {
-                    resultSets.add(retrieveWithFallback(userId, rewrites.get(i), topK, intent));
+                    int limit = Math.min(remainingQueries, rewrites.size());
+                    for (int i = 0; i < limit; i++) {
+                    resultSets.add(retrieveWithFallback(userId, rewrites.get(i), topK, intent, intentCandidates));
                 }
             }
         }
@@ -802,8 +807,9 @@ public class ChatServiceImpl implements ChatService {
     private List<RetrievalMatch> retrieveWithFallback(String userId,
                                                       String message,
                                                       int topK,
-                                                      IntentDecision intent) {
-        List<RetrievalMatch> results = multiChannelRetrievalEngine.retrieve(userId, message, topK, intent);
+                                                      IntentDecision intent,
+                                                      List<IntentDecision> intentCandidates) {
+        List<RetrievalMatch> results = multiChannelRetrievalEngine.retrieve(userId, message, topK, intent, intentCandidates);
         if (!isLowQualityForFallback(results)) {
             return results;
         }
@@ -814,7 +820,8 @@ public class ChatServiceImpl implements ChatService {
                     userId,
                     refinedQuery,
                     Math.min(topK * 2, MAX_RETRIEVAL_K),
-                    intent
+                    intent,
+                    intentCandidates
             );
             if (!isLowQualityForFallback(refined)) {
                 return refined;
@@ -886,7 +893,15 @@ public class ChatServiceImpl implements ChatService {
         if (retrievalIntent != null && retrievalIntent.getAction() != IntentDecision.Action.ROUTE_RAG) {
             retrievalIntent = null;
         }
-        return retrieveMatches(userId, message, topK, retrievalIntent);
+        List<IntentDecision> intentCandidates = intentResolutionService.resolveForQuery(userId, message);
+        return retrieveMatches(userId, message, topK, retrievalIntent, intentCandidates);
+    }
+
+    private IntentDecision selectPrimaryIntent(String userId, SubQueryIntent subQueryIntent) {
+        if (subQueryIntent != null && subQueryIntent.candidates() != null && !subQueryIntent.candidates().isEmpty()) {
+            return subQueryIntent.candidates().get(0);
+        }
+        return intentRouterService.decide(userId, subQueryIntent == null ? null : subQueryIntent.subQuery());
     }
 
     private String buildMatchKey(RetrievalMatch match) {

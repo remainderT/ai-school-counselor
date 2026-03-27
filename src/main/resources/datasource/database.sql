@@ -65,6 +65,35 @@ CREATE TABLE chunk (
                         INDEX idx_chunk (document_id, fragment_index) COMMENT '文档和chunk序号组合索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档chunk存储表';
 
+DROP TABLE IF EXISTS intent_node;
+CREATE TABLE intent_node (
+                        id                BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+                        node_id           VARCHAR(128) NOT NULL COMMENT '节点业务ID',
+                        node_name         VARCHAR(128) NOT NULL COMMENT '节点名称',
+                        parent_id         VARCHAR(128) DEFAULT NULL COMMENT '父节点业务ID',
+                        node_type         VARCHAR(32)  NOT NULL COMMENT '节点类型',
+                        description       VARCHAR(512) DEFAULT NULL COMMENT '节点描述',
+                        prompt_template   TEXT         DEFAULT NULL COMMENT '场景模板',
+                        prompt_snippet    VARCHAR(512) DEFAULT NULL COMMENT '短规则片段',
+                        param_prompt_template TEXT      DEFAULT NULL COMMENT '参数提取模板',
+                        keywords_json     TEXT         DEFAULT NULL COMMENT '关键词JSON数组',
+                        knowledge_base_id VARCHAR(64)  DEFAULT NULL COMMENT '关联知识库ID',
+                        action_service    VARCHAR(64)  DEFAULT NULL COMMENT '工具服务名',
+                        node_level        VARCHAR(32)  DEFAULT NULL COMMENT '节点层级',
+                        node_kind         VARCHAR(32)  DEFAULT NULL COMMENT '节点语义类型',
+                        mcp_tool_id       VARCHAR(128) DEFAULT NULL COMMENT 'MCP工具ID',
+                        top_k             INT          DEFAULT NULL COMMENT '节点级检索TopK',
+                        sort_order        INT          DEFAULT 0 COMMENT '排序',
+                        enabled           TINYINT(1)   DEFAULT 1 COMMENT '是否启用 1:启用 0:停用',
+                        create_time       DATETIME     DEFAULT NULL COMMENT '创建时间',
+                        update_time       DATETIME     DEFAULT NULL COMMENT '修改时间',
+                        del_flag          TINYINT(1)   DEFAULT 0 COMMENT '删除标识 0：未删除 1：已删除',
+                        PRIMARY KEY (id),
+                        UNIQUE KEY uk_node_id (node_id),
+                        INDEX idx_parent_id (parent_id),
+                        INDEX idx_node_enabled (enabled, del_flag)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='意图树节点表';
+
 DROP TABLE IF EXISTS messages;
 CREATE TABLE messages (
                         id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID',

@@ -37,12 +37,21 @@ public class MultiChannelRetrievalEngine {
                                          String query,
                                          int topK,
                                          IntentDecision intentDecision) {
+        return retrieve(userId, query, topK, intentDecision, null);
+    }
+
+    public List<RetrievalMatch> retrieve(String userId,
+                                         String query,
+                                         int topK,
+                                         IntentDecision intentDecision,
+                                         List<IntentDecision> intentDecisions) {
         SearchContext context = SearchContext.builder()
             .userId(userId)
             .originalQuery(query)
             .rewrittenQuery(query)
             .topK(topK)
             .intentDecision(intentDecision)
+            .intentDecisions(intentDecisions == null ? List.of() : intentDecisions)
             .build();
         return retrieve(context);
     }

@@ -33,4 +33,16 @@ public class RetrievalExecutorConfiguration {
         executor.initialize();
         return executor;
     }
+
+    @Bean("intentResolutionExecutor")
+    public Executor intentResolutionExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(8);
+        executor.setQueueCapacity(200);
+        executor.setThreadNamePrefix("intent-resolution-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+        return executor;
+    }
 }

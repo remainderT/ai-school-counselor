@@ -121,6 +121,48 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     }
 
     @Override
+    public List<RetrievalMatch> retrieveScoped(String queryText,
+                                               int topK,
+                                               String userId,
+                                               Set<Long> knowledgeIds) {
+        List<RetrievalMatch> base = retrieve(queryText, Math.max(topK, topK * 2), userId);
+        if (base.isEmpty() || knowledgeIds == null || knowledgeIds.isEmpty()) {
+            if (base.size() > topK) {
+                return base.subList(0, topK);
+            }
+            return base;
+        }
+
+        Set<String> md5s = base.stream()
+            .map(RetrievalMatch::getFileMd5)
+            .filter(md5 -> md5 != null && !md5.isBlank())
+            .collect(Collectors.toSet());
+        if (md5s.isEmpty()) {
+            return List.of();
+        }
+
+        List<DocumentDO> docs = documentMapper.selectList(
+            Wrappers.lambdaQuery(DocumentDO.class)
+                .in(DocumentDO::getMd5Hash, md5s)
+                .eq(DocumentDO::getDelFlag, 0)
+        );
+        Set<String> allowed = docs.stream()
+            .filter(doc -> doc.getKnowledgeId() != null && knowledgeIds.contains(doc.getKnowledgeId()))
+            .map(DocumentDO::getMd5Hash)
+            .collect(Collectors.toSet());
+        if (allowed.isEmpty()) {
+            return List.of();
+        }
+        List<RetrievalMatch> scoped = base.stream()
+            .filter(match -> allowed.contains(match.getFileMd5()))
+            .collect(Collectors.toList());
+        if (scoped.size() > topK) {
+            return scoped.subList(0, topK);
+        }
+        return scoped;
+    }
+
+    @Override
     public void recordFeedback(Long messageId, String userId, int score, String comment) {
         MessageFeedbackDO feedback = new MessageFeedbackDO();
         feedback.setMessageId(messageId);

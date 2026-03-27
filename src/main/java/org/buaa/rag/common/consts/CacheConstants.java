@@ -46,4 +46,14 @@ public class CacheConstants {
      */
     public static final String USER_INFO_KEY = "rag:user:info:";
 
+    /**
+     * 意图树缓存标识
+     */
+    public static final String INTENT_TREE_KEY = "rag:intent:tree";
+
+    /**
+     * 意图树缓存过期时间（天）
+     */
+    public static final long INTENT_TREE_EXPIRE_DAYS = 7L;
+
 }

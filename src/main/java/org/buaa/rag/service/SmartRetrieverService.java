@@ -1,6 +1,7 @@
 package org.buaa.rag.service;
 
 import java.util.List;
+import java.util.Set;
 
 import org.buaa.rag.dto.RetrievalMatch;
 
@@ -45,6 +46,14 @@ public interface SmartRetrieverService {
     List<RetrievalMatch> retrieveTextOnly(String queryText,
                                           int topK,
                                           String userId);
+
+    /**
+     * 限定知识库范围的检索
+     */
+    List<RetrievalMatch> retrieveScoped(String queryText,
+                                        int topK,
+                                        String userId,
+                                        Set<Long> knowledgeIds);
 
     /**
      * 记录用户反馈

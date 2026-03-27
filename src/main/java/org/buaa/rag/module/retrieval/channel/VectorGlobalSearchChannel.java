@@ -39,6 +39,16 @@ public class VectorGlobalSearchChannel implements SearchChannel {
         if (!properties.getChannels().getVectorGlobal().isEnabled()) {
             return false;
         }
+        if (context.getIntentDecisions() != null && !context.getIntentDecisions().isEmpty()) {
+            double maxConfidence = context.getIntentDecisions().stream()
+                .filter(decision -> decision != null && decision.getAction() == IntentDecision.Action.ROUTE_RAG)
+                .map(IntentDecision::getConfidence)
+                .filter(confidence -> confidence != null)
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(0.0);
+            return maxConfidence < properties.getChannels().getVectorGlobal().getConfidenceThreshold();
+        }
         IntentDecision decision = context.getIntentDecision();
         if (decision == null || decision.getAction() != IntentDecision.Action.ROUTE_RAG) {
             return true;

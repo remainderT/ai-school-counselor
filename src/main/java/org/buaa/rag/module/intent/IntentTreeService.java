@@ -9,12 +9,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import org.buaa.rag.common.consts.CacheConstants;
+import org.buaa.rag.dao.entity.IntentNodeDO;
+import org.buaa.rag.dao.mapper.IntentNodeMapper;
 import org.buaa.rag.dto.IntentNode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -28,6 +34,8 @@ public class IntentTreeService {
 
     private final ObjectMapper objectMapper;
     private final ResourceLoader resourceLoader;
+    private final IntentNodeMapper intentNodeMapper;
+    private final StringRedisTemplate stringRedisTemplate;
 
     @Value("${intent.tree-path:classpath:intent-tree.json}")
     private String treePath;
@@ -58,13 +66,19 @@ public class IntentTreeService {
             return;
         }
         try {
-            Resource resource = resourceLoader.getResource(treePath);
-            try (InputStream is = resource.getInputStream()) {
-                List<IntentNode> list = objectMapper.readValue(is, new TypeReference<>() { });
-                snapshot = buildSnapshot(list);
-                loaded = true;
-                log.info("加载意图树成功, 节点数: {}", snapshot.nodes().size());
+            List<IntentNode> list = loadFromCache();
+            if (list == null || list.isEmpty()) {
+                list = loadFromDatabase();
+                if (list != null && !list.isEmpty()) {
+                    cacheTree(list);
+                }
             }
+            if (list == null || list.isEmpty()) {
+                list = loadFromFile();
+            }
+            snapshot = buildSnapshot(list);
+            loaded = true;
+            log.info("加载意图树成功, 节点数: {}", snapshot.nodes().size());
         } catch (Exception e) {
             log.error("加载意图树失败: {}", e.getMessage());
             snapshot = TreeSnapshot.empty();
@@ -75,6 +89,166 @@ public class IntentTreeService {
     private void ensureLoaded() {
         if (!loaded || snapshot.nodes().isEmpty()) {
             loadTree();
+        }
+    }
+
+    public synchronized void refreshTreeSnapshot() {
+        snapshot = TreeSnapshot.empty();
+        loaded = false;
+        clearCache();
+        loadTree();
+    }
+
+    private List<IntentNode> loadFromCache() {
+        try {
+            String cacheVal = stringRedisTemplate.opsForValue().get(CacheConstants.INTENT_TREE_KEY);
+            if (!StringUtils.hasText(cacheVal)) {
+                return null;
+            }
+            List<IntentNode> cached = objectMapper.readValue(cacheVal, new TypeReference<List<IntentNode>>() {
+            });
+            if (cached != null && !cached.isEmpty()) {
+                log.info("从缓存加载意图树成功, 节点数: {}", cached.size());
+            }
+            return cached;
+        } catch (Exception e) {
+            log.warn("从缓存加载意图树失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private List<IntentNode> loadFromDatabase() {
+        List<IntentNodeDO> list = intentNodeMapper.selectList(
+            Wrappers.lambdaQuery(IntentNodeDO.class)
+                .eq(IntentNodeDO::getDelFlag, 0)
+                .eq(IntentNodeDO::getEnabled, 1)
+                .orderByAsc(IntentNodeDO::getSortOrder, IntentNodeDO::getId)
+        );
+        if (list == null || list.isEmpty()) {
+            return List.of();
+        }
+        List<IntentNode> nodes = new ArrayList<>(list.size());
+        for (IntentNodeDO node : list) {
+            IntentNode mapped = toIntentNode(node);
+            if (mapped != null) {
+                nodes.add(mapped);
+            }
+        }
+        if (!nodes.isEmpty()) {
+            log.info("从数据库加载意图树成功, 节点数: {}", nodes.size());
+        }
+        return nodes;
+    }
+
+    private List<IntentNode> loadFromFile() throws Exception {
+        Resource resource = resourceLoader.getResource(treePath);
+        try (InputStream is = resource.getInputStream()) {
+            List<IntentNode> list = objectMapper.readValue(is, new TypeReference<>() {
+            });
+            log.info("从文件加载意图树成功: {}, 节点数: {}", treePath, list == null ? 0 : list.size());
+            return list;
+        }
+    }
+
+    private IntentNode toIntentNode(IntentNodeDO node) {
+        if (node == null || !StringUtils.hasText(node.getNodeId())) {
+            return null;
+        }
+        IntentNode result = new IntentNode();
+        result.setNodeId(node.getNodeId().trim());
+        result.setNodeName(node.getNodeName());
+        result.setParentId(StringUtils.hasText(node.getParentId()) ? node.getParentId().trim() : null);
+        result.setDescription(node.getDescription());
+        result.setPromptTemplate(node.getPromptTemplate());
+        result.setPromptSnippet(node.getPromptSnippet());
+        result.setParamPromptTemplate(node.getParamPromptTemplate());
+        result.setKnowledgeBaseId(node.getKnowledgeBaseId());
+        result.setActionService(node.getActionService());
+        result.setMcpToolId(node.getMcpToolId());
+        result.setTopK(node.getTopK());
+        result.setKeywords(parseKeywords(node.getKeywordsJson()));
+
+        IntentNode.NodeType type = parseNodeType(node.getNodeType());
+        result.setType(type == null ? IntentNode.NodeType.GROUP : type);
+        result.setLevel(parseNodeLevel(node.getNodeLevel()));
+        result.setKind(parseNodeKind(node.getNodeKind()));
+        return result;
+    }
+
+    private IntentNode.NodeType parseNodeType(String nodeType) {
+        if (!StringUtils.hasText(nodeType)) {
+            return null;
+        }
+        try {
+            return IntentNode.NodeType.valueOf(nodeType.trim().toUpperCase());
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    private IntentNode.NodeLevel parseNodeLevel(String nodeLevel) {
+        if (!StringUtils.hasText(nodeLevel)) {
+            return null;
+        }
+        try {
+            return IntentNode.NodeLevel.valueOf(nodeLevel.trim().toUpperCase());
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    private IntentNode.NodeKind parseNodeKind(String nodeKind) {
+        if (!StringUtils.hasText(nodeKind)) {
+            return null;
+        }
+        try {
+            return IntentNode.NodeKind.valueOf(nodeKind.trim().toUpperCase());
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    private List<String> parseKeywords(String keywordsJson) {
+        if (!StringUtils.hasText(keywordsJson)) {
+            return List.of();
+        }
+        try {
+            List<String> list = objectMapper.readValue(keywordsJson, new TypeReference<List<String>>() {
+            });
+            if (list == null) {
+                return List.of();
+            }
+            return list.stream()
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .toList();
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private void cacheTree(List<IntentNode> list) {
+        if (list == null || list.isEmpty()) {
+            return;
+        }
+        try {
+            String content = objectMapper.writeValueAsString(list);
+            stringRedisTemplate.opsForValue().set(
+                CacheConstants.INTENT_TREE_KEY,
+                content,
+                CacheConstants.INTENT_TREE_EXPIRE_DAYS,
+                java.util.concurrent.TimeUnit.DAYS
+            );
+        } catch (Exception e) {
+            log.warn("写入意图树缓存失败: {}", e.getMessage());
+        }
+    }
+
+    private void clearCache() {
+        try {
+            stringRedisTemplate.delete(CacheConstants.INTENT_TREE_KEY);
+        } catch (Exception e) {
+            log.warn("清理意图树缓存失败: {}", e.getMessage());
         }
     }
 

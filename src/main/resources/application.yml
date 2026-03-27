@@ -221,3 +221,14 @@ rag:
     post-processor:
       deduplicate: true
       rerank: true
+  intent-guidance:
+    enabled: true
+    hit-threshold: 0.58
+    ambiguity-ratio: 0.88
+    max-candidates: 4
+    max-options: 3
+    llm-min-score: 0.45
+  intent-resolution:
+    per-query-max-candidates: 3
+    max-total-candidates: 6
+    min-score: 0.5

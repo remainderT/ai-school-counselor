@@ -16,13 +16,16 @@ import org.buaa.rag.dto.IntentDecision;
 import org.buaa.rag.dto.IntentNode;
 import org.buaa.rag.tool.LlmChat;
 import org.buaa.rag.module.index.VectorEncoding;
+import org.buaa.rag.properties.IntentGuidanceProperties;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.extern.slf4j.Slf4j;
@@ -31,10 +34,6 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class IntentRouterService {
 
-    private static final int TREE_MAX_CANDIDATES = 4;
-    private static final int TREE_GUIDANCE_MAX_OPTIONS = 3;
-    private static final double TREE_HIT_THRESHOLD = 0.58;
-    private static final double TREE_AMBIGUITY_RATIO = 0.88;
     private static final double SEMANTIC_DIRECT_THRESHOLD = 0.9;
     private static final double LLM_RAG_THRESHOLD = 0.5;
 
@@ -48,6 +47,9 @@ public class IntentRouterService {
   "clarify": "若不确定，给出一句澄清问题，否则留空"
 }
 仅输出 JSON。
+""");
+    private static final String TREE_CLASSIFIER_PROMPT = PromptTemplateLoader.load("intent-tree-classifier.st", """
+你是树形意图分类器。只输出 JSON 数组，每项包含 nodeId、score、reason。
 """);
 
     private static final Set<String> CRISIS_KEYWORDS = Set.of(
@@ -76,6 +78,7 @@ public class IntentRouterService {
     private final IntentPatternService intentPatternService;
     private final IntentTreeService intentTreeService;
     private final VectorEncoding vectorEncoding;
+    private final IntentGuidanceProperties intentGuidanceProperties;
     private final ObjectProvider<ChatClient.Builder> chatClientBuilderProvider;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Map<String, float[]> nodeEmbeddingCache = new ConcurrentHashMap<>();
@@ -84,11 +87,13 @@ public class IntentRouterService {
                                IntentPatternService intentPatternService,
                                IntentTreeService intentTreeService,
                                VectorEncoding vectorEncoding,
+                               IntentGuidanceProperties intentGuidanceProperties,
                                ObjectProvider<ChatClient.Builder> chatClientBuilderProvider) {
         this.llmChat = llmChat;
         this.intentPatternService = intentPatternService;
         this.intentTreeService = intentTreeService;
         this.vectorEncoding = vectorEncoding;
+        this.intentGuidanceProperties = intentGuidanceProperties;
         this.chatClientBuilderProvider = chatClientBuilderProvider;
     }
 
@@ -130,7 +135,7 @@ public class IntentRouterService {
         IntentDecision treeDecision = routeByTree(query);
         if (treeDecision != null
             && treeDecision.getConfidence() != null
-            && treeDecision.getConfidence() >= TREE_HIT_THRESHOLD) {
+            && treeDecision.getConfidence() >= intentGuidanceProperties.getHitThreshold()) {
             return treeDecision;
         }
 
@@ -159,6 +164,50 @@ public class IntentRouterService {
                 ? llmDecision.getClarifyQuestion() : "想了解的具体场景是？")
             .strategy(IntentDecision.Strategy.CLARIFY_ONLY)
             .build();
+    }
+
+    /**
+     * 返回可排序的意图候选列表（用于多意图解析与并行检索）。
+     */
+    public List<IntentDecision> rankIntentCandidates(String userId, String query, int topN, double minScore) {
+        if (!StringUtils.hasText(query)) {
+            return List.of();
+        }
+        intentTreeService.loadTree();
+        var rootOpt = intentTreeService.root();
+        if (rootOpt.isEmpty()) {
+            return List.of();
+        }
+        List<IntentNode> leaves = collectLeafNodes(rootOpt.get());
+        if (leaves.isEmpty()) {
+            return List.of();
+        }
+
+        List<IntentCandidate> candidates = classifyByLlm(query, leaves);
+        if (candidates.isEmpty()) {
+            candidates = collectLeafCandidatesBySimilarity(leaves, query);
+        }
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
+
+        int max = Math.max(1, topN);
+        double scoreFloor = Math.max(0.0, minScore);
+        List<IntentDecision> decisions = new ArrayList<>();
+        for (IntentCandidate candidate : candidates) {
+            if (candidate.score() < scoreFloor) {
+                continue;
+            }
+            IntentDecision decision = toDecision(candidate, query);
+            if (decision == null || decision.getAction() == IntentDecision.Action.CLARIFY) {
+                continue;
+            }
+            decisions.add(decision);
+            if (decisions.size() >= max) {
+                break;
+            }
+        }
+        return decisions;
     }
 
     private IntentDecision classifyWithLlm(String query) {
@@ -252,34 +301,85 @@ public class IntentRouterService {
             return null;
         }
 
-        List<IntentCandidate> candidates = collectLeafCandidates(rootOpt.get(), query);
+        List<IntentNode> leaves = collectLeafNodes(rootOpt.get());
+        if (leaves.isEmpty()) {
+            return null;
+        }
+
+        List<IntentCandidate> candidates = classifyByLlm(query, leaves);
+        if (candidates.isEmpty()) {
+            candidates = collectLeafCandidatesBySimilarity(leaves, query);
+        }
         if (candidates.isEmpty()) {
             return null;
         }
 
-        if (needsGuidance(candidates)) {
+        if (intentGuidanceProperties.isEnabled() && needsGuidance(candidates)) {
             return buildGuidanceDecision(candidates);
         }
         return toDecision(candidates.get(0), query);
     }
 
-    private List<IntentCandidate> collectLeafCandidates(IntentNode root, String query) {
-        List<IntentNode> leaves = collectLeafNodes(root);
-        if (leaves.isEmpty()) {
+    private List<IntentCandidate> classifyByLlm(String query, List<IntentNode> leaves) {
+        if (!StringUtils.hasText(query) || leaves == null || leaves.isEmpty()) {
+            return List.of();
+        }
+        Map<String, IntentNode> leafMap = leaves.stream()
+            .filter(node -> node != null && node.getNodeId() != null)
+            .collect(Collectors.toMap(IntentNode::getNodeId, node -> node, (left, right) -> left));
+        if (leafMap.isEmpty()) {
             return List.of();
         }
 
+        String userPrompt = buildTreeClassifyUserPrompt(query, leaves);
+        String raw = llmChat.generateCompletion(TREE_CLASSIFIER_PROMPT, userPrompt, 512);
+        if (!StringUtils.hasText(raw)) {
+            return List.of();
+        }
+        List<TreeClassifyResult> parsed = parseTreeClassifyResults(raw);
+        if (parsed.isEmpty()) {
+            return List.of();
+        }
+        double minScore = intentGuidanceProperties.getLlmMinScore();
+        int maxCandidates = Math.max(1, intentGuidanceProperties.getMaxCandidates());
+        List<IntentCandidate> candidates = new ArrayList<>();
+        for (TreeClassifyResult result : parsed) {
+            if (result == null || !StringUtils.hasText(result.nodeId())) {
+                continue;
+            }
+            IntentNode node = leafMap.get(result.nodeId().trim());
+            if (node == null) {
+                continue;
+            }
+            double score = clampScore(result.score());
+            if (score < minScore) {
+                continue;
+            }
+            candidates.add(new IntentCandidate(node, score));
+        }
+        candidates.sort((left, right) -> Double.compare(right.score(), left.score()));
+        if (candidates.size() > maxCandidates) {
+            return candidates.subList(0, maxCandidates);
+        }
+        return candidates;
+    }
+
+    private List<IntentCandidate> collectLeafCandidatesBySimilarity(List<IntentNode> leaves, String query) {
+        if (leaves == null || leaves.isEmpty()) {
+            return List.of();
+        }
         float[] queryVector = encodeSingle(query);
         List<IntentCandidate> candidates = new ArrayList<>(leaves.size());
         for (IntentNode leaf : leaves) {
             double score = similarity(query, queryVector, leaf);
             candidates.add(new IntentCandidate(leaf, score));
         }
-
         candidates.sort((left, right) -> Double.compare(right.score(), left.score()));
+        int maxCandidates = Math.max(1, intentGuidanceProperties.getMaxCandidates());
+        double hitThreshold = intentGuidanceProperties.getHitThreshold();
         return candidates.stream()
-            .filter(candidate -> candidate.score() >= TREE_HIT_THRESHOLD)
-            .limit(TREE_MAX_CANDIDATES)
+            .filter(candidate -> candidate.score() >= hitThreshold)
+            .limit(maxCandidates)
             .toList();
     }
 
@@ -312,26 +412,78 @@ public class IntentRouterService {
             return false;
         }
         double ratio = second.score() / best.score();
-        if (ratio < TREE_AMBIGUITY_RATIO) {
+        if (ratio < intentGuidanceProperties.getAmbiguityRatio()) {
             return false;
         }
         return extractGuidanceOptions(candidates).size() > 1;
     }
 
     private IntentDecision buildGuidanceDecision(List<IntentCandidate> candidates) {
+        IntentDecision sameTopicGuidance = buildSameTopicGuidance(candidates);
+        if (sameTopicGuidance != null) {
+            return sameTopicGuidance;
+        }
         List<String> options = extractGuidanceOptions(candidates);
         if (options.isEmpty()) {
             return null;
         }
         String clarify = "你想咨询哪个方向？"
             + options.stream()
-            .limit(TREE_GUIDANCE_MAX_OPTIONS)
+            .limit(Math.max(1, intentGuidanceProperties.getMaxOptions()))
             .map(option -> "\n- " + option)
             .collect(Collectors.joining(""));
         return IntentDecision.builder()
             .action(IntentDecision.Action.CLARIFY)
             .clarifyQuestion(clarify)
             .confidence(candidates.get(0).score())
+            .strategy(IntentDecision.Strategy.CLARIFY_ONLY)
+            .build();
+    }
+
+    /**
+     * 专项歧义：同主题节点在不同域下同时高分，优先给出“域 + 主题”的澄清选项。
+     */
+    private IntentDecision buildSameTopicGuidance(List<IntentCandidate> candidates) {
+        if (candidates == null || candidates.size() < 2) {
+            return null;
+        }
+        IntentCandidate top = candidates.get(0);
+        if (top.score() <= 0) {
+            return null;
+        }
+        String normalizedTopic = normalizeName(top.node().getNodeName());
+        if (!StringUtils.hasText(normalizedTopic)) {
+            return null;
+        }
+        List<String> options = new ArrayList<>();
+        for (IntentCandidate candidate : candidates) {
+            if (candidate.score() < top.score() * intentGuidanceProperties.getAmbiguityRatio()) {
+                continue;
+            }
+            String candidateTopic = normalizeName(candidate.node().getNodeName());
+            if (!normalizedTopic.equals(candidateTopic)) {
+                continue;
+            }
+            String domain = resolveDomainName(candidate.node());
+            String option = StringUtils.hasText(domain)
+                ? domain + " - " + candidate.node().getNodeName()
+                : candidate.node().getNodeName();
+            if (!options.contains(option)) {
+                options.add(option);
+            }
+        }
+        if (options.size() < 2) {
+            return null;
+        }
+        String clarify = "你提到的是同名主题，我先确认下具体系统："
+            + options.stream()
+            .limit(Math.max(1, intentGuidanceProperties.getMaxOptions()))
+            .map(option -> "\n- " + option)
+            .collect(Collectors.joining(""));
+        return IntentDecision.builder()
+            .action(IntentDecision.Action.CLARIFY)
+            .clarifyQuestion(clarify)
+            .confidence(top.score())
             .strategy(IntentDecision.Strategy.CLARIFY_ONLY)
             .build();
     }
@@ -343,7 +495,7 @@ public class IntentRouterService {
         double topScore = candidates.get(0).score();
         LinkedHashSet<String> options = new LinkedHashSet<>();
         for (IntentCandidate candidate : candidates) {
-            if (candidate.score() < topScore * TREE_AMBIGUITY_RATIO) {
+            if (candidate.score() < topScore * intentGuidanceProperties.getAmbiguityRatio()) {
                 continue;
             }
             String domain = resolveDomainName(candidate.node());
@@ -492,6 +644,80 @@ public class IntentRouterService {
         return text.trim();
     }
 
+    private String buildTreeClassifyUserPrompt(String query, List<IntentNode> leaves) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("用户问题：").append(query).append("\n\n");
+        builder.append("候选叶子节点列表：\n");
+        for (IntentNode leaf : leaves) {
+            builder.append("- nodeId=").append(leaf.getNodeId()).append("\n");
+            builder.append("  path=").append(resolveNodePath(leaf)).append("\n");
+            if (StringUtils.hasText(leaf.getDescription())) {
+                builder.append("  description=").append(leaf.getDescription().trim()).append("\n");
+            }
+            if (leaf.getKeywords() != null && !leaf.getKeywords().isEmpty()) {
+                builder.append("  keywords=").append(String.join(" / ", leaf.getKeywords())).append("\n");
+            }
+        }
+        return builder.toString();
+    }
+
+    private List<TreeClassifyResult> parseTreeClassifyResults(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return List.of();
+        }
+        String content = raw.trim();
+        try {
+            if (content.startsWith("```")) {
+                content = content.replace("```json", "").replace("```", "").trim();
+            }
+            if (content.startsWith("[")) {
+                return objectMapper.readValue(content, new TypeReference<List<TreeClassifyResult>>() {
+                });
+            }
+            TreeClassifyWrapper wrapped = objectMapper.readValue(content, TreeClassifyWrapper.class);
+            if (wrapped == null || wrapped.results() == null) {
+                return List.of();
+            }
+            return wrapped.results();
+        } catch (Exception e) {
+            log.debug("意图树LLM候选解析失败: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private double clampScore(Double score) {
+        if (score == null) {
+            return 0.0;
+        }
+        return Math.max(0.0, Math.min(1.0, score));
+    }
+
+    private String resolveNodePath(IntentNode node) {
+        if (node == null) {
+            return "";
+        }
+        List<String> segments = new ArrayList<>();
+        IntentNode current = node;
+        int guard = 0;
+        while (current != null && guard++ < 10) {
+            if (StringUtils.hasText(current.getNodeName())) {
+                segments.add(0, current.getNodeName().trim());
+            }
+            if (!StringUtils.hasText(current.getParentId())) {
+                break;
+            }
+            current = intentTreeService.getById(current.getParentId()).orElse(null);
+        }
+        return String.join(" > ", segments);
+    }
+
+    private String normalizeName(String name) {
+        if (!StringUtils.hasText(name)) {
+            return "";
+        }
+        return name.trim().toLowerCase().replaceAll("[\\p{Punct}\\s]+", "");
+    }
+
     private String normalizeToolName(String toolName) {
         if (toolName == null || toolName.isBlank()) {
             return null;
@@ -560,5 +786,11 @@ public class IntentRouterService {
     }
 
     private record IntentCandidate(IntentNode node, double score) {
+    }
+
+    private record TreeClassifyResult(String nodeId, Double score, String reason) {
+    }
+
+    private record TreeClassifyWrapper(List<TreeClassifyResult> results) {
     }
 }
