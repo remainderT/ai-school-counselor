@@ -134,6 +134,20 @@ CREATE TABLE message_feedback (
                         INDEX idx_feedback_user (user_id) COMMENT '用户索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息反馈表';
 
+DROP TABLE IF EXISTS message_summary;
+CREATE TABLE message_summary (
+                        id              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+                        session_id      VARCHAR(64)  NOT NULL COMMENT '会话ID',
+                        user_id         VARCHAR(64)  NULL COMMENT '用户ID',
+                        content         TEXT         NOT NULL COMMENT '摘要内容',
+                        last_message_id BIGINT       NULL COMMENT '摘要覆盖到的最后消息ID',
+                        created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                        updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                        PRIMARY KEY (id),
+                        INDEX idx_summary_session (session_id),
+                        INDEX idx_summary_session_msg (session_id, last_message_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话摘要表';
+
 INSERT INTO `user` (`id`, `username`, `password`, `mail`, `salt`, `avatar`, `create_time`, `update_time`, `del_flag`)
 VALUES (1, 'admin', 'f5866c4a4d6014ecced47960c2e3d07f', 'admin@example.com', 'admin', NULL, NOW(), NOW(), 0);
 
