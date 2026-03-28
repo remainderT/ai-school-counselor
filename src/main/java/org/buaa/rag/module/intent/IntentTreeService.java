@@ -1,6 +1,5 @@
 package org.buaa.rag.module.intent;
 
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -13,9 +12,6 @@ import org.buaa.rag.common.consts.CacheConstants;
 import org.buaa.rag.dao.entity.IntentNodeDO;
 import org.buaa.rag.dao.mapper.IntentNodeMapper;
 import org.buaa.rag.dto.IntentNode;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.ResourceLoader;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -33,12 +29,8 @@ import lombok.extern.slf4j.Slf4j;
 public class IntentTreeService {
 
     private final ObjectMapper objectMapper;
-    private final ResourceLoader resourceLoader;
     private final IntentNodeMapper intentNodeMapper;
     private final StringRedisTemplate stringRedisTemplate;
-
-    @Value("${intent.tree-path:classpath:intent-tree.json}")
-    private String treePath;
 
     private volatile TreeSnapshot snapshot = TreeSnapshot.empty();
     private volatile boolean loaded;
@@ -72,9 +64,6 @@ public class IntentTreeService {
                 if (list != null && !list.isEmpty()) {
                     cacheTree(list);
                 }
-            }
-            if (list == null || list.isEmpty()) {
-                list = loadFromFile();
             }
             snapshot = buildSnapshot(list);
             loaded = true;
@@ -138,16 +127,6 @@ public class IntentTreeService {
             log.info("从数据库加载意图树成功, 节点数: {}", nodes.size());
         }
         return nodes;
-    }
-
-    private List<IntentNode> loadFromFile() throws Exception {
-        Resource resource = resourceLoader.getResource(treePath);
-        try (InputStream is = resource.getInputStream()) {
-            List<IntentNode> list = objectMapper.readValue(is, new TypeReference<>() {
-            });
-            log.info("从文件加载意图树成功: {}, 节点数: {}", treePath, list == null ? 0 : list.size());
-            return list;
-        }
     }
 
     private IntentNode toIntentNode(IntentNodeDO node) {
