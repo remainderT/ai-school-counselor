@@ -21,4 +21,20 @@ public enum UploadStatusEnum {
         this.desc = desc;
     }
 
+    public static UploadStatusEnum fromCode(Integer code) {
+        if (code == null) {
+            return null;
+        }
+        for (UploadStatusEnum status : values()) {
+            if (status.code == code) {
+                return status;
+            }
+        }
+        return null;
+    }
+
+    public static String descOf(Integer code) {
+        UploadStatusEnum status = fromCode(code);
+        return status == null ? "未知状态" : status.getDesc();
+    }
 }

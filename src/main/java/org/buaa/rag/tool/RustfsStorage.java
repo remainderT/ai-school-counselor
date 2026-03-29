@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.util.Locale;
 
 import org.buaa.rag.properties.StorageProperties;
+import org.buaa.rag.service.impl.DocumentServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
@@ -30,18 +31,21 @@ public class RustfsStorage {
         return properties.getStorageBucket();
     }
 
-    public void upload(String objectPath, InputStream data,
-                       long size, String contentType) throws Exception {
+    public void upload(DocumentServiceImpl.UploadPayload payload) throws Exception {
+
+        String objectPath = buildPrimaryPath(payload.md5(), payload.originalFilename());
+        InputStream data = payload.source().getInputStream();
+        String contentType = StringUtils.hasText(payload.mimeType()) ? payload.mimeType() : null;
+
         Assert.hasText(objectPath, "objectPath 不能为空");
         Assert.notNull(data, "上传数据流不能为 null");
 
-
         PutObjectRequest request = PutObjectRequest.builder()
-            .bucket(getBucket())
-            .key(objectPath)
-            .contentType(contentType)
-            .build();
-        RequestBody body = buildRequestBody(data, size);
+                .bucket(getBucket())
+                .key(objectPath)
+                .contentType(contentType)
+                .build();
+        RequestBody body = buildRequestBody(data, payload.size());
         s3Client.putObject(request, body);
 
         log.info("文件上传完成: bucket={}, path={}", getBucket(), objectPath);
@@ -59,15 +63,19 @@ public class RustfsStorage {
         return stream;
     }
 
-    public void delete(String objectPath) throws Exception {
-        Assert.hasText(objectPath, "objectPath 不能为空");
+    public void delete(String md5, String filename) {
+        String path = buildPrimaryPath(md5, filename);
+        Assert.hasText(path, "path不能为空");
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(getBucket())
+                    .key(path)
+                    .build());
+            log.info("文件删除完成: bucket={}, path={}", getBucket(), path);
+        } catch (Exception e) {
+            log.warn("文件删除失败: bucket={}, path={}", getBucket(), path);
+        }
 
-        s3Client.deleteObject(DeleteObjectRequest.builder()
-            .bucket(getBucket())
-            .key(objectPath)
-            .build());
-
-        log.info("文件删除完成: bucket={}, path={}", getBucket(), objectPath);
     }
 
     private RequestBody buildRequestBody(InputStream data, long size) throws IOException {

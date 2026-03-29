@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 
 import org.buaa.rag.common.database.BaseDO;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 
 import lombok.AllArgsConstructor;
@@ -29,7 +30,10 @@ public class DocumentDO extends BaseDO {
 
     private long fileSizeBytes;
 
-    private int processingStatus; // 0-待处理 1-处理中 2-已完成 -1-失败
+    private int processingStatus;
+
+    @TableField(exist = false)
+    private String processingStatusDesc;
 
     private Long userId;
 

@@ -1,8 +1,8 @@
 package org.buaa.rag.service.impl;
 
-import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.MESSAGE_EMPTY;
-import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.MESSAGE_ID_REQUIRED;
-import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.SCORE_OUT_OF_RANGE;
+import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.MESSAGE_EMPTY;
+import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.MESSAGE_ID_REQUIRED;
+import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.SCORE_OUT_OF_RANGE;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -17,27 +17,27 @@ import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.module.intent.IntentPatternService;
-import org.buaa.rag.module.intent.IntentResolutionService;
-import org.buaa.rag.module.intent.IntentRouterService;
-import org.buaa.rag.module.intent.SubQueryIntent;
+import org.buaa.rag.core.online.intent.IntentPatternService;
+import org.buaa.rag.core.online.intent.IntentResolutionService;
+import org.buaa.rag.core.online.intent.IntentRouterService;
+import org.buaa.rag.core.online.intent.SubQueryIntent;
+import org.buaa.rag.core.online.cache.SemanticCacheService;
+import org.buaa.rag.core.online.query.QueryAnalysisService;
+import org.buaa.rag.core.online.query.QueryDecomposer;
+import org.buaa.rag.core.online.tool.ToolService;
+import org.buaa.rag.core.online.validation.AnswerValidator;
 import org.buaa.rag.properties.RagProperties;
-import org.buaa.rag.dto.CragDecision;
-import org.buaa.rag.dto.FeedbackRequest;
-import org.buaa.rag.dto.IntentDecision;
-import org.buaa.rag.dto.QueryPlan;
-import org.buaa.rag.dto.RetrievalMatch;
+import org.buaa.rag.core.model.CragDecision;
+import org.buaa.rag.core.model.FeedbackRequest;
+import org.buaa.rag.core.model.IntentDecision;
+import org.buaa.rag.core.model.QueryPlan;
+import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.dto.resp.ChatRespDTO;
-import org.buaa.rag.service.AnswerValidator;
 import org.buaa.rag.service.ChatService;
 import org.buaa.rag.service.ConversationService;
-import org.buaa.rag.service.QueryAnalysisService;
-import org.buaa.rag.service.QueryDecomposer;
-import org.buaa.rag.service.RetrievalPostProcessorService;
-import org.buaa.rag.service.SemanticCacheService;
+import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorService;
 import org.buaa.rag.service.SmartRetrieverService;
-import org.buaa.rag.service.ToolService;
-import org.buaa.rag.module.retrieval.MultiChannelRetrievalEngine;
+import org.buaa.rag.core.online.retrieval.MultiChannelRetrievalEngine;
 import org.buaa.rag.tool.LlmChat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,21 +57,7 @@ public class ChatServiceImpl implements ChatService {
     private static final int DEFAULT_RETRIEVAL_K = 5;
     private static final int MAX_RETRIEVAL_K = 10;
     private static final double MIN_ACCEPTABLE_SCORE = 0.25;
-    private static final String CRISIS_RESPONSE = """
-            如感到紧急，请立即联系辅导员或校心理中心：心理热线 010-12345678；24h 校园保卫处 010-87654321。
-            """;
-    private static final String MULTI_INTENT_SYNTHESIS_PROMPT = PromptTemplateLoader.load("chat-multi-intent-synthesis.st", """
-            你是高校辅导员综合回答助手。你会收到：
-            1. 原始用户问题
-            2. 多个子问题的独立处理结果（可能来自政策RAG、办事工具或澄清）
-            
-            请输出一份最终合成答复，要求：
-            1. 先给最终结论，再分点给出依据与步骤
-            2. 保持与各子结论一致，不编造新事实
-            3. 若信息不足，明确指出缺失信息
-            4. 若存在冲突，给出优先处理建议
-            5. 使用简体中文，结构清晰
-            """);
+    private static final String MULTI_INTENT_SYNTHESIS_PROMPT = PromptTemplateLoader.load("chat-multi-intent-synthesis.st");
 
     private final SmartRetrieverService retrieverService;
     private final MultiChannelRetrievalEngine multiChannelRetrievalEngine;
@@ -95,6 +81,9 @@ public class ChatServiceImpl implements ChatService {
                                      IntentDecision decision,
                                      String answer,
                                      List<RetrievalMatch> sources) {
+    }
+
+    private record RoutingContext(String rewrittenQuery, List<SubQueryIntent> subQueryIntents) {
     }
 
     @Override
@@ -222,26 +211,16 @@ public class ChatServiceImpl implements ChatService {
             String sessionId = conversationService.obtainOrCreateSession(userId);
             log.info("会话ID: {}, 用户: {}", sessionId, userId);
 
-            IntentDecision intent = intentRouterService.decide(userId, userMessage);
-            if (intent.getAction() == IntentDecision.Action.CRISIS) {
-                Long messageId = conversationService.appendToHistory(
-                        sessionId,
-                        userId,
-                        userMessage,
-                        CRISIS_RESPONSE,
-                        List.of()
-                );
-                return new ChatRespDTO(CRISIS_RESPONSE, List.of(), messageId);
-            }
-
             List<Map<String, String>> conversationHistory = conversationService.loadConversationContext(sessionId);
-            List<String> subqueries = queryDecomposer.decompose(userMessage);
-            if (subqueries.size() > 1) {
-                log.info("检测到多意图问题，子问题数: {}", subqueries.size());
+            RoutingContext routingContext = prepareRoutingContext(userId, userMessage);
+            List<SubQueryIntent> resolvedSubQueries = routingContext.subQueryIntents();
+            String rewrittenQuery = routingContext.rewrittenQuery();
+            if (resolvedSubQueries.size() > 1) {
+                log.info("检测到多意图问题，子问题数: {}", resolvedSubQueries.size());
                 ExecutionResult multiResult = executeMultiIntentRoute(
                         userId,
                         userMessage,
-                        subqueries,
+                        resolvedSubQueries,
                         conversationHistory
                 );
                 Long messageId = conversationService.appendToHistory(
@@ -254,10 +233,13 @@ public class ChatServiceImpl implements ChatService {
                 return new ChatRespDTO(multiResult.response(), multiResult.sources(), messageId);
             }
 
+            IntentDecision primaryIntent = resolvedSubQueries.isEmpty()
+                    ? defaultRagIntent()
+                    : selectPrimaryIntent(resolvedSubQueries.get(0));
             ExecutionResult singleResult = executeIntentRoute(
                     userId,
-                    userMessage,
-                    intent,
+                    rewrittenQuery,
+                    primaryIntent,
                     conversationHistory
             );
             Long messageId = conversationService.appendToHistory(
@@ -267,7 +249,7 @@ public class ChatServiceImpl implements ChatService {
                     singleResult.response(),
                     singleResult.sources()
             );
-            recordHighConfidencePattern(intent, userMessage);
+            recordHighConfidencePattern(primaryIntent, rewrittenQuery);
 
             log.info("消息处理完成 - 用户: {}", userId);
             return new ChatRespDTO(singleResult.response(), singleResult.sources(), messageId);
@@ -298,34 +280,15 @@ public class ChatServiceImpl implements ChatService {
                 messageIdHandler.accept(assistantMessageId);
             }
 
-            IntentDecision intent = intentRouterService.decide(userId, userMessage);
-
-            if (intent.getAction() == IntentDecision.Action.CRISIS) {
-                conversationService.completeAssistantMessage(
-                        sessionId,
-                        assistantMessageId,
-                        CRISIS_RESPONSE,
-                        List.of()
-                );
-                if (chunkHandler != null) {
-                    chunkHandler.accept(CRISIS_RESPONSE);
-                }
-                if (sourcesHandler != null) {
-                    sourcesHandler.accept(List.of());
-                }
-                if (completionHandler != null) {
-                    completionHandler.run();
-                }
-                return;
-            }
-
             List<Map<String, String>> conversationHistory = conversationService.loadConversationContext(sessionId);
-            List<String> subqueries = queryDecomposer.decompose(userMessage);
-            if (subqueries.size() > 1) {
+            RoutingContext routingContext = prepareRoutingContext(userId, userMessage);
+            List<SubQueryIntent> resolvedSubQueries = routingContext.subQueryIntents();
+            String rewrittenQuery = routingContext.rewrittenQuery();
+            if (resolvedSubQueries.size() > 1) {
                 ExecutionResult multiResult = executeMultiIntentRoute(
                         userId,
                         userMessage,
-                        subqueries,
+                        resolvedSubQueries,
                         conversationHistory
                 );
                 conversationService.completeAssistantMessage(
@@ -346,12 +309,15 @@ public class ChatServiceImpl implements ChatService {
                 return;
             }
 
-            if (intent.getAction() == IntentDecision.Action.CLARIFY
-                    || intent.getAction() == IntentDecision.Action.ROUTE_TOOL) {
+            IntentDecision primaryIntent = resolvedSubQueries.isEmpty()
+                    ? defaultRagIntent()
+                    : selectPrimaryIntent(resolvedSubQueries.get(0));
+            if (primaryIntent.getAction() == IntentDecision.Action.CLARIFY
+                    || primaryIntent.getAction() == IntentDecision.Action.ROUTE_TOOL) {
                 ExecutionResult immediate = executeIntentRoute(
                         userId,
-                        userMessage,
-                        intent,
+                        rewrittenQuery,
+                        primaryIntent,
                         conversationHistory
                 );
                 conversationService.completeAssistantMessage(
@@ -372,7 +338,7 @@ public class ChatServiceImpl implements ChatService {
                 return;
             }
 
-            var cacheHit = semanticCacheService.find(userMessage);
+            var cacheHit = semanticCacheService.find(rewrittenQuery);
             if (cacheHit.isPresent()) {
                 String response = cacheHit.get().response();
                 List<RetrievalMatch> cachedSources = cacheHit.get().sources();
@@ -389,13 +355,13 @@ public class ChatServiceImpl implements ChatService {
                 return;
             }
 
-            String promptTemplate = resolvePromptTemplate(intent);
-            int retrievalK = determineRetrievalK(userMessage);
-            List<RetrievalMatch> retrievalResults = retrieveByStrategy(userId, userMessage, retrievalK, intent);
+            String promptTemplate = resolvePromptTemplate(primaryIntent);
+            int retrievalK = determineRetrievalK(rewrittenQuery);
+            List<RetrievalMatch> retrievalResults = retrieveByStrategy(userId, rewrittenQuery, retrievalK, primaryIntent);
             String referenceContext = constructReferenceContext(retrievalResults);
             StringBuilder responseBuilder = new StringBuilder();
 
-            CragDecision decision = postProcessorService.evaluate(userMessage, retrievalResults);
+            CragDecision decision = postProcessorService.evaluate(rewrittenQuery, retrievalResults);
             if (decision.getAction() == CragDecision.Action.CLARIFY
                     || decision.getAction() == CragDecision.Action.NO_ANSWER) {
                 String response = decision.getMessage();
@@ -416,7 +382,7 @@ public class ChatServiceImpl implements ChatService {
             if (decision.getAction() == CragDecision.Action.REFINE) {
                 List<RetrievalMatch> fallback = runFallbackRetrieval(
                         userId,
-                        userMessage,
+                        rewrittenQuery,
                         retrievalK
                 );
                 if (!fallback.isEmpty()) {
@@ -445,7 +411,7 @@ public class ChatServiceImpl implements ChatService {
             java.util.concurrent.atomic.AtomicBoolean streamFailed = new java.util.concurrent.atomic.AtomicBoolean(false);
 
             llmService.streamResponse(
-                    userMessage,
+                    rewrittenQuery,
                     applyPromptTemplate(promptTemplate, referenceContext),
                     conversationHistory,
                     chunk -> {
@@ -474,13 +440,8 @@ public class ChatServiceImpl implements ChatService {
                         }
                         String finalResponse = responseBuilder.toString();
                         conversationService.completeAssistantMessage(streamSessionId, streamMessageId, finalResponse, finalResults);
-                        semanticCacheService.put(userMessage, finalResponse, finalResults);
-                        if (intent.getConfidence() != null
-                                && intent.getConfidence() >= 0.9
-                                && (intent.getAction() == IntentDecision.Action.ROUTE_RAG
-                                || intent.getAction() == IntentDecision.Action.ROUTE_TOOL)) {
-                            intentPatternService.recordPattern(intent.getLevel1(), intent.getLevel2(), userMessage, intent.getConfidence());
-                        }
+                        semanticCacheService.put(rewrittenQuery, finalResponse, finalResults);
+                        recordHighConfidencePattern(primaryIntent, rewrittenQuery);
                         if (sourcesHandler != null) {
                             sourcesHandler.accept(finalResults);
                         }
@@ -512,10 +473,6 @@ public class ChatServiceImpl implements ChatService {
                     .action(IntentDecision.Action.ROUTE_RAG)
                     .strategy(IntentDecision.Strategy.HYBRID)
                     .build(), conversationHistory);
-        }
-
-        if (intent.getAction() == IntentDecision.Action.CRISIS) {
-            return new ExecutionResult(CRISIS_RESPONSE, List.of());
         }
 
         if (intent.getAction() == IntentDecision.Action.CLARIFY) {
@@ -578,17 +535,16 @@ public class ChatServiceImpl implements ChatService {
 
     private ExecutionResult executeMultiIntentRoute(String userId,
                                                     String originalQuery,
-                                                    List<String> subqueries,
+                                                    List<SubQueryIntent> resolvedSubQueries,
                                                     List<Map<String, String>> conversationHistory) throws InterruptedException {
         List<SubQueryExecution> executions = new ArrayList<>();
         List<RetrievalMatch> mergedSources = new ArrayList<>();
 
-        List<SubQueryIntent> resolvedSubQueries = intentResolutionService.resolve(userId, subqueries);
         for (SubQueryIntent subQueryIntent : resolvedSubQueries) {
             if (subQueryIntent == null || subQueryIntent.subQuery() == null || subQueryIntent.subQuery().isBlank()) {
                 continue;
             }
-            IntentDecision primaryIntent = selectPrimaryIntent(userId, subQueryIntent);
+            IntentDecision primaryIntent = selectPrimaryIntent(subQueryIntent);
             ExecutionResult subResult = executeIntentRoute(userId, subQueryIntent.subQuery(), primaryIntent, conversationHistory);
             executions.add(new SubQueryExecution(subQueryIntent.subQuery(), primaryIntent, subResult.response(), subResult.sources()));
             mergedSources.addAll(subResult.sources());
@@ -596,7 +552,7 @@ public class ChatServiceImpl implements ChatService {
         }
 
         if (executions.isEmpty()) {
-            IntentDecision fallbackIntent = intentRouterService.decide(userId, originalQuery);
+            IntentDecision fallbackIntent = defaultRagIntent();
             return executeIntentRoute(userId, originalQuery, fallbackIntent, conversationHistory);
         }
 
@@ -607,6 +563,24 @@ public class ChatServiceImpl implements ChatService {
         }
         semanticCacheService.put(originalQuery, finalResponse, deduplicated);
         return new ExecutionResult(finalResponse, deduplicated);
+    }
+
+    private RoutingContext prepareRoutingContext(String userId, String userMessage) {
+        String rewrittenQuery = queryAnalysisService.rewriteForRouting(userMessage);
+        if (isBlankString(rewrittenQuery)) {
+            rewrittenQuery = userMessage;
+        }
+
+        List<String> subqueries = queryDecomposer.decompose(rewrittenQuery);
+        if (subqueries == null || subqueries.isEmpty()) {
+            subqueries = List.of(rewrittenQuery);
+        }
+
+        List<SubQueryIntent> resolvedSubQueries = intentResolutionService.resolve(userId, subqueries);
+        if (resolvedSubQueries == null || resolvedSubQueries.isEmpty()) {
+            resolvedSubQueries = List.of(new SubQueryIntent(rewrittenQuery, List.of(defaultRagIntent())));
+        }
+        return new RoutingContext(rewrittenQuery, resolvedSubQueries);
     }
 
     private String synthesizeMultiIntentAnswer(String originalQuery, List<SubQueryExecution> executions) {
@@ -679,7 +653,6 @@ public class ChatServiceImpl implements ChatService {
             case ROUTE_RAG -> "ROUTE_RAG";
             case ROUTE_TOOL -> "ROUTE_TOOL";
             case CLARIFY -> "CLARIFY";
-            case CRISIS -> "CRISIS";
         };
     }
 
@@ -897,11 +870,18 @@ public class ChatServiceImpl implements ChatService {
         return retrieveMatches(userId, message, topK, retrievalIntent, intentCandidates);
     }
 
-    private IntentDecision selectPrimaryIntent(String userId, SubQueryIntent subQueryIntent) {
+    private IntentDecision selectPrimaryIntent(SubQueryIntent subQueryIntent) {
         if (subQueryIntent != null && subQueryIntent.candidates() != null && !subQueryIntent.candidates().isEmpty()) {
             return subQueryIntent.candidates().get(0);
         }
-        return intentRouterService.decide(userId, subQueryIntent == null ? null : subQueryIntent.subQuery());
+        return defaultRagIntent();
+    }
+
+    private IntentDecision defaultRagIntent() {
+        return IntentDecision.builder()
+                .action(IntentDecision.Action.ROUTE_RAG)
+                .strategy(IntentDecision.Strategy.HYBRID)
+                .build();
     }
 
     private String buildMatchKey(RetrievalMatch match) {

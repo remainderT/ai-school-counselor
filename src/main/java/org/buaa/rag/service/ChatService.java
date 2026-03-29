@@ -4,8 +4,8 @@ import java.util.List;
 import java.util.Map;
 
 import org.buaa.rag.common.convention.result.Result;
-import org.buaa.rag.dto.FeedbackRequest;
-import org.buaa.rag.dto.RetrievalMatch;
+import org.buaa.rag.core.model.FeedbackRequest;
+import org.buaa.rag.core.model.RetrievalMatch;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**

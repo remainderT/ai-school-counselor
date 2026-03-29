@@ -20,10 +20,10 @@ import org.buaa.rag.dao.entity.MessageSourceDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.MessageFeedbackMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
-import org.buaa.rag.dto.RetrievalMatch;
-import org.buaa.rag.module.index.MilvusRetrieverService;
+import org.buaa.rag.core.model.RetrievalMatch;
+import org.buaa.rag.core.offline.index.MilvusRetrieverService;
 import org.buaa.rag.service.SmartRetrieverService;
-import org.buaa.rag.module.index.VectorEncoding;
+import org.buaa.rag.core.offline.index.VectorEncoding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -35,16 +35,17 @@ import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 智能检索服务实现
  * 结合向量检索和文本匹配的混合搜索策略
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SmartRetrieverServiceImpl implements SmartRetrieverService {
 
-    private static final Logger log = LoggerFactory.getLogger(SmartRetrieverServiceImpl.class);
     private static final int MAX_RECALL_SIZE = 300;
 
     private final ElasticsearchClient esClient;

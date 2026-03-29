@@ -1,6 +1,6 @@
 package org.buaa.rag.common.convention.exception;
 
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_UPLOAD_FAILED;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_UPLOAD_FAILED;
 
 import org.buaa.rag.common.convention.errorcode.IErrorCode;
 

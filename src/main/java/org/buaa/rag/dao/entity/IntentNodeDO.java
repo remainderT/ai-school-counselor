@@ -67,6 +67,11 @@ public class IntentNodeDO extends BaseDO {
     private String keywordsJson;
 
     /**
+     * 示例问题 JSON 数组
+     */
+    private String examplesJson;
+
+    /**
      * 关联知识库ID（字符串，兼容已有检索逻辑）
      */
     private String knowledgeBaseId;

@@ -1,10 +1,10 @@
 package org.buaa.rag.service.impl;
 
-import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_ACCESS_DENIED;
-import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_HAS_DOCUMENTS;
-import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_NAME_DUPLICATE;
-import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_NAME_EMPTY;
-import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_NOT_EXISTS;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_ACCESS_DENIED;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_HAS_DOCUMENTS;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_NAME_DUPLICATE;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_NAME_EMPTY;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_NOT_EXISTS;
 
 import java.util.List;
 
@@ -35,7 +35,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
 
     @Override
     public Long create(KnowledgeCreateReqDTO requestParam) {
-        String name = normalizeName(requestParam == null ? null : requestParam.getName());
+        String name = normalizeStr(requestParam == null ? null : requestParam.getName());
         if (name == null) {
             throw new ClientException(KNOWLEDGE_NAME_EMPTY);
         }
@@ -45,7 +45,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         KnowledgeDO knowledge = KnowledgeDO.builder()
             .userId(userId)
             .name(name)
-            .description(normalizeDescription(requestParam == null ? null : requestParam.getDescription()))
+            .description(normalizeStr(requestParam == null ? null : requestParam.getDescription()))
             .build();
         try {
             baseMapper.insert(knowledge);
@@ -78,7 +78,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         KnowledgeDO existing = loadKnowledge(id);
         validateOwner(existing);
 
-        String nextName = normalizeName(requestParam == null ? null : requestParam.getName());
+        String nextName = normalizeStr(requestParam == null ? null : requestParam.getName());
         if (nextName != null && !nextName.equals(existing.getName())) {
             ensureNameNotDuplicate(existing.getUserId(), nextName, existing.getId());
             existing.setName(nextName);
@@ -86,7 +86,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
 
         if (requestParam != null) {
             if (requestParam.getDescription() != null) {
-                existing.setDescription(normalizeDescription(requestParam.getDescription()));
+                existing.setDescription(normalizeStr(requestParam.getDescription()));
             }
         }
         baseMapper.updateById(existing);
@@ -152,17 +152,10 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         return userId;
     }
 
-    private String normalizeName(String name) {
-        if (!StringUtils.hasText(name)) {
+    private String normalizeStr(String str) {
+        if (!StringUtils.hasText(str)) {
             return null;
         }
-        return name.trim();
-    }
-
-    private String normalizeDescription(String description) {
-        if (!StringUtils.hasText(description)) {
-            return null;
-        }
-        return description.trim();
+        return str.trim();
     }
 }

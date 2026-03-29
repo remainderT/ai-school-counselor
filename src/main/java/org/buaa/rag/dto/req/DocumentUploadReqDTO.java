@@ -19,4 +19,9 @@ public class DocumentUploadReqDTO {
     private String url;
 
     private Long knowledgeId;
+
+    /**
+     * 分块策略，可选值：fixed_size / structure_aware
+     */
+    private String chunkMode;
 }

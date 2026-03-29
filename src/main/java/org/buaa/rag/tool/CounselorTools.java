@@ -4,8 +4,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
-import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -13,7 +11,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * AI 辅导员工具集合（Function Calling）
+ * 辅导员工具集合
  */
 @Slf4j
 @Component
@@ -22,12 +20,8 @@ public class CounselorTools {
 
     private final McpWeatherClient mcpWeatherClient;
 
-    @Tool(
-        name = "queryGrade",
-        description = "查询学生成绩与绩点信息"
-    )
     public GradeToolResult queryGrade(
-        @ToolParam(description = "学生ID或学号", required = true) String studentId
+        String studentId
     ) {
         log.info("Tool queryGrade called, studentId={}", studentId);
         // TODO: 对接真实教务系统
@@ -40,15 +34,11 @@ public class CounselorTools {
         );
     }
 
-    @Tool(
-        name = "createLeaveDraft",
-        description = "创建请假申请草稿"
-    )
     public LeaveDraftToolResult createLeaveDraft(
-        @ToolParam(description = "用户ID", required = true) String userId,
-        @ToolParam(description = "开始时间，例如 2026-03-01", required = false) String startTime,
-        @ToolParam(description = "结束时间，例如 2026-03-02", required = false) String endTime,
-        @ToolParam(description = "请假事由", required = false) String reason
+        String userId,
+        String startTime,
+        String endTime,
+        String reason
     ) {
         log.info("Tool createLeaveDraft called, userId={}", userId);
         // TODO: 对接真实请假审批系统
@@ -63,14 +53,10 @@ public class CounselorTools {
         );
     }
 
-    @Tool(
-        name = "createRepairTicket",
-        description = "创建宿舍或后勤报修工单草稿"
-    )
     public RepairDraftToolResult createRepairTicket(
-        @ToolParam(description = "用户ID", required = true) String userId,
-        @ToolParam(description = "宿舍号，例如 2号楼305", required = false) String dormitory,
-        @ToolParam(description = "故障描述", required = false) String issue
+        String userId,
+        String dormitory,
+        String issue
     ) {
         log.info("Tool createRepairTicket called, userId={}", userId);
         // TODO: 对接真实后勤工单系统
@@ -84,16 +70,12 @@ public class CounselorTools {
         );
     }
 
-    @Tool(
-        name = "queryWeatherByMcp",
-        description = "查询城市天气，支持当前天气和未来天气预报"
-    )
     public WeatherToolResult queryWeatherByMcp(
-        @ToolParam(description = "城市名称，例如 北京、上海", required = false) String city,
-        @ToolParam(description = "查询类型：current 或 forecast", required = false) String queryType,
-        @ToolParam(description = "预报天数，forecast 模式时有效", required = false) Integer days,
-        @ToolParam(description = "用户ID", required = false) String userId,
-        @ToolParam(description = "用户原始问题", required = false) String rawQuery
+        String city,
+        String queryType,
+        Integer days,
+        String userId,
+        String rawQuery
     ) {
         String resolvedCity = resolveCity(city, rawQuery);
         if (!StringUtils.hasText(resolvedCity)) {

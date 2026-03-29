@@ -3,7 +3,7 @@ package org.buaa.rag.service;
 import java.util.List;
 import java.util.Set;
 
-import org.buaa.rag.dto.RetrievalMatch;
+import org.buaa.rag.core.model.RetrievalMatch;
 
 /**
  * 智能检索服务接口

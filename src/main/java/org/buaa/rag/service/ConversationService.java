@@ -3,7 +3,7 @@ package org.buaa.rag.service;
 import java.util.List;
 import java.util.Map;
 
-import org.buaa.rag.dto.RetrievalMatch;
+import org.buaa.rag.core.model.RetrievalMatch;
 
 public interface ConversationService {
 

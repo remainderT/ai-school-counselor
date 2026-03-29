@@ -23,24 +23,25 @@ public final class PromptTemplateLoader {
     private PromptTemplateLoader() {
     }
 
-    public static String load(String fileName, String fallback) {
+    public static String load(String fileName) {
         if (!StringUtils.hasText(fileName)) {
-            return fallback;
+            return "";
         }
-        return CACHE.computeIfAbsent(fileName.trim(), key -> readPrompt(key, fallback));
+        return CACHE.computeIfAbsent(fileName.trim(), PromptTemplateLoader::readPrompt);
     }
 
-    private static String readPrompt(String fileName, String fallback) {
+    private static String readPrompt(String fileName) {
         ClassPathResource resource = new ClassPathResource(PROMPT_BASE_PATH + fileName);
         if (!resource.exists()) {
-            return fallback;
+            log.warn("prompt 模板不存在: {}", fileName);
+            return "";
         }
         try (InputStream inputStream = resource.getInputStream()) {
             String content = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8).trim();
-            return StringUtils.hasText(content) ? content : fallback;
+            return StringUtils.hasText(content) ? content : "";
         } catch (IOException e) {
             log.warn("读取 prompt 模板失败: {}", fileName, e);
-            return fallback;
+            return "";
         }
     }
 }

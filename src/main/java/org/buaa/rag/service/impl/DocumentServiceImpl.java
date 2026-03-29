@@ -1,16 +1,16 @@
 package org.buaa.rag.service.impl;
 
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_ACCESS_CONTROL_ERROR;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_EXISTS;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_NOT_EXISTS;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_PARSE_FAILED;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_SIZE_EXCEEDED;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_UPLOAD_FAILED;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_UPLOAD_NULL;
-import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_ACCESS_DENIED;
-import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_ID_REQUIRED;
-import static org.buaa.rag.common.enums.KnowledgeErrorCodeEnum.KNOWLEDGE_NOT_EXISTS;
-import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.STORAGE_SERVICE_ERROR;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_ACCESS_CONTROL_ERROR;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_EXISTS;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_NOT_EXISTS;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_PARSE_FAILED;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_SIZE_EXCEEDED;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_UPLOAD_FAILED;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_UPLOAD_NULL;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_ACCESS_DENIED;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_ID_REQUIRED;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_NOT_EXISTS;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
@@ -18,21 +18,23 @@ import java.util.List;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.exception.ServiceException;
+import org.buaa.rag.common.enums.UploadStatusEnum;
 import org.buaa.rag.common.user.UserContext;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.KnowledgeDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
-import org.buaa.rag.module.ingestion.DocumentArtifactService;
-import org.buaa.rag.module.ingestion.DocumentLifecycleService;
-import org.buaa.rag.module.ingestion.DocumentIngestionTask;
+import org.buaa.rag.dto.req.DocumentUploadReqDTO;
+import org.buaa.rag.core.offline.ingestion.DocumentArtifactService;
+import org.buaa.rag.core.offline.ingestion.DocumentLifecycleService;
+import org.buaa.rag.core.offline.ingestion.DocumentIngestionTask;
 import org.buaa.rag.tool.RemoteURLFetcher;
 import org.buaa.rag.tool.RemoteURLFetcher.FetchedRemoteDocument;
-import org.buaa.rag.mq.IngestionProducer;
+import org.buaa.rag.core.mq.IngestionProducer;
 import org.buaa.rag.properties.FIleParseProperties;
 import org.buaa.rag.service.DocumentService;
-import org.buaa.rag.module.parser.FileTypeValidate;
-import org.buaa.rag.module.parser.FileTypeValidate.InspectedFile;
+import org.buaa.rag.core.offline.parser.FileTypeValidate;
+import org.buaa.rag.core.offline.parser.FileTypeValidate.InspectedFile;
 import org.buaa.rag.tool.RustfsStorage;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamSource;
@@ -67,7 +69,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final RemoteURLFetcher remoteURLFetcher;
 
 
-    private record UploadPayload(String originalFilename,
+    public record UploadPayload(String originalFilename,
                                  String mimeType,
                                  long size,
                                  String md5,
@@ -75,19 +77,29 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     }
 
     @Override
-    public void upload(MultipartFile uploadedFile, String url, Long knowledgeId) {
-        KnowledgeDO knowledge = verifyUploadKnowledge(knowledgeId);
-        UploadPayload payload = uploadedFile != null ? buildMultipartUploadPayload(uploadedFile) : buildUrlUploadPayload(url);
-        persistUploadPayload(payload, knowledge.getId());
+    public void upload(DocumentUploadReqDTO request) {
+        if (request == null) {
+            throw new ClientException(DOCUMENT_UPLOAD_NULL);
+        }
+        Long knowledgeId = request.getKnowledgeId();
+        MultipartFile file = request.getFile();
+        String url = request.getUrl();
+        String chunkMode = request.getChunkMode();
+
+        verifyUploadKnowledge(knowledgeId);
+        UploadPayload payload = chooseUploadPayload(file, url);
+        persistUploadPayload(payload, knowledgeId, chunkMode);
     }
 
     @Override
     public List<DocumentDO> list() {
-        return baseMapper.selectList(
+        List<DocumentDO> documents = baseMapper.selectList(
             Wrappers.lambdaQuery(DocumentDO.class)
                 .eq(DocumentDO::getUserId, UserContext.getUserId())
                 .eq(DocumentDO::getDelFlag, 0)
         );
+        documents.forEach(doc -> doc.setProcessingStatusDesc(UploadStatusEnum.descOf(doc.getProcessingStatus())));
+        return documents;
     }
 
     @Override
@@ -100,7 +112,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw new ClientException(DOCUMENT_ACCESS_CONTROL_ERROR);
         }
 
-        deleteStoredDocument(document.getMd5Hash(), document.getOriginalFileName());
+        rustfsStorage.delete(document.getMd5Hash(), document.getOriginalFileName());
         artifactService.cleanup(document);
         baseMapper.update(
             null,
@@ -145,25 +157,31 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         return new UploadPayload(inspectedFile.fileName(), inspectedFile.mimeType(), body.length, md5, source);
     }
 
-    private void persistUploadPayload(UploadPayload payload, Long knowledgeId) {
-        DocumentDO document = lifecycleService.findActiveByMd5AndUserId(payload.md5, UserContext.getUserId());
+    private UploadPayload chooseUploadPayload(MultipartFile file, String url) {
+        if (file != null && !file.isEmpty()) {
+            return buildMultipartUploadPayload(file);
+        }
+        if (StringUtils.hasText(url)) {
+            return buildUrlUploadPayload(url);
+        }
+        throw new ClientException(DOCUMENT_UPLOAD_NULL);
+    }
+
+    private void persistUploadPayload(UploadPayload payload, Long knowledgeId, String chunkMode) {
+        DocumentDO document = lifecycleService.findDocumentByMd5AndUserId(payload.md5, UserContext.getUserId());
         if (document != null) {
             throw new ClientException(DOCUMENT_EXISTS);
         }
         try {
-            storeDocument(payload);
-            document = lifecycleService.createPendingDocument(
-                payload.md5(),
-                payload.originalFilename(),
-                payload.size(),
-                knowledgeId,
-                UserContext.getUserId()
-            );
-            DocumentIngestionTask task = DocumentIngestionTask.initial(document.getId());
+            rustfsStorage.upload(payload);
+            document = lifecycleService.createPendingDocument(payload, knowledgeId);
+            // 通过任务消息触发离线摄取，接口可快速返回。
+            DocumentIngestionTask task = DocumentIngestionTask.initial(document.getId(), chunkMode);
             ingestionProducer.enqueue(task);
         } catch (Exception e) {
+            // 文档记录尚未落库时，尝试清理已上传的对象存储文件，避免孤儿文件。
             if (document == null) {
-                cleanupStoredDocumentQuietly(payload.md5(), payload.originalFilename());
+                rustfsStorage.delete(payload.md5(), payload.originalFilename);
             }
             markUploadFailure(document, e);
             throw new ServiceException("文件上传失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
@@ -189,46 +207,12 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         return knowledge;
     }
 
-    private void storeDocument(UploadPayload payload) {
-        try {
-            rustfsStorage.upload(
-                rustfsStorage.buildPrimaryPath(payload.md5(), payload.originalFilename()),
-                payload.source().getInputStream(),
-                payload.size(),
-                StringUtils.hasText(payload.mimeType()) ? payload.mimeType() : null
-            );
-        } catch (IOException e) {
-            throw new ServiceException("文件读取失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
-        } catch (Exception e) {
-            throw new ServiceException("对象存储上传失败: " + e.getMessage(), e, STORAGE_SERVICE_ERROR);
-        }
-    }
-
-    private void deleteStoredDocument(String md5, String filename) {
-        String primaryPath = rustfsStorage.buildPrimaryPath(md5, filename);
-        try {
-            rustfsStorage.delete(primaryPath);
-        } catch (Exception e) {
-            throw new ServiceException("对象存储删除失败: " + e.getMessage(), e, STORAGE_SERVICE_ERROR);
-        }
-    }
-
-    private void cleanupStoredDocumentQuietly(String md5, String filename) {
-        if (!StringUtils.hasText(md5) || !StringUtils.hasText(filename)) {
-            return;
-        }
-        try {
-            deleteStoredDocument(md5, filename);
-        } catch (Exception cleanupError) {
-            log.warn("上传失败后清理对象存储文件失败: md5={}", md5, cleanupError);
-        }
-    }
-
     private void markUploadFailure(DocumentDO document, Exception error) {
         if (document == null || document.getId() == null) {
             log.error("文件上传失败，未能建立文档记录", error);
             return;
         }
+        // 有文档记录时统一落失败态，便于前端和运维定位失败原因。
         log.error("文件上传失败: documentId={}", document.getId(), error);
         lifecycleService.markFailed(document.getId(), error);
     }

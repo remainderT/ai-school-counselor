@@ -1,8 +1,8 @@
 package org.buaa.rag.tool;
 
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_SIZE_EXCEEDED;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_UPLOAD_FAILED;
-import static org.buaa.rag.common.enums.DocumentErrorCodeEnum.DOCUMENT_URL_INVALID;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_SIZE_EXCEEDED;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_UPLOAD_FAILED;
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_URL_INVALID;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

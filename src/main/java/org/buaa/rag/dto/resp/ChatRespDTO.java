@@ -2,7 +2,7 @@ package org.buaa.rag.dto.resp;
 
 import java.util.List;
 
-import org.buaa.rag.dto.RetrievalMatch;
+import org.buaa.rag.core.model.RetrievalMatch;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
