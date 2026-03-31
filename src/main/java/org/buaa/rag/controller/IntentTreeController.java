@@ -67,14 +67,4 @@ public class IntentTreeController {
         return Results.success();
     }
 
-    @PostMapping("/reload")
-    public Result<Void> reload() {
-        intentTreeManageService.reloadCache();
-        return Results.success();
-    }
-
-    @PostMapping("/initialize")
-    public Result<Integer> initialize() {
-        return Results.success(intentTreeManageService.initializeFromRuntimeTree());
-    }
 }

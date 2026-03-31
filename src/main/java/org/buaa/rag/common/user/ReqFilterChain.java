@@ -38,6 +38,18 @@ public class ReqFilterChain {
     }
 
     /**
+     * 管理员权限过滤器
+     */
+    @Bean
+    public FilterRegistrationBean<AdminOnlyFilter> adminOnlyFilter() {
+        FilterRegistrationBean<AdminOnlyFilter> registration = new FilterRegistrationBean<>();
+        registration.setFilter(new AdminOnlyFilter());
+        registration.addUrlPatterns("/*");
+        registration.setOrder(2);
+        return registration;
+    }
+
+    /**
      * 用户操作流量风控过滤器
      */
     @Bean
@@ -47,7 +59,7 @@ public class ReqFilterChain {
         FilterRegistrationBean<FlowControlFilter> registration = new FilterRegistrationBean<>();
         registration.setFilter(new FlowControlFilter(stringRedisTemplate, flowControlProperties));
         registration.addUrlPatterns("/*");
-        registration.setOrder(2);
+        registration.setOrder(3);
         return registration;
     }
 

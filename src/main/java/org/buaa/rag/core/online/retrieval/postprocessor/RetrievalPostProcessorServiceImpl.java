@@ -28,7 +28,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-public class RetrievalPostProcessorServiceImpl {
+public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessorService {
 
     private static final String DEFAULT_CRAG_PROMPT = PromptTemplateLoader.load("retrieval-crag.st");
 

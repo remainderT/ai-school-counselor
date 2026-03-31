@@ -3,22 +3,33 @@ package org.buaa.rag.service.impl;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
+import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.dao.entity.MessageDO;
 import org.buaa.rag.dao.entity.MessageSourceDO;
+import org.buaa.rag.dao.entity.MessageFeedbackDO;
+import org.buaa.rag.dao.entity.MessageSummaryDO;
 import org.buaa.rag.dao.mapper.MessageMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
-import org.buaa.rag.core.model.RetrievalMatch;
+import org.buaa.rag.dao.mapper.MessageFeedbackMapper;
+import org.buaa.rag.dao.mapper.MessageSummaryMapper;
 import org.buaa.rag.core.online.memory.ConversationMemoryService;
+import org.buaa.rag.dto.resp.ConversationMessageRespDTO;
+import org.buaa.rag.dto.resp.ConversationSessionRespDTO;
 import org.buaa.rag.service.ConversationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -30,9 +41,13 @@ public class ConversationServiceImpl implements ConversationService {
     private static final Logger log = LoggerFactory.getLogger(ConversationServiceImpl.class);
     private static final int MAX_HISTORY_SIZE = 60;
     private static final String STREAM_PLACEHOLDER = "__STREAMING__";
+    private static final String SESSION_MARKER = "__SESSION_MARKER__";
+    private static final String SESSION_META_PREFIX = "__SESSION_META__:";
 
     private final MessageMapper messageMapper;
     private final MessageSourceMapper sourceRepository;
+    private final MessageFeedbackMapper messageFeedbackMapper;
+    private final MessageSummaryMapper messageSummaryMapper;
     private final ConversationMemoryService conversationMemoryService;
 
     private final Map<String, String> userSessionMap = new ConcurrentHashMap<>();
@@ -40,9 +55,13 @@ public class ConversationServiceImpl implements ConversationService {
 
     public ConversationServiceImpl(MessageMapper messageMapper,
                                    MessageSourceMapper sourceRepository,
+                                   MessageFeedbackMapper messageFeedbackMapper,
+                                   MessageSummaryMapper messageSummaryMapper,
                                    ConversationMemoryService conversationMemoryService) {
         this.messageMapper = messageMapper;
         this.sourceRepository = sourceRepository;
+        this.messageFeedbackMapper = messageFeedbackMapper;
+        this.messageSummaryMapper = messageSummaryMapper;
         this.conversationMemoryService = conversationMemoryService;
     }
 
@@ -59,6 +78,110 @@ public class ConversationServiceImpl implements ConversationService {
             log.info("创建新会话 - 用户: {}, 会话ID: {}", normalizedUserId, newSessionId);
             return newSessionId;
         });
+    }
+
+    @Override
+    public ConversationSessionRespDTO createSession(String userId, String title) {
+        String ownerPrefix = normalizeUserId(userId);
+        String sessionId = UUID.randomUUID().toString();
+        String scopedUserId = buildScopedUserId(ownerPrefix, sessionId);
+        String normalizedTitle = normalizeSessionTitle(title);
+        persistMessage(sessionId, scopedUserId, "system", buildSessionMetaContent(normalizedTitle));
+        userSessionMap.put(scopedUserId, sessionId);
+
+        ConversationSessionRespDTO dto = new ConversationSessionRespDTO();
+        dto.setSessionId(sessionId);
+        dto.setUserId(scopedUserId);
+        dto.setTitle(normalizedTitle);
+        dto.setMessageCount(0);
+        dto.setUpdatedAt(getCurrentTimestamp());
+        return dto;
+    }
+
+    @Override
+    public ConversationSessionRespDTO renameSession(String sessionId, String userIdPrefix, String title) {
+        String normalizedSessionId = sessionId == null ? "" : sessionId.trim();
+        String normalizedTitle = normalizeSessionTitle(title);
+        String normalizedUser = normalizeUserId(userIdPrefix);
+        if (!StringUtils.hasText(normalizedSessionId)) {
+            ConversationSessionRespDTO empty = new ConversationSessionRespDTO();
+            empty.setSessionId(normalizedSessionId);
+            empty.setUserId(normalizedUser);
+            empty.setTitle(normalizedTitle);
+            empty.setMessageCount(0);
+            empty.setUpdatedAt(getCurrentTimestamp());
+            return empty;
+        }
+        if (!isSessionOwnedBy(normalizedSessionId, normalizedUser)) {
+            log.warn("忽略重命名非本人会话请求 - userIdPrefix: {}, sessionId: {}", normalizedUser, normalizedSessionId);
+            ConversationSessionRespDTO denied = new ConversationSessionRespDTO();
+            denied.setSessionId(normalizedSessionId);
+            denied.setUserId(normalizedUser);
+            denied.setTitle(normalizedTitle);
+            denied.setMessageCount(0);
+            denied.setUpdatedAt(getCurrentTimestamp());
+            return denied;
+        }
+
+        MessageDO meta = messageMapper.selectOne(Wrappers.lambdaQuery(MessageDO.class)
+            .eq(MessageDO::getSessionId, normalizedSessionId)
+            .eq(MessageDO::getRole, "system")
+            .and(wrapper -> wrapper
+                .eq(MessageDO::getContent, SESSION_MARKER)
+                .or()
+                .likeRight(MessageDO::getContent, SESSION_META_PREFIX))
+            .orderByAsc(MessageDO::getId)
+            .last("limit 1"));
+        if (meta == null) {
+            persistMessage(normalizedSessionId, normalizedUser, "system", buildSessionMetaContent(normalizedTitle));
+        } else {
+            MessageDO update = new MessageDO();
+            update.setId(meta.getId());
+            update.setContent(buildSessionMetaContent(normalizedTitle));
+            messageMapper.updateById(update);
+        }
+
+        ConversationSessionRespDTO dto = new ConversationSessionRespDTO();
+        dto.setSessionId(normalizedSessionId);
+        dto.setUserId(normalizedUser);
+        dto.setTitle(normalizedTitle);
+        dto.setUpdatedAt(getCurrentTimestamp());
+        dto.setMessageCount(listMessages(normalizedSessionId, 500).size());
+        return dto;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteSession(String sessionId, String userIdPrefix) {
+        String normalizedSessionId = sessionId == null ? "" : sessionId.trim();
+        if (!StringUtils.hasText(normalizedSessionId)) {
+            return;
+        }
+        if (!isSessionOwnedBy(normalizedSessionId, userIdPrefix)) {
+            log.warn("忽略删除非本人会话请求 - userIdPrefix: {}, sessionId: {}", userIdPrefix, normalizedSessionId);
+            return;
+        }
+
+        LambdaQueryWrapper<MessageDO> messageQuery = Wrappers.lambdaQuery(MessageDO.class)
+            .eq(MessageDO::getSessionId, normalizedSessionId);
+        List<MessageDO> rows = messageMapper.selectList(messageQuery);
+        List<Long> messageIds = rows == null ? List.of() : rows.stream()
+            .map(MessageDO::getId)
+            .filter(id -> id != null)
+            .collect(Collectors.toList());
+        if (!messageIds.isEmpty()) {
+            sourceRepository.delete(Wrappers.lambdaQuery(MessageSourceDO.class)
+                .in(MessageSourceDO::getMessageId, messageIds));
+            messageFeedbackMapper.delete(Wrappers.lambdaQuery(MessageFeedbackDO.class)
+                .in(MessageFeedbackDO::getMessageId, messageIds));
+        }
+
+        messageSummaryMapper.delete(Wrappers.lambdaQuery(MessageSummaryDO.class)
+            .eq(MessageSummaryDO::getSessionId, normalizedSessionId));
+        messageMapper.delete(messageQuery);
+
+        sessionHistoryMap.remove(normalizedSessionId);
+        userSessionMap.entrySet().removeIf(entry -> normalizedSessionId.equals(entry.getValue()));
     }
 
     @Override
@@ -126,6 +249,118 @@ public class ConversationServiceImpl implements ConversationService {
         List<Map<String, String>> history = sessionHistoryMap.getOrDefault(sessionId, List.of());
         log.debug("更新会话历史 - 会话: {}, 总消息数: {}", sessionId, history.size());
         return assistantMessageId;
+    }
+
+    @Override
+    public List<ConversationSessionRespDTO> listSessions(String userIdPrefix) {
+        String owner = normalizeUserId(userIdPrefix);
+        try {
+            LambdaQueryWrapper<MessageDO> queryWrapper = Wrappers.lambdaQuery(MessageDO.class)
+                .and(wrapper -> wrapper
+                    .eq(MessageDO::getUserId, owner)
+                    .or()
+                    .likeRight(MessageDO::getUserId, owner + "::"))
+                .orderByDesc(MessageDO::getCreatedAt);
+            List<MessageDO> rows = messageMapper.selectList(queryWrapper);
+            if (rows == null || rows.isEmpty()) {
+                return List.of();
+            }
+
+            Map<String, List<MessageDO>> grouped = rows.stream()
+                .filter(item -> item != null && StringUtils.hasText(item.getSessionId()))
+                .collect(Collectors.groupingBy(MessageDO::getSessionId));
+
+            List<ConversationSessionRespDTO> result = new ArrayList<>();
+            for (Map.Entry<String, List<MessageDO>> entry : grouped.entrySet()) {
+                List<MessageDO> messages = entry.getValue();
+                if (messages == null || messages.isEmpty()) {
+                    continue;
+                }
+                MessageDO latest = messages.stream()
+                    .filter(item -> item.getCreatedAt() != null)
+                    .max((left, right) -> left.getCreatedAt().compareTo(right.getCreatedAt()))
+                    .orElse(messages.get(0));
+                String title = messages.stream()
+                    .map(MessageDO::getContent)
+                    .map(this::extractSessionTitle)
+                    .filter(StringUtils::hasText)
+                    .findFirst()
+                    .orElseGet(() -> messages.stream()
+                    .filter(item -> "user".equalsIgnoreCase(item.getRole()))
+                    .map(MessageDO::getContent)
+                    .filter(content -> StringUtils.hasText(content) && !isIgnoredContent(content))
+                    .findFirst()
+                    .map(content -> content.length() > 24 ? content.substring(0, 24) : content)
+                    .orElse("新会话"));
+                int messageCount = (int) messages.stream()
+                    .filter(item -> StringUtils.hasText(item.getContent()) && !isIgnoredContent(item.getContent()))
+                    .count();
+
+                ConversationSessionRespDTO dto = new ConversationSessionRespDTO();
+                dto.setSessionId(entry.getKey());
+                dto.setUserId(latest == null ? owner : latest.getUserId());
+                dto.setTitle(title);
+                dto.setMessageCount(messageCount);
+                dto.setUpdatedAt(formatTimestamp(latest == null ? null : latest.getCreatedAt()));
+                result.add(dto);
+            }
+            result.sort((left, right) -> {
+                if (left.getUpdatedAt() == null) {
+                    return 1;
+                }
+                if (right.getUpdatedAt() == null) {
+                    return -1;
+                }
+                return right.getUpdatedAt().compareTo(left.getUpdatedAt());
+            });
+            return result;
+        } catch (Exception e) {
+            log.debug("查询会话列表失败: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    @Override
+    public List<ConversationMessageRespDTO> listMessages(String sessionId, int limit) {
+        if (!StringUtils.hasText(sessionId)) {
+            return List.of();
+        }
+        int finalLimit = Math.max(1, Math.min(limit, 500));
+        try {
+            LambdaQueryWrapper<MessageDO> queryWrapper = Wrappers.lambdaQuery(MessageDO.class)
+                .eq(MessageDO::getSessionId, sessionId.trim())
+                .orderByDesc(MessageDO::getId)
+                .last("limit " + finalLimit);
+            List<MessageDO> latestRows = messageMapper.selectList(queryWrapper);
+            if (latestRows == null || latestRows.isEmpty()) {
+                return List.of();
+            }
+            Collections.reverse(latestRows);
+
+            Set<Long> messageIds = latestRows.stream()
+                .map(MessageDO::getId)
+                .filter(id -> id != null)
+                .collect(Collectors.toCollection(HashSet::new));
+            Map<Long, List<RetrievalMatch>> sourceMap = loadSourcesByMessageIds(messageIds);
+
+            List<ConversationMessageRespDTO> result = new ArrayList<>();
+            for (MessageDO item : latestRows) {
+                if (item == null || !StringUtils.hasText(item.getContent()) || isIgnoredContent(item.getContent())) {
+                    continue;
+                }
+                ConversationMessageRespDTO dto = new ConversationMessageRespDTO();
+                dto.setId(item.getId());
+                dto.setRole(item.getRole());
+                dto.setContent(item.getContent());
+                dto.setCreatedAt(formatTimestamp(item.getCreatedAt()));
+                dto.setSources(sourceMap.getOrDefault(item.getId(), List.of()));
+                result.add(dto);
+            }
+            return result;
+        } catch (Exception e) {
+            log.debug("查询会话消息失败: {}", e.getMessage());
+            return List.of();
+        }
     }
 
     private void appendHistoryEntry(String sessionId,
@@ -206,7 +441,7 @@ public class ConversationServiceImpl implements ConversationService {
                     continue;
                 }
                 String content = messageDO.getContent();
-                if (STREAM_PLACEHOLDER.equals(content) || !StringUtils.hasText(content)) {
+                if (isIgnoredContent(content) || !StringUtils.hasText(content)) {
                     continue;
                 }
                 Map<String, String> entry = new HashMap<>();
@@ -234,6 +469,67 @@ public class ConversationServiceImpl implements ConversationService {
         } catch (Exception e) {
             log.debug("持久化对话失败: {}", e.getMessage());
             return null;
+        }
+    }
+
+    private boolean isIgnoredContent(String content) {
+        if (!StringUtils.hasText(content)) {
+            return true;
+        }
+        return STREAM_PLACEHOLDER.equals(content)
+            || SESSION_MARKER.equals(content)
+            || content.startsWith(SESSION_META_PREFIX);
+    }
+
+    private String extractSessionTitle(String content) {
+        if (!StringUtils.hasText(content)) {
+            return "";
+        }
+        if (content.startsWith(SESSION_META_PREFIX)) {
+            String raw = content.substring(SESSION_META_PREFIX.length()).trim();
+            return normalizeSessionTitle(raw);
+        }
+        return "";
+    }
+
+    private String buildSessionMetaContent(String title) {
+        return SESSION_META_PREFIX + normalizeSessionTitle(title);
+    }
+
+    private String normalizeSessionTitle(String title) {
+        if (!StringUtils.hasText(title)) {
+            return "新会话";
+        }
+        String text = title.trim();
+        if (text.length() > 40) {
+            return text.substring(0, 40);
+        }
+        return text;
+    }
+
+    private String buildScopedUserId(String ownerPrefix, String sessionId) {
+        String normalizedOwner = normalizeUserId(ownerPrefix);
+        if (normalizedOwner.contains("::")) {
+            return normalizedOwner;
+        }
+        return normalizedOwner + "::" + sessionId;
+    }
+
+    private boolean isSessionOwnedBy(String sessionId, String userIdPrefix) {
+        String owner = normalizeUserId(userIdPrefix);
+        try {
+            MessageDO any = messageMapper.selectOne(Wrappers.lambdaQuery(MessageDO.class)
+                .eq(MessageDO::getSessionId, sessionId)
+                .orderByDesc(MessageDO::getId)
+                .last("limit 1"));
+            if (any == null || !StringUtils.hasText(any.getUserId())) {
+                return true;
+            }
+            String actual = any.getUserId();
+            return owner.equals(actual) || actual.startsWith(owner + "::");
+        } catch (Exception e) {
+            log.debug("校验会话归属失败: {}", e.getMessage());
+            return false;
         }
     }
 
@@ -300,5 +596,31 @@ public class ConversationServiceImpl implements ConversationService {
         }
         MessageDO messageDO = messageMapper.selectById(messageId);
         return messageDO == null ? null : messageDO.getUserId();
+    }
+
+    private Map<Long, List<RetrievalMatch>> loadSourcesByMessageIds(Set<Long> messageIds) {
+        if (messageIds == null || messageIds.isEmpty()) {
+            return Map.of();
+        }
+        LambdaQueryWrapper<MessageSourceDO> sourceQuery = Wrappers.lambdaQuery(MessageSourceDO.class)
+            .in(MessageSourceDO::getMessageId, messageIds)
+            .orderByAsc(MessageSourceDO::getId);
+        List<MessageSourceDO> sourceRows = sourceRepository.selectList(sourceQuery);
+        if (sourceRows == null || sourceRows.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, List<RetrievalMatch>> grouped = new HashMap<>();
+        for (MessageSourceDO source : sourceRows) {
+            if (source == null || source.getMessageId() == null) {
+                continue;
+            }
+            RetrievalMatch match = new RetrievalMatch();
+            match.setFileMd5(source.getDocumentMd5());
+            match.setChunkId(source.getChunkId());
+            match.setRelevanceScore(source.getRelevanceScore());
+            match.setSourceFileName(source.getSourceFileName());
+            grouped.computeIfAbsent(source.getMessageId(), key -> new ArrayList<>()).add(match);
+        }
+        return grouped;
     }
 }

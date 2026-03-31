@@ -9,6 +9,7 @@ CREATE TABLE `user` (
                         `password`      varchar(512) NOT NULL COMMENT '密码',
                         `mail`          varchar(30)  NOT NULL COMMENT '邮箱',
                         `salt`          varchar(20)  NOT NULL COMMENT '盐',
+                        `is_admin`      tinyint(1)   NOT NULL DEFAULT 0 COMMENT '是否管理员 1:是 0:否',
                         `avatar`        varchar(60)     DEFAULT NULL COMMENT '头像',
                         `create_time` datetime     DEFAULT NULL COMMENT '创建时间',
                         `update_time` datetime     DEFAULT NULL COMMENT '修改时间',
@@ -150,8 +151,9 @@ CREATE TABLE message_summary (
                         INDEX idx_summary_session_msg (session_id, last_message_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话摘要表';
 
-INSERT INTO `user` (`id`, `username`, `password`, `mail`, `salt`, `avatar`, `create_time`, `update_time`, `del_flag`)
-VALUES (1, 'admin', 'f5866c4a4d6014ecced47960c2e3d07f', 'admin@example.com', 'admin', NULL, NOW(), NOW(), 0);
+INSERT INTO `user` (`id`, `username`, `password`, `mail`, `salt`, `is_admin`, `avatar`, `create_time`, `update_time`, `del_flag`)
+VALUES (1, 'admin', 'b9d11b3be25f5a1a7dc8ca04cd310b28', 'admin@example.com', 'admin', 1, NULL, NOW(), NOW(), 0);
+
 
 INSERT INTO `knowledge` (`id`, `user_id`, `name`, `description`,  `create_time`, `update_time`, `del_flag`) VALUES
 (1, 1, 'test', '测试知识库（默认）', NOW(), NOW(), 0),

@@ -61,6 +61,7 @@ public class RefreshTokenFilter implements Filter {
                 .mail(userDO.getMail())
                 .salt(userDO.getSalt())
                 .token(token)
+                .isAdmin(userDO.getIsAdmin())
                 .build();
         UserContext.setUser(userInfoDTO);
 

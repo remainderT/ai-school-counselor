@@ -28,4 +28,9 @@ public class UserRespDTO {
      */
     private String avatar;
 
+    /**
+     * 是否管理员：1-管理员，0-普通用户
+     */
+    private Integer isAdmin;
+
 }

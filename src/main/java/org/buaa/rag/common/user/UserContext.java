@@ -39,6 +39,12 @@ public final class UserContext {
         return Optional.ofNullable(userInfoDTO).map(UserInfoDTO::getMail).orElse(null);
     }
 
+    public static boolean isAdmin() {
+        UserInfoDTO userInfoDTO = USER_THREAD_LOCAL.get();
+        Integer isAdmin = Optional.ofNullable(userInfoDTO).map(UserInfoDTO::getIsAdmin).orElse(0);
+        return Integer.valueOf(1).equals(isAdmin);
+    }
+
     public static void removeUser() {
         USER_THREAD_LOCAL.remove();
     }

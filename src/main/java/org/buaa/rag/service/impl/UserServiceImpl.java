@@ -64,6 +64,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
     @Value("${spring.mail.username}")
     private String from;
 
+    private void cacheUserInfo(UserDO userDO) {
+        if (userDO == null || StrUtil.isBlank(userDO.getUsername())) {
+            return;
+        }
+        stringRedisTemplate.opsForValue().set(
+                USER_INFO_KEY + userDO.getUsername(),
+                JSON.toJSONString(userDO),
+                USER_LOGIN_EXPIRE_KEY,
+                TimeUnit.DAYS);
+    }
+
     @Override
     public UserRespDTO getUserInfo(String username) {
         LambdaQueryWrapper<UserDO> queryWrapper = Wrappers.lambdaQuery(UserDO.class)
@@ -74,6 +85,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
         }
         UserRespDTO result = new UserRespDTO();
         BeanUtils.copyProperties(userDO, result);
+        cacheUserInfo(userDO);
         return result;
     }
 
@@ -130,10 +142,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
             UserDO userDO = BeanUtil.toBean(requestParam, UserDO.class);
             userDO.setSalt(UUID.randomUUID().toString().substring(0, 5));
             userDO.setPassword(DigestUtils.md5DigestAsHex((userDO.getPassword() + userDO.getSalt()).getBytes()));
+            userDO.setIsAdmin(0);
             baseMapper.insert(userDO);
             userDO = baseMapper.selectOne(Wrappers.lambdaQuery(UserDO.class)
                     .eq(UserDO::getUsername, requestParam.getUsername()));
-            stringRedisTemplate.opsForValue().set(USER_INFO_KEY + requestParam.getUsername(), JSON.toJSONString(userDO));
+            cacheUserInfo(userDO);
         } catch (DuplicateKeyException ex) {
             throw new ClientException(USER_MAIL_EXIST);
         }
@@ -144,6 +157,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
         LambdaQueryWrapper<UserDO> queryWrapper = Wrappers.lambdaQuery(UserDO.class)
                 .eq(UserDO::getUsername, requestParam.getUsername());
         UserDO userDO = baseMapper.selectOne(queryWrapper);
+        if (userDO == null) {
+            throw new ClientException(UserErrorCodeEnum.USER_NULL);
+        }
 
         String password = DigestUtils.md5DigestAsHex((requestParam.getPassword() + userDO.getSalt()).getBytes());
         if (!Objects.equals(userDO.getPassword(), password)) {
@@ -157,11 +173,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
          */
         String hasLogin = stringRedisTemplate.opsForValue().get(USER_LOGIN_KEY + requestParam.getUsername());
         if (StrUtil.isNotEmpty(hasLogin)) {
-            return new UserLoginRespDTO(hasLogin);
+            cacheUserInfo(userDO);
+            stringRedisTemplate.expire(USER_LOGIN_KEY + requestParam.getUsername(), USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
+            return new UserLoginRespDTO(hasLogin, userDO.getIsAdmin());
         }
         String uuid = UUID.randomUUID().toString();
         stringRedisTemplate.opsForValue().set(USER_LOGIN_KEY + requestParam.getUsername(), uuid, USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
-        return new UserLoginRespDTO(uuid);
+        cacheUserInfo(userDO);
+        return new UserLoginRespDTO(uuid, userDO.getIsAdmin());
     }
 
     @Override
@@ -195,6 +214,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
         baseMapper.update(userDO, updateWrapper);
         UserDO newUserDO = baseMapper.selectOne(Wrappers.lambdaQuery(UserDO.class)
                 .eq(UserDO::getUsername, requestParam.getNewUsername()));
-        stringRedisTemplate.opsForValue().set(USER_INFO_KEY + requestParam.getNewUsername(), JSON.toJSONString(newUserDO));
+        cacheUserInfo(newUserDO);
     }
 }

@@ -1,4 +1,4 @@
-# Repository Guidelines
+npm# Repository Guidelines
 
 ## Project Structure & Module Organization
 - `src/main/java/org/buaa/rag`: Spring Boot backend source code.
