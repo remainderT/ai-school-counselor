@@ -6,10 +6,14 @@ import java.util.List;
 import java.util.Set;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.core.model.QueryPlan;
+import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.tool.LlmChat;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * 查询分析服务实现
@@ -24,11 +28,13 @@ public class QueryAnalysisService {
 
     private final LlmChat llmChat;
     private final RagProperties ragProperties;
+    private final ObjectMapper objectMapper;
 
     public QueryAnalysisService(LlmChat llmChat,
                                 RagProperties ragProperties) {
         this.llmChat = llmChat;
         this.ragProperties = ragProperties;
+        this.objectMapper = new ObjectMapper();
     }
 
     public QueryPlan createPlan(String userQuery) {
@@ -50,6 +56,9 @@ public class QueryAnalysisService {
     }
 
     private List<String> generateRewrites(String userQuery) {
+        if (!StringUtils.hasText(userQuery)) {
+            return List.of();
+        }
         if (!ragProperties.getRewrite().isEnabled()) {
             return List.of();
         }
@@ -60,7 +69,12 @@ public class QueryAnalysisService {
         }
 
         String output = llmChat.generateCompletion(prompt, userQuery, 256);
-        return normalizeRewrites(output, ragProperties.getRewrite().getVariants());
+        int limit = ragProperties.getRewrite().getVariants();
+        List<String> structured = parseStructured(output, limit);
+        if (!structured.isEmpty()) {
+            return structured;
+        }
+        return normalizeRewrites(output, limit);
     }
 
     private String generateHydeAnswer(String userQuery) {
@@ -99,5 +113,50 @@ public class QueryAnalysisService {
             return result.subList(0, limit);
         }
         return result;
+    }
+
+    private List<String> parseStructured(String output, int limit) {
+        if (!StringUtils.hasText(output)) {
+            return List.of();
+        }
+        try {
+            String jsonText = extractJson(output);
+            JsonNode root = objectMapper.readTree(jsonText);
+            JsonNode rewritesNode = root.path("rewrites");
+            if (!rewritesNode.isArray()) {
+                return List.of();
+            }
+            Set<String> rewrites = new LinkedHashSet<>();
+            for (JsonNode item : rewritesNode) {
+                String text = item == null ? null : item.asText();
+                if (StringUtils.hasText(text)) {
+                    rewrites.add(text.trim());
+                }
+                if (limit > 0 && rewrites.size() >= limit) {
+                    break;
+                }
+            }
+            if (rewrites.isEmpty()) {
+                String rewrite = root.path("rewrite").asText("");
+                if (StringUtils.hasText(rewrite)) {
+                    rewrites.add(rewrite.trim());
+                }
+            }
+            return new ArrayList<>(rewrites);
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
+    private String extractJson(String output) {
+        String trimmed = output.trim();
+        if (trimmed.startsWith("```")) {
+            int firstLineEnd = trimmed.indexOf('\n');
+            int lastFence = trimmed.lastIndexOf("```");
+            if (firstLineEnd > 0 && lastFence > firstLineEnd) {
+                return trimmed.substring(firstLineEnd + 1, lastFence).trim();
+            }
+        }
+        return trimmed;
     }
 }

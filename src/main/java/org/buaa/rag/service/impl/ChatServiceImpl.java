@@ -4,19 +4,22 @@ import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.MESSAGE_EMPTY;
 import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.MESSAGE_ID_REQUIRED;
 import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.SCORE_OUT_OF_RANGE;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
-import org.buaa.rag.common.prompt.PromptTemplateLoader;
 import org.buaa.rag.core.online.intent.IntentPatternService;
 import org.buaa.rag.core.online.intent.IntentResolutionService;
 import org.buaa.rag.core.online.intent.IntentRouterService;
@@ -25,14 +28,14 @@ import org.buaa.rag.core.online.cache.SemanticCacheService;
 import org.buaa.rag.core.online.query.QueryAnalysisService;
 import org.buaa.rag.core.online.query.QueryDecomposer;
 import org.buaa.rag.core.online.tool.ToolService;
-import org.buaa.rag.core.online.validation.AnswerValidator;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.core.model.CragDecision;
 import org.buaa.rag.core.model.FeedbackRequest;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.QueryPlan;
 import org.buaa.rag.core.model.RetrievalMatch;
-import org.buaa.rag.dto.resp.ChatRespDTO;
+import org.buaa.rag.dao.entity.ChatTraceMetricDO;
+import org.buaa.rag.dao.mapper.ChatTraceMetricMapper;
 import org.buaa.rag.service.ChatService;
 import org.buaa.rag.service.ConversationService;
 import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorService;
@@ -41,8 +44,11 @@ import org.buaa.rag.core.online.retrieval.MultiChannelRetrievalEngine;
 import org.buaa.rag.tool.LlmChat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
 import lombok.RequiredArgsConstructor;
 
@@ -54,10 +60,11 @@ public class ChatServiceImpl implements ChatService {
 
     private static final String DEFAULT_USER_ID = "anonymous";
     private static final int MAX_REFERENCE_LENGTH = 300;
+    private static final int MAX_SOURCE_REFERENCE_COUNT = 5;
     private static final int DEFAULT_RETRIEVAL_K = 5;
     private static final int MAX_RETRIEVAL_K = 10;
     private static final double MIN_ACCEPTABLE_SCORE = 0.25;
-    private static final String MULTI_INTENT_SYNTHESIS_PROMPT = PromptTemplateLoader.load("chat-multi-intent-synthesis.st");
+    private static final Pattern CITATION_INDEX_PATTERN = Pattern.compile("\\[(\\d+)]");
 
     private final SmartRetrieverService retrieverService;
     private final MultiChannelRetrievalEngine multiChannelRetrievalEngine;
@@ -69,36 +76,92 @@ public class ChatServiceImpl implements ChatService {
     private final ToolService toolService;
     private final IntentPatternService intentPatternService;
     private final QueryDecomposer queryDecomposer;
-    private final AnswerValidator answerValidator;
     private final RagProperties ragProperties;
     private final SemanticCacheService semanticCacheService;
     private final ConversationService conversationService;
-
-    private record ExecutionResult(String response, List<RetrievalMatch> sources) {
-    }
-
-    private record SubQueryExecution(String query,
-                                     IntentDecision decision,
-                                     String answer,
-                                     List<RetrievalMatch> sources) {
-    }
+    private final ChatTraceMetricMapper chatTraceMetricMapper;
+    @Qualifier("chatStreamExecutor")
+    private final Executor chatStreamExecutor;
 
     private record RoutingContext(String rewrittenQuery, List<SubQueryIntent> subQueryIntents) {
+    }
+
+    private record StreamExecutionResult(String response,
+                                         List<RetrievalMatch> sources,
+                                         boolean clarifyTriggered,
+                                         int retrievedCount,
+                                         int retrievalTopK) {
+    }
+
+    private record SubQueryRetrievalResult(String query,
+                                           IntentDecision intent,
+                                           List<RetrievalMatch> sources,
+                                           boolean clarifyTriggered,
+                                           String clarifyMessage,
+                                           int retrievedCount,
+                                           int retrievalTopK) {
     }
 
     @Override
     public Result<Map<String, Object>> handleChatRequest(Map<String, String> payload) {
         String userMessage = payload == null ? null : payload.get("message");
         String userId = payload == null ? DEFAULT_USER_ID : payload.getOrDefault("userId", DEFAULT_USER_ID);
-
         if (isBlankString(userMessage)) {
             throw new ClientException(MESSAGE_EMPTY);
         }
+        String resolvedUserId = isBlankString(userId) ? DEFAULT_USER_ID : userId;
+        String sessionId = conversationService.obtainOrCreateSession(resolvedUserId);
+        List<Map<String, String>> conversationHistory = conversationService.loadConversationContext(sessionId);
 
-        ChatRespDTO aiResponse = handleMessage(userId, userMessage);
+        long rewriteStartNanos = System.nanoTime();
+        RoutingContext routingContext = prepareRoutingContext(resolvedUserId, userMessage);
+        long rewriteLatencyMs = nanosToMillis(System.nanoTime() - rewriteStartNanos);
+
+        List<SubQueryIntent> resolvedSubQueries = routingContext.subQueryIntents();
+        String rewrittenQuery = routingContext.rewrittenQuery();
+
+        StreamExecutionResult executionResult;
+        if (resolvedSubQueries.size() > 1) {
+            executionResult = streamMultiIntentRoute(
+                    resolvedUserId,
+                    userMessage,
+                    resolvedSubQueries,
+                    conversationHistory,
+                    null
+            );
+        } else {
+            IntentDecision primaryIntent = resolvedSubQueries.isEmpty()
+                    ? defaultRagIntent()
+                    : selectPrimaryIntent(resolvedSubQueries.get(0));
+            executionResult = streamIntentRoute(
+                    resolvedUserId,
+                    rewrittenQuery,
+                    primaryIntent,
+                    conversationHistory,
+                    null
+            );
+            recordHighConfidencePattern(primaryIntent, rewrittenQuery);
+        }
+
+        Long messageId = conversationService.appendToHistory(
+                sessionId,
+                resolvedUserId,
+                userMessage,
+                executionResult.response(),
+                executionResult.sources()
+        );
+        persistTraceMetric(
+                sessionId,
+                messageId,
+                resolvedUserId,
+                userMessage,
+                rewriteLatencyMs,
+                executionResult
+        );
         return Results.success(Map.of(
-                "response", aiResponse.getResponse(),
-                "sources", aiResponse.getSources()
+                "response", executionResult.response(),
+                "sources", executionResult.sources(),
+                "messageId", messageId
         ));
     }
 
@@ -118,45 +181,47 @@ public class ChatServiceImpl implements ChatService {
         }
 
         String resolvedUserId = isBlankString(userId) ? DEFAULT_USER_ID : userId;
-        handleMessageStreamInternal(
-                resolvedUserId,
-                message,
-                chunk -> {
-                    try {
-                        emitter.send(chunk);
-                    } catch (Exception e) {
-                        emitter.completeWithError(e);
-                    }
-                },
-                error -> {
-                    try {
-                        emitter.send(SseEmitter.event().name("error")
-                                .data("对话服务异常: " + error.getMessage()));
-                    } catch (Exception ignored) {
-                    } finally {
-                        emitter.completeWithError(error);
-                    }
-                },
-                sources -> {
-                    try {
-                        emitter.send(SseEmitter.event().name("sources").data(sources));
-                    } catch (Exception ignored) {
-                    }
-                },
-                messageId -> {
-                    try {
-                        emitter.send(SseEmitter.event().name("messageId").data(messageId));
-                    } catch (Exception ignored) {
-                    }
-                },
-                () -> {
-                    try {
-                        emitter.send(SseEmitter.event().name("done").data(""));
-                    } catch (Exception ignored) {
-                    } finally {
-                        emitter.complete();
-                    }
-                }
+        CompletableFuture.runAsync(() -> handleMessageStreamInternal(
+                        resolvedUserId,
+                        message,
+                        chunk -> {
+                            try {
+                                emitter.send(SseEmitter.event().name("message").data(chunk));
+                            } catch (Exception e) {
+                                emitter.completeWithError(e);
+                            }
+                        },
+                        error -> {
+                            try {
+                                emitter.send(SseEmitter.event().name("error")
+                                        .data("对话服务异常: " + error.getMessage()));
+                            } catch (Exception ignored) {
+                            } finally {
+                                emitter.completeWithError(error);
+                            }
+                        },
+                        sources -> {
+                            try {
+                                emitter.send(SseEmitter.event().name("sources").data(sources));
+                            } catch (Exception ignored) {
+                            }
+                        },
+                        messageId -> {
+                            try {
+                                emitter.send(SseEmitter.event().name("messageId").data(messageId));
+                            } catch (Exception ignored) {
+                            }
+                        },
+                        () -> {
+                            try {
+                                emitter.send(SseEmitter.event().name("done").data(""));
+                            } catch (Exception ignored) {
+                            } finally {
+                                emitter.complete();
+                            }
+                        }
+                ),
+                chatStreamExecutor
         );
 
         return emitter;
@@ -201,67 +266,85 @@ public class ChatServiceImpl implements ChatService {
         }
 
         retrieverService.recordFeedback(request.getMessageId(), userId, score, request.getComment());
+        chatTraceMetricMapper.update(
+                ChatTraceMetricDO.builder()
+                        .userFeedbackScore(score)
+                        .build(),
+                Wrappers.lambdaUpdate(ChatTraceMetricDO.class)
+                        .eq(ChatTraceMetricDO::getMessageId, request.getMessageId())
+        );
         return Results.success(Map.of("messageId", request.getMessageId(), "score", score));
     }
 
-    private ChatRespDTO handleMessage(String userId, String userMessage) {
-        log.info("处理用户消息 - 用户: {}", userId);
+    @Override
+    public Result<Map<String, Object>> queryTraceMetricSummary(int days, String userId) {
+        int windowDays = Math.max(1, Math.min(days, 365));
+        LocalDateTime startTime = LocalDateTime.now().minusDays(windowDays);
 
-        try {
-            String sessionId = conversationService.obtainOrCreateSession(userId);
-            log.info("会话ID: {}, 用户: {}", sessionId, userId);
-
-            List<Map<String, String>> conversationHistory = conversationService.loadConversationContext(sessionId);
-            RoutingContext routingContext = prepareRoutingContext(userId, userMessage);
-            List<SubQueryIntent> resolvedSubQueries = routingContext.subQueryIntents();
-            String rewrittenQuery = routingContext.rewrittenQuery();
-            if (resolvedSubQueries.size() > 1) {
-                log.info("检测到多意图问题，子问题数: {}", resolvedSubQueries.size());
-                ExecutionResult multiResult = executeMultiIntentRoute(
-                        userId,
-                        userMessage,
-                        resolvedSubQueries,
-                        conversationHistory
-                );
-                Long messageId = conversationService.appendToHistory(
-                        sessionId,
-                        userId,
-                        userMessage,
-                        multiResult.response(),
-                        multiResult.sources()
-                );
-                return new ChatRespDTO(multiResult.response(), multiResult.sources(), messageId);
-            }
-
-            IntentDecision primaryIntent = resolvedSubQueries.isEmpty()
-                    ? defaultRagIntent()
-                    : selectPrimaryIntent(resolvedSubQueries.get(0));
-            ExecutionResult singleResult = executeIntentRoute(
-                    userId,
-                    rewrittenQuery,
-                    primaryIntent,
-                    conversationHistory
-            );
-            Long messageId = conversationService.appendToHistory(
-                    sessionId,
-                    userId,
-                    userMessage,
-                    singleResult.response(),
-                    singleResult.sources()
-            );
-            recordHighConfidencePattern(primaryIntent, rewrittenQuery);
-
-            log.info("消息处理完成 - 用户: {}", userId);
-            return new ChatRespDTO(singleResult.response(), singleResult.sources(), messageId);
-
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("响应生成被中断", e);
-        } catch (Exception e) {
-            log.error("消息处理失败: {}", e.getMessage(), e);
-            throw new RuntimeException("对话处理异常: " + e.getMessage(), e);
+        var wrapper = Wrappers.lambdaQuery(ChatTraceMetricDO.class)
+                .ge(ChatTraceMetricDO::getCreatedAt, startTime)
+                .orderByDesc(ChatTraceMetricDO::getCreatedAt);
+        if (!isBlankString(userId)) {
+            wrapper.eq(ChatTraceMetricDO::getUserId, userId.trim());
         }
+        List<ChatTraceMetricDO> rows = chatTraceMetricMapper.selectList(wrapper);
+        if (rows == null || rows.isEmpty()) {
+            return Results.success(Map.of(
+                    "days", windowDays,
+                    "sampleSize", 0,
+                    "avgRewriteLatencyMs", 0.0,
+                    "avgRetrievalHitRate", 0.0,
+                    "avgCitationRate", 0.0,
+                    "clarifyTriggerRate", 0.0,
+                    "avgFeedbackScore", 0.0
+            ));
+        }
+
+        double avgRewriteLatencyMs = rows.stream()
+                .map(ChatTraceMetricDO::getRewriteLatencyMs)
+                .filter(v -> v != null)
+                .mapToLong(Long::longValue)
+                .average()
+                .orElse(0.0);
+        double avgRetrievalHitRate = rows.stream()
+                .map(ChatTraceMetricDO::getRetrievalHitRate)
+                .filter(v -> v != null)
+                .mapToDouble(Double::doubleValue)
+                .average()
+                .orElse(0.0);
+        double avgCitationRate = rows.stream()
+                .map(ChatTraceMetricDO::getCitationRate)
+                .filter(v -> v != null)
+                .mapToDouble(Double::doubleValue)
+                .average()
+                .orElse(0.0);
+        double clarifyTriggerRate = rows.stream()
+                .map(ChatTraceMetricDO::getClarifyTriggered)
+                .filter(v -> v != null)
+                .mapToInt(Integer::intValue)
+                .average()
+                .orElse(0.0);
+        List<Integer> feedbackScores = rows.stream()
+                .map(ChatTraceMetricDO::getUserFeedbackScore)
+                .filter(v -> v != null)
+                .toList();
+        double avgFeedbackScore = feedbackScores.stream()
+                .mapToInt(Integer::intValue)
+                .average()
+                .orElse(0.0);
+
+        return Results.success(Map.of(
+                "days", windowDays,
+                "sampleSize", rows.size(),
+                "avgRewriteLatencyMs", round4(avgRewriteLatencyMs),
+                "avgRetrievalHitRate", round4(avgRetrievalHitRate),
+                "avgCitationRate", round4(avgCitationRate),
+                "clarifyTriggerRate", round4(clarifyTriggerRate),
+                "avgFeedbackScore", round4(avgFeedbackScore),
+                "feedbackCoverage", round4(feedbackScores.size() * 1.0 / rows.size())
+        ));
     }
+
 
     private void handleMessageStreamInternal(String userId,
                                              String userMessage,
@@ -281,15 +364,18 @@ public class ChatServiceImpl implements ChatService {
             }
 
             List<Map<String, String>> conversationHistory = conversationService.loadConversationContext(sessionId);
+            long rewriteStartNanos = System.nanoTime();
             RoutingContext routingContext = prepareRoutingContext(userId, userMessage);
+            long rewriteLatencyMs = nanosToMillis(System.nanoTime() - rewriteStartNanos);
             List<SubQueryIntent> resolvedSubQueries = routingContext.subQueryIntents();
             String rewrittenQuery = routingContext.rewrittenQuery();
             if (resolvedSubQueries.size() > 1) {
-                ExecutionResult multiResult = executeMultiIntentRoute(
+                StreamExecutionResult multiResult = streamMultiIntentRoute(
                         userId,
                         userMessage,
                         resolvedSubQueries,
-                        conversationHistory
+                        conversationHistory,
+                        chunkHandler
                 );
                 conversationService.completeAssistantMessage(
                         sessionId,
@@ -297,9 +383,14 @@ public class ChatServiceImpl implements ChatService {
                         multiResult.response(),
                         multiResult.sources()
                 );
-                if (chunkHandler != null) {
-                    chunkHandler.accept(multiResult.response());
-                }
+                persistTraceMetric(
+                        sessionId,
+                        assistantMessageId,
+                        userId,
+                        userMessage,
+                        rewriteLatencyMs,
+                        multiResult
+                );
                 if (sourcesHandler != null) {
                     sourcesHandler.accept(multiResult.sources());
                 }
@@ -312,144 +403,34 @@ public class ChatServiceImpl implements ChatService {
             IntentDecision primaryIntent = resolvedSubQueries.isEmpty()
                     ? defaultRagIntent()
                     : selectPrimaryIntent(resolvedSubQueries.get(0));
-            if (primaryIntent.getAction() == IntentDecision.Action.CLARIFY
-                    || primaryIntent.getAction() == IntentDecision.Action.ROUTE_TOOL) {
-                ExecutionResult immediate = executeIntentRoute(
-                        userId,
-                        rewrittenQuery,
-                        primaryIntent,
-                        conversationHistory
-                );
-                conversationService.completeAssistantMessage(
-                        sessionId,
-                        assistantMessageId,
-                        immediate.response(),
-                        immediate.sources()
-                );
-                if (chunkHandler != null) {
-                    chunkHandler.accept(immediate.response());
-                }
-                if (sourcesHandler != null) {
-                    sourcesHandler.accept(immediate.sources());
-                }
-                if (completionHandler != null) {
-                    completionHandler.run();
-                }
-                return;
-            }
-
-            var cacheHit = semanticCacheService.find(rewrittenQuery);
-            if (cacheHit.isPresent()) {
-                String response = cacheHit.get().response();
-                List<RetrievalMatch> cachedSources = cacheHit.get().sources();
-                conversationService.completeAssistantMessage(sessionId, assistantMessageId, response, cachedSources);
-                if (chunkHandler != null) {
-                    chunkHandler.accept(response);
-                }
-                if (sourcesHandler != null) {
-                    sourcesHandler.accept(cachedSources);
-                }
-                if (completionHandler != null) {
-                    completionHandler.run();
-                }
-                return;
-            }
-
-            String promptTemplate = resolvePromptTemplate(primaryIntent);
-            int retrievalK = determineRetrievalK(rewrittenQuery);
-            List<RetrievalMatch> retrievalResults = retrieveByStrategy(userId, rewrittenQuery, retrievalK, primaryIntent);
-            String referenceContext = constructReferenceContext(retrievalResults);
-            StringBuilder responseBuilder = new StringBuilder();
-
-            CragDecision decision = postProcessorService.evaluate(rewrittenQuery, retrievalResults);
-            if (decision.getAction() == CragDecision.Action.CLARIFY
-                    || decision.getAction() == CragDecision.Action.NO_ANSWER) {
-                String response = decision.getMessage();
-                responseBuilder.append(response);
-                if (chunkHandler != null) {
-                    chunkHandler.accept(response);
-                }
-                conversationService.completeAssistantMessage(sessionId, assistantMessageId, response, retrievalResults);
-                if (sourcesHandler != null) {
-                    sourcesHandler.accept(retrievalResults);
-                }
-                if (completionHandler != null) {
-                    completionHandler.run();
-                }
-                return;
-            }
-
-            if (decision.getAction() == CragDecision.Action.REFINE) {
-                List<RetrievalMatch> fallback = runFallbackRetrieval(
-                        userId,
-                        rewrittenQuery,
-                        retrievalK
-                );
-                if (!fallback.isEmpty()) {
-                    retrievalResults = fallback;
-                    referenceContext = constructReferenceContext(retrievalResults);
-                } else {
-                    String response = postProcessorService.noResultMessage();
-                    responseBuilder.append(response);
-                    if (chunkHandler != null) {
-                        chunkHandler.accept(response);
-                    }
-                    conversationService.completeAssistantMessage(sessionId, assistantMessageId, response, retrievalResults);
-                    if (sourcesHandler != null) {
-                        sourcesHandler.accept(retrievalResults);
-                    }
-                    if (completionHandler != null) {
-                        completionHandler.run();
-                    }
-                    return;
-                }
-            }
-
-            List<RetrievalMatch> finalResults = retrievalResults;
-            Long streamMessageId = assistantMessageId;
-            String streamSessionId = sessionId;
-            java.util.concurrent.atomic.AtomicBoolean streamFailed = new java.util.concurrent.atomic.AtomicBoolean(false);
-
-            llmService.streamResponse(
+            StreamExecutionResult singleResult = streamIntentRoute(
+                    userId,
                     rewrittenQuery,
-                    applyPromptTemplate(promptTemplate, referenceContext),
+                    primaryIntent,
                     conversationHistory,
-                    chunk -> {
-                        responseBuilder.append(chunk);
-                        if (chunkHandler != null) {
-                            chunkHandler.accept(chunk);
-                        }
-                    },
-                    error -> {
-                        streamFailed.set(true);
-                        conversationService.failAssistantMessage(
-                                streamSessionId,
-                                streamMessageId,
-                                "对话服务异常，请稍后重试。"
-                        );
-                        if (errorHandler != null) {
-                            errorHandler.accept(error);
-                        }
-                    },
-                    () -> {
-                        if (streamFailed.get()) {
-                            if (completionHandler != null) {
-                                completionHandler.run();
-                            }
-                            return;
-                        }
-                        String finalResponse = responseBuilder.toString();
-                        conversationService.completeAssistantMessage(streamSessionId, streamMessageId, finalResponse, finalResults);
-                        semanticCacheService.put(rewrittenQuery, finalResponse, finalResults);
-                        recordHighConfidencePattern(primaryIntent, rewrittenQuery);
-                        if (sourcesHandler != null) {
-                            sourcesHandler.accept(finalResults);
-                        }
-                        if (completionHandler != null) {
-                            completionHandler.run();
-                        }
-                    }
+                    chunkHandler
             );
+            conversationService.completeAssistantMessage(
+                    sessionId,
+                    assistantMessageId,
+                    singleResult.response(),
+                    singleResult.sources()
+            );
+            recordHighConfidencePattern(primaryIntent, rewrittenQuery);
+            persistTraceMetric(
+                    sessionId,
+                    assistantMessageId,
+                    userId,
+                    userMessage,
+                    rewriteLatencyMs,
+                    singleResult
+            );
+            if (sourcesHandler != null) {
+                sourcesHandler.accept(singleResult.sources());
+            }
+            if (completionHandler != null) {
+                completionHandler.run();
+            }
         } catch (Exception e) {
             if (sessionId != null && assistantMessageId != null) {
                 conversationService.failAssistantMessage(
@@ -464,49 +445,277 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
-    private ExecutionResult executeIntentRoute(String userId,
-                                               String query,
-                                               IntentDecision intent,
-                                               List<Map<String, String>> conversationHistory) throws InterruptedException {
-        if (intent == null || intent.getAction() == null) {
-            return executeRagRoute(userId, query, IntentDecision.builder()
-                    .action(IntentDecision.Action.ROUTE_RAG)
-                    .strategy(IntentDecision.Strategy.HYBRID)
-                    .build(), conversationHistory);
+    private StreamExecutionResult streamMultiIntentRoute(String userId,
+                                                         String originalQuery,
+                                                         List<SubQueryIntent> resolvedSubQueries,
+                                                         List<Map<String, String>> conversationHistory,
+                                                         Consumer<String> chunkHandler) {
+        List<SubQueryIntent> validSubQueries = resolvedSubQueries == null
+                ? List.of()
+                : resolvedSubQueries.stream()
+                .filter(item -> item != null && !isBlankString(item.subQuery()))
+                .toList();
+
+        if (validSubQueries.isEmpty()) {
+            return streamIntentRoute(
+                    userId,
+                    originalQuery,
+                    defaultRagIntent(),
+                    conversationHistory,
+                    chunkHandler
+            );
         }
 
-        if (intent.getAction() == IntentDecision.Action.CLARIFY) {
-            String response = intent.getClarifyQuestion() != null
-                    ? intent.getClarifyQuestion()
-                    : "需要更多信息，请具体描述。";
-            return new ExecutionResult(response, List.of());
+        boolean containsNonRagAction = validSubQueries.stream()
+                .map(this::selectPrimaryIntent)
+                .anyMatch(intent -> intent == null
+                        || intent.getAction() == null
+                        || intent.getAction() != IntentDecision.Action.ROUTE_RAG);
+        if (containsNonRagAction) {
+            return streamMultiIntentRouteLegacy(
+                    userId,
+                    originalQuery,
+                    validSubQueries,
+                    conversationHistory,
+                    chunkHandler
+            );
         }
 
-        if (intent.getAction() == IntentDecision.Action.ROUTE_TOOL) {
-            String response = toolService.execute(userId, query, intent);
-            return new ExecutionResult(response, List.of());
+        List<CompletableFuture<SubQueryRetrievalResult>> futures = validSubQueries.stream()
+                .map(subQueryIntent -> CompletableFuture.supplyAsync(
+                        () -> retrieveSubQueryContext(userId, subQueryIntent),
+                        chatStreamExecutor
+                ))
+                .toList();
+
+        List<SubQueryRetrievalResult> retrievalResults = futures.stream()
+                .map(future -> {
+                    try {
+                        return future.join();
+                    } catch (Exception e) {
+                        log.warn("多子问题并行检索失败: {}", e.getMessage());
+                        return null;
+                    }
+                })
+                .filter(result -> result != null)
+                .toList();
+
+        List<RetrievalMatch> mergedSources = retrievalResults.stream()
+                .flatMap(result -> result.sources().stream())
+                .toList();
+        boolean clarifyTriggered = retrievalResults.stream().anyMatch(SubQueryRetrievalResult::clarifyTriggered);
+        String clarifyMessage = retrievalResults.stream()
+                .map(SubQueryRetrievalResult::clarifyMessage)
+                .filter(text -> !isBlankString(text))
+                .findFirst()
+                .orElse(null);
+        int retrievedCount = retrievalResults.stream()
+                .mapToInt(SubQueryRetrievalResult::retrievedCount)
+                .sum();
+        int retrievalTopK = retrievalResults.stream()
+                .mapToInt(SubQueryRetrievalResult::retrievalTopK)
+                .sum();
+
+        if (mergedSources.isEmpty()) {
+            if (!isBlankString(clarifyMessage)) {
+                if (chunkHandler != null) {
+                    chunkHandler.accept(clarifyMessage);
+                }
+                return new StreamExecutionResult(clarifyMessage, List.of(), true, 0, retrievalTopK);
+            }
+            return streamIntentRoute(
+                    userId,
+                    originalQuery,
+                    defaultRagIntent(),
+                    conversationHistory,
+                    chunkHandler
+            );
         }
 
-        return executeRagRoute(userId, query, intent, conversationHistory);
+        List<RetrievalMatch> deduplicated = deduplicateSources(mergedSources);
+        int aggregateTopK = determineRetrievalK(originalQuery);
+        List<RetrievalMatch> reranked = postProcessorService.rerank(originalQuery, deduplicated, aggregateTopK);
+        CragDecision mergedDecision = postProcessorService.evaluate(originalQuery, reranked);
+        if (mergedDecision.getAction() == CragDecision.Action.CLARIFY
+                || mergedDecision.getAction() == CragDecision.Action.NO_ANSWER) {
+            String mergedResponse = appendSourceReferences(mergedDecision.getMessage(), reranked);
+            if (chunkHandler != null) {
+                chunkHandler.accept(mergedResponse);
+            }
+            boolean triggered = mergedDecision.getAction() == CragDecision.Action.CLARIFY;
+            return new StreamExecutionResult(mergedResponse, reranked, triggered, reranked.size(), aggregateTopK);
+        }
+        if (mergedDecision.getAction() == CragDecision.Action.REFINE) {
+            List<RetrievalMatch> fallback = runFallbackRetrieval(userId, originalQuery, aggregateTopK);
+            if (!fallback.isEmpty()) {
+                reranked = fallback;
+            } else {
+                String mergedResponse = appendSourceReferences(postProcessorService.noResultMessage(), reranked);
+                if (chunkHandler != null) {
+                    chunkHandler.accept(mergedResponse);
+                }
+                return new StreamExecutionResult(mergedResponse, reranked, false, reranked.size(), aggregateTopK);
+            }
+        }
+
+        String response = generateRagAnswer(
+                originalQuery,
+                resolvePromptTemplate(selectPrimaryIntent(validSubQueries.get(0))),
+                conversationHistory,
+                reranked,
+                chunkHandler
+        );
+        semanticCacheService.put(originalQuery, response, reranked);
+        int safeRetrievedCount = Math.max(retrievedCount, reranked.size());
+        int safeRetrievalTopK = Math.max(retrievalTopK, aggregateTopK);
+        return new StreamExecutionResult(response, reranked, clarifyTriggered, safeRetrievedCount, safeRetrievalTopK);
     }
 
-    private ExecutionResult executeRagRoute(String userId,
-                                            String query,
-                                            IntentDecision intent,
-                                            List<Map<String, String>> conversationHistory) throws InterruptedException {
-        var cacheHit = semanticCacheService.find(query);
-        if (cacheHit.isPresent()) {
-            return new ExecutionResult(cacheHit.get().response(), cacheHit.get().sources());
+    private StreamExecutionResult streamMultiIntentRouteLegacy(String userId,
+                                                               String originalQuery,
+                                                               List<SubQueryIntent> resolvedSubQueries,
+                                                               List<Map<String, String>> conversationHistory,
+                                                               Consumer<String> chunkHandler) {
+        List<RetrievalMatch> mergedSources = new ArrayList<>();
+        StringBuilder mergedResponse = new StringBuilder();
+        int validCount = 0;
+        boolean clarifyTriggered = false;
+        int retrievedCount = 0;
+        int retrievalTopK = 0;
+
+        for (SubQueryIntent subQueryIntent : resolvedSubQueries) {
+            if (subQueryIntent == null || isBlankString(subQueryIntent.subQuery())) {
+                continue;
+            }
+            validCount++;
+            String header = (mergedResponse.length() == 0 ? "" : "\n\n")
+                    + "【子问题" + validCount + "】" + subQueryIntent.subQuery() + "\n";
+            mergedResponse.append(header);
+            if (chunkHandler != null) {
+                chunkHandler.accept(header);
+            }
+
+            IntentDecision primaryIntent = selectPrimaryIntent(subQueryIntent);
+            StreamExecutionResult subResult = streamIntentRoute(
+                    userId,
+                    subQueryIntent.subQuery(),
+                    primaryIntent,
+                    conversationHistory,
+                    chunkHandler
+            );
+            mergedResponse.append(subResult.response());
+            mergedSources.addAll(subResult.sources());
+            clarifyTriggered = clarifyTriggered || subResult.clarifyTriggered();
+            retrievedCount += subResult.retrievedCount();
+            retrievalTopK += subResult.retrievalTopK();
+            recordHighConfidencePattern(primaryIntent, subQueryIntent.subQuery());
         }
 
-        String promptTemplate = resolvePromptTemplate(intent);
+        if (validCount == 0) {
+            return streamIntentRoute(
+                    userId,
+                    originalQuery,
+                    defaultRagIntent(),
+                    conversationHistory,
+                    chunkHandler
+            );
+        }
+
+        List<RetrievalMatch> deduplicated = deduplicateSources(mergedSources);
+        String rawMerged = mergedResponse.toString();
+        String finalResponse = appendSourceReferences(rawMerged, deduplicated);
+        if (!finalResponse.equals(rawMerged)
+                && finalResponse.startsWith(rawMerged)
+                && chunkHandler != null) {
+            chunkHandler.accept(finalResponse.substring(rawMerged.length()));
+        }
+        semanticCacheService.put(originalQuery, finalResponse, deduplicated);
+        return new StreamExecutionResult(finalResponse, deduplicated, clarifyTriggered, retrievedCount, retrievalTopK);
+    }
+
+    private SubQueryRetrievalResult retrieveSubQueryContext(String userId, SubQueryIntent subQueryIntent) {
+        String query = subQueryIntent.subQuery();
+        IntentDecision primaryIntent = selectPrimaryIntent(subQueryIntent);
         int retrievalK = determineRetrievalK(query);
-        List<RetrievalMatch> retrievalResults = retrieveByStrategy(userId, query, retrievalK, intent);
+        List<RetrievalMatch> retrievalResults = retrieveByStrategy(userId, query, retrievalK, primaryIntent);
+        CragDecision decision = postProcessorService.evaluate(query, retrievalResults);
+
+        boolean clarifyTriggered = false;
+        String clarifyMessage = null;
+        if (decision.getAction() == CragDecision.Action.CLARIFY) {
+            clarifyTriggered = true;
+            clarifyMessage = decision.getMessage();
+        } else if (decision.getAction() == CragDecision.Action.REFINE) {
+            List<RetrievalMatch> fallback = runFallbackRetrieval(userId, query, retrievalK);
+            if (!fallback.isEmpty()) {
+                retrievalResults = fallback;
+            }
+        } else if (decision.getAction() == CragDecision.Action.NO_ANSWER) {
+            retrievalResults = List.of();
+        }
+
+        recordHighConfidencePattern(primaryIntent, query);
+        return new SubQueryRetrievalResult(
+                query,
+                primaryIntent,
+                retrievalResults == null ? List.of() : retrievalResults,
+                clarifyTriggered,
+                clarifyMessage,
+                retrievalResults == null ? 0 : retrievalResults.size(),
+                retrievalK
+        );
+    }
+
+    private StreamExecutionResult streamIntentRoute(String userId,
+                                                    String query,
+                                                    IntentDecision intent,
+                                                    List<Map<String, String>> conversationHistory,
+                                                    Consumer<String> chunkHandler) {
+        IntentDecision resolvedIntent = intent == null || intent.getAction() == null
+                ? defaultRagIntent()
+                : intent;
+
+        if (resolvedIntent.getAction() == IntentDecision.Action.CLARIFY) {
+            String response = resolvedIntent.getClarifyQuestion() != null
+                    ? resolvedIntent.getClarifyQuestion()
+                    : "需要更多信息，请具体描述。";
+            if (chunkHandler != null) {
+                chunkHandler.accept(response);
+            }
+            return new StreamExecutionResult(response, List.of(), true, 0, 0);
+        }
+
+        if (resolvedIntent.getAction() == IntentDecision.Action.ROUTE_TOOL) {
+            String response = toolService.execute(userId, query, resolvedIntent);
+            if (chunkHandler != null) {
+                chunkHandler.accept(response);
+            }
+            return new StreamExecutionResult(response, List.of(), false, 0, 0);
+        }
+
+        var cacheHit = semanticCacheService.find(query);
+        if (cacheHit.isPresent()) {
+            List<RetrievalMatch> cachedSources = cacheHit.get().sources();
+            String response = appendSourceReferences(cacheHit.get().response(), cachedSources);
+            if (chunkHandler != null) {
+                chunkHandler.accept(response);
+            }
+            return new StreamExecutionResult(response, cachedSources, false, 0, 0);
+        }
+
+        String promptTemplate = resolvePromptTemplate(resolvedIntent);
+        int retrievalK = determineRetrievalK(query);
+        List<RetrievalMatch> retrievalResults = retrieveByStrategy(userId, query, retrievalK, resolvedIntent);
 
         CragDecision decision = postProcessorService.evaluate(query, retrievalResults);
         if (decision.getAction() == CragDecision.Action.CLARIFY
                 || decision.getAction() == CragDecision.Action.NO_ANSWER) {
-            return new ExecutionResult(decision.getMessage(), retrievalResults);
+            String response = appendSourceReferences(decision.getMessage(), retrievalResults);
+            if (chunkHandler != null) {
+                chunkHandler.accept(response);
+            }
+            boolean triggered = decision.getAction() == CragDecision.Action.CLARIFY;
+            return new StreamExecutionResult(response, retrievalResults, triggered, retrievalResults.size(), retrievalK);
         }
 
         if (decision.getAction() == CragDecision.Action.REFINE) {
@@ -514,55 +723,59 @@ public class ChatServiceImpl implements ChatService {
             if (!fallback.isEmpty()) {
                 retrievalResults = fallback;
             } else {
-                return new ExecutionResult(postProcessorService.noResultMessage(), retrievalResults);
+                String response = appendSourceReferences(postProcessorService.noResultMessage(), retrievalResults);
+                if (chunkHandler != null) {
+                    chunkHandler.accept(response);
+                }
+                return new StreamExecutionResult(response, retrievalResults, false, retrievalResults.size(), retrievalK);
             }
         }
 
-        String referenceContext = constructReferenceContext(retrievalResults);
-        String response = generateAnswerBlocking(
+        String finalResponse = generateRagAnswer(
                 query,
-                applyPromptTemplate(promptTemplate, referenceContext),
-                conversationHistory
+                promptTemplate,
+                conversationHistory,
+                retrievalResults,
+                chunkHandler
         );
-
-        if (answerValidator.evaluate(query, response) == AnswerValidator.Verdict.REFINE) {
-            response = response + "\n（提示：资料可能不足，如需更精确请补充关键信息）";
-        }
-
-        semanticCacheService.put(query, response, retrievalResults);
-        return new ExecutionResult(response, retrievalResults);
+        semanticCacheService.put(query, finalResponse, retrievalResults);
+        return new StreamExecutionResult(finalResponse, retrievalResults, false, retrievalResults.size(), retrievalK);
     }
 
-    private ExecutionResult executeMultiIntentRoute(String userId,
-                                                    String originalQuery,
-                                                    List<SubQueryIntent> resolvedSubQueries,
-                                                    List<Map<String, String>> conversationHistory) throws InterruptedException {
-        List<SubQueryExecution> executions = new ArrayList<>();
-        List<RetrievalMatch> mergedSources = new ArrayList<>();
+    private String generateRagAnswer(String query,
+                                     String promptTemplate,
+                                     List<Map<String, String>> conversationHistory,
+                                     List<RetrievalMatch> retrievalResults,
+                                     Consumer<String> chunkHandler) {
+        String referenceContext = constructReferenceContext(retrievalResults);
 
-        for (SubQueryIntent subQueryIntent : resolvedSubQueries) {
-            if (subQueryIntent == null || subQueryIntent.subQuery() == null || subQueryIntent.subQuery().isBlank()) {
-                continue;
-            }
-            IntentDecision primaryIntent = selectPrimaryIntent(subQueryIntent);
-            ExecutionResult subResult = executeIntentRoute(userId, subQueryIntent.subQuery(), primaryIntent, conversationHistory);
-            executions.add(new SubQueryExecution(subQueryIntent.subQuery(), primaryIntent, subResult.response(), subResult.sources()));
-            mergedSources.addAll(subResult.sources());
-            recordHighConfidencePattern(primaryIntent, subQueryIntent.subQuery());
+        StringBuilder responseBuilder = new StringBuilder();
+        Throwable[] streamError = new Throwable[1];
+        llmService.streamResponse(
+                query,
+                applyPromptTemplate(promptTemplate, referenceContext),
+                conversationHistory,
+                chunk -> {
+                    responseBuilder.append(chunk);
+                    if (chunkHandler != null) {
+                        chunkHandler.accept(chunk);
+                    }
+                },
+                error -> streamError[0] = error,
+                () -> {
+                }
+        );
+        if (streamError[0] != null) {
+            throw new RuntimeException("AI服务异常: " + streamError[0].getMessage(), streamError[0]);
         }
-
-        if (executions.isEmpty()) {
-            IntentDecision fallbackIntent = defaultRagIntent();
-            return executeIntentRoute(userId, originalQuery, fallbackIntent, conversationHistory);
+        String rawResponse = responseBuilder.toString();
+        String finalResponse = appendSourceReferences(rawResponse, retrievalResults);
+        if (!finalResponse.equals(rawResponse)
+                && finalResponse.startsWith(rawResponse)
+                && chunkHandler != null) {
+            chunkHandler.accept(finalResponse.substring(rawResponse.length()));
         }
-
-        List<RetrievalMatch> deduplicated = deduplicateSources(mergedSources);
-        String finalResponse = synthesizeMultiIntentAnswer(originalQuery, executions);
-        if (answerValidator.evaluate(originalQuery, finalResponse) == AnswerValidator.Verdict.REFINE) {
-            finalResponse = finalResponse + "\n（提示：部分子问题信息不足，如需更精确请补充细节）";
-        }
-        semanticCacheService.put(originalQuery, finalResponse, deduplicated);
-        return new ExecutionResult(finalResponse, deduplicated);
+        return finalResponse;
     }
 
     private RoutingContext prepareRoutingContext(String userId, String userMessage) {
@@ -581,108 +794,6 @@ public class ChatServiceImpl implements ChatService {
             resolvedSubQueries = List.of(new SubQueryIntent(rewrittenQuery, List.of(defaultRagIntent())));
         }
         return new RoutingContext(rewrittenQuery, resolvedSubQueries);
-    }
-
-    private String synthesizeMultiIntentAnswer(String originalQuery, List<SubQueryExecution> executions) {
-        StringBuilder userPrompt = new StringBuilder();
-        userPrompt.append("原始问题：").append(originalQuery).append("\n\n");
-        userPrompt.append("子问题处理结果：\n");
-        for (int i = 0; i < executions.size(); i++) {
-            SubQueryExecution execution = executions.get(i);
-            userPrompt.append("[").append(i + 1).append("] 子问题：").append(execution.query()).append("\n");
-            userPrompt.append("路由动作：").append(renderAction(execution.decision())).append("\n");
-            userPrompt.append("子结论：").append(execution.answer()).append("\n");
-            String sourceSummary = summarizeSources(execution.sources(), 2);
-            if (!sourceSummary.isBlank()) {
-                userPrompt.append("证据：").append(sourceSummary).append("\n");
-            }
-            userPrompt.append("\n");
-        }
-
-        String synthesized = llmService.generateCompletion(
-                MULTI_INTENT_SYNTHESIS_PROMPT,
-                userPrompt.toString(),
-                768
-        );
-        if (synthesized != null && !synthesized.isBlank()) {
-            return synthesized;
-        }
-        return buildFallbackSynthesis(executions);
-    }
-
-    private String buildFallbackSynthesis(List<SubQueryExecution> executions) {
-        StringBuilder builder = new StringBuilder("我将你的问题拆分处理如下：\n");
-        for (int i = 0; i < executions.size(); i++) {
-            SubQueryExecution execution = executions.get(i);
-            builder.append(i + 1)
-                    .append(". ")
-                    .append(execution.query())
-                    .append(" -> ")
-                    .append(execution.answer())
-                    .append("\n");
-        }
-        return builder.toString().trim();
-    }
-
-    private String summarizeSources(List<RetrievalMatch> sources, int limit) {
-        if (sources == null || sources.isEmpty() || limit <= 0) {
-            return "";
-        }
-        StringBuilder builder = new StringBuilder();
-        int max = Math.min(limit, sources.size());
-        for (int i = 0; i < max; i++) {
-            RetrievalMatch source = sources.get(i);
-            if (i > 0) {
-                builder.append("；");
-            }
-            builder.append("[")
-                    .append(i + 1)
-                    .append("] ")
-                    .append(getSourceLabel(source))
-                    .append(": ")
-                    .append(truncateText(source.getTextContent(), 80));
-        }
-        return builder.toString();
-    }
-
-    private String renderAction(IntentDecision decision) {
-        if (decision == null || decision.getAction() == null) {
-            return "UNKNOWN";
-        }
-        return switch (decision.getAction()) {
-            case ROUTE_RAG -> "ROUTE_RAG";
-            case ROUTE_TOOL -> "ROUTE_TOOL";
-            case CLARIFY -> "CLARIFY";
-        };
-    }
-
-    private String generateAnswerBlocking(String userQuery,
-                                          String referenceContext,
-                                          List<Map<String, String>> conversationHistory) throws InterruptedException {
-        StringBuilder responseBuilder = new StringBuilder();
-        CountDownLatch completionLatch = new CountDownLatch(1);
-        AtomicReference<Throwable> errorRef = new AtomicReference<>();
-
-        llmService.streamResponse(
-                userQuery,
-                referenceContext,
-                conversationHistory,
-                responseBuilder::append,
-                error -> {
-                    log.error("LLM服务错误: {}", error.getMessage(), error);
-                    errorRef.set(error);
-                    completionLatch.countDown();
-                },
-                completionLatch::countDown
-        );
-
-        if (!completionLatch.await(120, TimeUnit.SECONDS)) {
-            throw new RuntimeException("AI响应超时，请稍后重试");
-        }
-        if (errorRef.get() != null) {
-            throw new RuntimeException("AI服务异常: " + errorRef.get().getMessage(), errorRef.get());
-        }
-        return responseBuilder.toString();
     }
 
     private void recordHighConfidencePattern(IntentDecision intent, String query) {
@@ -976,6 +1087,103 @@ public class ChatServiceImpl implements ChatService {
         return match.getSourceFileName() != null ?
                 match.getSourceFileName() :
                 "未知来源";
+    }
+
+    private String appendSourceReferences(String response, List<RetrievalMatch> sources) {
+        String safeResponse = response == null ? "" : response;
+        if (sources == null || sources.isEmpty()) {
+            return safeResponse;
+        }
+        if (safeResponse.contains("参考来源：")) {
+            return safeResponse;
+        }
+
+        List<RetrievalMatch> deduplicated = deduplicateSources(sources);
+        if (deduplicated.isEmpty()) {
+            return safeResponse;
+        }
+
+        StringBuilder builder = new StringBuilder(safeResponse);
+        if (!safeResponse.isEmpty()) {
+            builder.append("\n\n");
+        }
+        builder.append("参考来源：\n");
+
+        int max = Math.min(MAX_SOURCE_REFERENCE_COUNT, deduplicated.size());
+        for (int i = 0; i < max; i++) {
+            RetrievalMatch source = deduplicated.get(i);
+            builder.append("[")
+                    .append(i + 1)
+                    .append("] ")
+                    .append(getSourceLabel(source));
+            if (source.getChunkId() != null) {
+                builder.append("（片段#").append(source.getChunkId()).append("）");
+            }
+            builder.append("\n");
+        }
+
+        return builder.toString();
+    }
+
+    private void persistTraceMetric(String sessionId,
+                                    Long messageId,
+                                    String userId,
+                                    String query,
+                                    long rewriteLatencyMs,
+                                    StreamExecutionResult result) {
+        if (messageId == null || result == null) {
+            return;
+        }
+        try {
+            ChatTraceMetricDO metric = ChatTraceMetricDO.builder()
+                    .sessionId(sessionId)
+                    .messageId(messageId)
+                    .userId(isBlankString(userId) ? DEFAULT_USER_ID : userId.trim())
+                    .queryText(query)
+                    .rewriteLatencyMs(Math.max(0, rewriteLatencyMs))
+                    .retrievalHitRate(computeRetrievalHitRate(result.retrievedCount(), result.retrievalTopK()))
+                    .citationRate(computeCitationRate(result.response(), result.sources()))
+                    .clarifyTriggered(result.clarifyTriggered() ? 1 : 0)
+                    .build();
+            chatTraceMetricMapper.insert(metric);
+        } catch (Exception e) {
+            log.debug("写入在线链路指标失败, messageId={}, error={}", messageId, e.getMessage());
+        }
+    }
+
+    private double computeRetrievalHitRate(int retrievedCount, int retrievalTopK) {
+        if (retrievalTopK <= 0) {
+            return 0.0;
+        }
+        double rate = retrievedCount * 1.0 / retrievalTopK;
+        return Math.max(0.0, Math.min(1.0, rate));
+    }
+
+    private double computeCitationRate(String answer, List<RetrievalMatch> sources) {
+        if (answer == null || answer.isBlank() || sources == null || sources.isEmpty()) {
+            return 0.0;
+        }
+        Matcher matcher = CITATION_INDEX_PATTERN.matcher(answer);
+        Set<Integer> cited = new LinkedHashSet<>();
+        int maxIndex = Math.min(MAX_SOURCE_REFERENCE_COUNT, sources.size());
+        while (matcher.find()) {
+            try {
+                int index = Integer.parseInt(matcher.group(1));
+                if (index >= 1 && index <= maxIndex) {
+                    cited.add(index);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return Math.max(0.0, Math.min(1.0, cited.size() * 1.0 / maxIndex));
+    }
+
+    private long nanosToMillis(long nanos) {
+        return Math.max(0, nanos / 1_000_000L);
+    }
+
+    private double round4(double value) {
+        return Math.round(value * 10000.0D) / 10000.0D;
     }
 
     private boolean isBlankString(String str) {

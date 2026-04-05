@@ -3,10 +3,23 @@ import { apiDelete, apiGet, apiPostForm } from "../lib/api";
 import type { DocumentItem } from "../types";
 import { useActionRequest } from "../hooks/useActionRequest";
 
+const CRON_TEMPLATES = [
+  { key: "every-30m", label: "每 30 分钟", value: "0 0/30 * * * *" },
+  { key: "every-1h", label: "每 1 小时", value: "0 0 * * * *" },
+  { key: "daily-2am", label: "每天凌晨 2 点", value: "0 0 2 * * *" },
+  { key: "daily-8am", label: "每天早上 8 点", value: "0 0 8 * * *" },
+  { key: "weekly-mon-9am", label: "每周一 9 点", value: "0 0 9 * * MON" }
+] as const;
+
 export function DocumentPanel() {
   const [items, setItems] = useState<DocumentItem[]>([]);
   const [knowledgeId, setKnowledgeId] = useState("");
+  const [sourceType, setSourceType] = useState<"file" | "url">("file");
   const [file, setFile] = useState<File | null>(null);
+  const [url, setUrl] = useState("");
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleCron, setScheduleCron] = useState("");
+  const [cronTemplate, setCronTemplate] = useState("every-30m");
   const [showUpload, setShowUpload] = useState(false);
   const [msg, setMsg] = useState("");
   const listReq = useActionRequest();
@@ -26,18 +39,38 @@ export function DocumentPanel() {
     void load();
   }, []);
 
+  const isFileSource = sourceType === "file";
+  const isUrlSource = sourceType === "url";
+
   const upload = async () => {
-    if (!file) {
-      setMsg("请选择文件");
-      return;
-    }
     if (!knowledgeId.trim()) {
       setMsg("请输入知识库 ID");
       return;
     }
+    if (isFileSource && !file) {
+      setMsg("请选择文件");
+      return;
+    }
+    if (isUrlSource && !url.trim()) {
+      setMsg("请输入 URL");
+      return;
+    }
+    if (isUrlSource && scheduleEnabled && !scheduleCron.trim()) {
+      setMsg("请输入定时 cron 表达式");
+      return;
+    }
     const form = new FormData();
-    form.append("file", file);
     form.append("knowledgeId", knowledgeId.trim());
+    if (isFileSource && file) {
+      form.append("file", file);
+    }
+    if (isUrlSource) {
+      form.append("url", url.trim());
+      form.append("scheduleEnabled", String(scheduleEnabled));
+      if (scheduleEnabled && scheduleCron.trim()) {
+        form.append("scheduleCron", scheduleCron.trim());
+      }
+    }
     const result = await actionReq.runAction(() => apiPostForm<void>("/api/rag/document/upload", form), {
       successToast: "上传文档成功",
       errorFallback: "上传失败",
@@ -46,6 +79,11 @@ export function DocumentPanel() {
     if (result.ok) {
       setMsg("");
       setFile(null);
+      setUrl("");
+      setScheduleEnabled(false);
+      setScheduleCron("");
+      setCronTemplate("every-30m");
+      setSourceType("file");
       setShowUpload(false);
       await load();
     }
@@ -99,15 +137,123 @@ export function DocumentPanel() {
                 <input className="admin-input" value={knowledgeId} onChange={(e) => setKnowledgeId(e.target.value)} placeholder="输入关联的知识库 ID" />
               </div>
               <div className="admin-form-group">
-                <label className="admin-label">文件 *</label>
-                <div className="admin-file-input">
-                  <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-                  {file && <span className="admin-file-name">{file.name}</span>}
-                </div>
+                <label className="admin-label">来源类型 *</label>
+                <select
+                  className="admin-select"
+                  value={sourceType}
+                  onChange={(e) => {
+                    const next = e.target.value === "url" ? "url" : "file";
+                    setSourceType(next);
+                    if (next === "file") {
+                      setUrl("");
+                      setScheduleEnabled(false);
+                      setScheduleCron("");
+                      setCronTemplate("every-30m");
+                    } else {
+                      setFile(null);
+                    }
+                    setMsg("");
+                  }}
+                >
+                  <option value="file">文件上传</option>
+                  <option value="url">URL 拉取</option>
+                </select>
               </div>
+              {isFileSource && (
+                <div className="admin-form-group admin-form-group-span2">
+                  <label className="admin-label">文件 *</label>
+                  <div className="admin-file-input">
+                    <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                    {file && <span className="admin-file-name">{file.name}</span>}
+                  </div>
+                </div>
+              )}
+              {isUrlSource && (
+                <>
+                  <div className="admin-form-group admin-form-group-span2">
+                    <label className="admin-label">URL *</label>
+                    <input
+                      className="admin-input"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      placeholder="https://example.com/doc.pdf"
+                    />
+                  </div>
+                  <div className="admin-form-group">
+                    <label className="admin-label">定时更新</label>
+                    <select
+                      className="admin-select"
+                      value={scheduleEnabled ? "on" : "off"}
+                      onChange={(e) => {
+                        const enabled = e.target.value === "on";
+                        setScheduleEnabled(enabled);
+                        if (enabled && !scheduleCron.trim()) {
+                          const defaultTemplate = CRON_TEMPLATES.find((item) => item.key === "every-30m");
+                          if (defaultTemplate) {
+                            setCronTemplate(defaultTemplate.key);
+                            setScheduleCron(defaultTemplate.value);
+                          }
+                        }
+                      }}
+                    >
+                      <option value="off">关闭</option>
+                      <option value="on">开启</option>
+                    </select>
+                  </div>
+                  <div className="admin-form-group">
+                    <label className="admin-label">Cron 模板</label>
+                    <select
+                      className="admin-select"
+                      disabled={!scheduleEnabled}
+                      value={cronTemplate}
+                      onChange={(e) => {
+                        const selected = e.target.value;
+                        setCronTemplate(selected);
+                        const template = CRON_TEMPLATES.find((item) => item.key === selected);
+                        if (template) {
+                          setScheduleCron(template.value);
+                        }
+                      }}
+                    >
+                      {CRON_TEMPLATES.map((template) => (
+                        <option key={template.key} value={template.key}>
+                          {template.label}
+                        </option>
+                      ))}
+                      <option value="custom">自定义</option>
+                    </select>
+                  </div>
+                  <div className="admin-form-group admin-form-group-span2">
+                    <label className="admin-label">Cron 表达式 {scheduleEnabled ? "*" : ""}</label>
+                    <input
+                      className="admin-input"
+                      value={scheduleCron}
+                      disabled={!scheduleEnabled}
+                      onChange={(e) => {
+                        setScheduleCron(e.target.value);
+                        setCronTemplate("custom");
+                      }}
+                      placeholder="0 0/30 * * * *"
+                    />
+                  </div>
+                  <div className="admin-form-group admin-form-group-span2">
+                    <span className="admin-muted">示例：0 0/30 * * * * 表示每 30 分钟执行一次</span>
+                  </div>
+                </>
+              )}
             </div>
             <div className="admin-form-actions">
-              <button className="admin-btn admin-btn-primary" onClick={upload} disabled={actionReq.loading || !file || !knowledgeId.trim()}>
+              <button
+                className="admin-btn admin-btn-primary"
+                onClick={upload}
+                disabled={
+                  actionReq.loading ||
+                  !knowledgeId.trim() ||
+                  (isFileSource && !file) ||
+                  (isUrlSource && !url.trim()) ||
+                  (isUrlSource && scheduleEnabled && !scheduleCron.trim())
+                }
+              >
                 {actionReq.loading ? "上传中..." : "上传"}
               </button>
             </div>

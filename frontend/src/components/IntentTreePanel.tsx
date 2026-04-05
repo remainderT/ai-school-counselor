@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiDelete, apiGet, apiPost, apiPut } from "../lib/api";
-import { pushToast } from "../lib/toast";
 import type { IntentNodeItem } from "../types";
 import { useActionRequest } from "../hooks/useActionRequest";
 
@@ -165,10 +164,6 @@ export function IntentTreePanel() {
   const [msg, setMsg] = useState("");
   const [keyword, setKeyword] = useState("");
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
-  const [batchEnabled, setBatchEnabled] = useState("");
-  const [batchNodeType, setBatchNodeType] = useState("");
-  const [batchTopK, setBatchTopK] = useState("");
-  const [showBatch, setShowBatch] = useState(false);
   const listReq = useActionRequest();
   const actionReq = useActionRequest();
 
@@ -283,42 +278,6 @@ export function IntentTreePanel() {
     }
   };
 
-  const applyBatchUpdate = async () => {
-    if (selectedIds.length === 0) {
-      pushToast("请先勾选节点", "error");
-      return;
-    }
-    if (!batchEnabled && !batchNodeType && !batchTopK) {
-      pushToast("请至少填写一项批量更新字段", "error");
-      return;
-    }
-
-    const targetNodes = flatNodes.filter((it) => selectedIds.includes(it.id));
-    const result = await actionReq.runAction(
-      async () => {
-        for (const node of targetNodes) {
-          const currentForm = toForm(node);
-          const merged: FormState = {
-            ...currentForm,
-            enabled: batchEnabled || currentForm.enabled,
-            nodeType: batchNodeType || currentForm.nodeType,
-            topK: batchTopK || currentForm.topK
-          };
-          await apiPut<void>(`/api/rag/intent-tree/${node.id}`, buildPayload(merged, false));
-        }
-      },
-      {
-        successToast: "批量字段更新成功",
-        errorFallback: "批量字段更新失败",
-        onError: setMsg
-      }
-    );
-    if (result.ok) {
-      setMsg("");
-      await loadTree();
-    }
-  };
-
   const toggleCollapse = (nodeId: string) => {
     setCollapsedNodeIds((prev) => {
       const next = new Set(prev);
@@ -419,43 +378,7 @@ export function IntentTreePanel() {
               <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => void batchAction("/api/rag/intent-tree/batch/enable", "批量启用成功")} disabled={actionReq.loading}>批量启用</button>
               <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => void batchAction("/api/rag/intent-tree/batch/disable", "批量停用成功")} disabled={actionReq.loading}>批量停用</button>
               <button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => void batchAction("/api/rag/intent-tree/batch/delete", "批量删除成功")} disabled={actionReq.loading}>批量删除</button>
-              <span className="admin-divider" />
-              <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => setShowBatch(!showBatch)}>
-                {showBatch ? "收起字段更新" : "批量字段更新"}
-              </button>
-              <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => setSelectedIds([])}>清除选择</button>
             </div>
-            {showBatch && (
-              <div style={{ marginTop: 12 }}>
-                <div className="admin-form-grid admin-form-grid-3">
-                  <div className="admin-form-group">
-                    <label className="admin-label">enabled</label>
-                    <select className="admin-select" value={batchEnabled} onChange={(e) => setBatchEnabled(e.target.value)}>
-                      <option value="">保持不变</option>
-                      <option value="1">启用</option>
-                      <option value="0">停用</option>
-                    </select>
-                  </div>
-                  <div className="admin-form-group">
-                    <label className="admin-label">nodeType</label>
-                    <select className="admin-select" value={batchNodeType} onChange={(e) => setBatchNodeType(e.target.value)}>
-                      <option value="">保持不变</option>
-                      <option value="GROUP">GROUP</option>
-                      <option value="RAG_QA">RAG_QA</option>
-                      <option value="API_ACTION">API_ACTION</option>
-                      <option value="CHITCHAT">CHITCHAT</option>
-                    </select>
-                  </div>
-                  <div className="admin-form-group">
-                    <label className="admin-label">topK</label>
-                    <input className="admin-input" type="number" value={batchTopK} onChange={(e) => setBatchTopK(e.target.value)} placeholder="保持不变" />
-                  </div>
-                </div>
-                <div className="admin-form-actions">
-                  <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => void applyBatchUpdate()} disabled={actionReq.loading}>应用到已选节点</button>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}

@@ -108,7 +108,7 @@ DROP TABLE IF EXISTS messages;
 CREATE TABLE messages (
                         id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
                         session_id  VARCHAR(64)  NOT NULL COMMENT '会话标识',
-                        user_id     bigint(20)  NOT NULL COMMENT '用户标识',
+                        user_id     VARCHAR(64)  NOT NULL COMMENT '用户标识',
                         role        VARCHAR(16)  NOT NULL COMMENT '角色：user/assistant',
                         content     LONGTEXT     NOT NULL COMMENT '消息内容',
                         created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -158,6 +158,27 @@ CREATE TABLE message_summary (
                         INDEX idx_summary_session_msg (session_id, last_message_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话摘要表';
 
+DROP TABLE IF EXISTS chat_trace_metrics;
+CREATE TABLE chat_trace_metrics (
+                        id                   BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+                        session_id           VARCHAR(64)  NOT NULL COMMENT '会话ID',
+                        message_id           BIGINT       NOT NULL COMMENT 'assistant消息ID',
+                        user_id              VARCHAR(64)  NOT NULL COMMENT '用户ID',
+                        query_text           TEXT         NULL COMMENT '用户问题',
+                        rewrite_latency_ms   BIGINT       NOT NULL DEFAULT 0 COMMENT '改写耗时ms',
+                        retrieval_hit_rate   DOUBLE       NOT NULL DEFAULT 0 COMMENT '召回命中率',
+                        citation_rate        DOUBLE       NOT NULL DEFAULT 0 COMMENT '答案引用率',
+                        clarify_triggered    TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否触发澄清',
+                        user_feedback_score  TINYINT      NULL COMMENT '用户反馈分(1-5)',
+                        created_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                        updated_at           TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                        PRIMARY KEY (id),
+                        UNIQUE KEY uk_trace_message (message_id),
+                        INDEX idx_trace_session (session_id),
+                        INDEX idx_trace_user_time (user_id, created_at),
+                        INDEX idx_trace_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='在线链路轻量指标表';
+
 INSERT INTO `user` (`id`, `username`, `password`, `mail`, `salt`, `is_admin`, `avatar`, `create_time`, `update_time`, `del_flag`)
 VALUES (1, 'admin', 'b9d11b3be25f5a1a7dc8ca04cd310b28', 'admin@example.com', 'admin', 1, NULL, NOW(), NOW(), 0);
 
@@ -171,7 +192,7 @@ INSERT INTO `knowledge` (`id`, `user_id`, `name`, `description`,  `create_time`,
 (6, 1, 'psy_safety_kb', '心理与安全知识库', NOW(), NOW(), 0);
 
 INSERT INTO intent_node (node_id, node_name, parent_id, node_type, description, prompt_template, prompt_snippet, param_prompt_template, keywords_json, examples_json, knowledge_base_id, action_service, node_level, node_kind, mcp_tool_id, top_k, sort_order, enabled, create_time, update_time, del_flag) VALUES
-  ('root', '根节点', NULL, 'GROUP', '高校辅导员全域问答和办事', NULL, NULL, NULL, '[]', NULL, NULL, NULL, 'DOMAIN', 'SYSTEM', NULL, NULL, 0, 1, NOW(), NOW(), 0),
+  ('root', '根节点', NULL, 'GROUP', 'BUAA问答助手：高校全域问题咨询与办事服务', NULL, NULL, NULL, '[]', NULL, NULL, NULL, 'DOMAIN', 'SYSTEM', NULL, NULL, 0, 1, NOW(), NOW(), 0),
   ('academic', '教务教学', 'root', 'GROUP', '学籍 选课 考试 成绩 保研 推免', NULL, NULL, NULL, '["学籍", "课程", "选课", "考试", "成绩", "保研", "推免"]', NULL, NULL, NULL, 'CATEGORY', 'SYSTEM', NULL, NULL, 1, 1, NOW(), NOW(), 0),
   ('academic_status', '学籍管理', 'academic', 'RAG_QA', '休学 复学 学籍注册 注销 转专业 专业分流', NULL, NULL, NULL, '["休学", "复学", "注册", "注销", "转专业", "分流"]', NULL, '2', NULL, 'TOPIC', 'KB', NULL, NULL, 2, 1, NOW(), NOW(), 0),
   ('academic_course', '课程与选课', 'academic', 'RAG_QA', '选课规则 重修 补考 学分认定', NULL, NULL, NULL, '["选课", "重修", "补考", "学分"]', NULL, '2', NULL, 'TOPIC', 'KB', NULL, NULL, 3, 1, NOW(), NOW(), 0),

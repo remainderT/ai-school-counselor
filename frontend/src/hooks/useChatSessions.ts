@@ -75,12 +75,17 @@ export function useChatSessions(owner: string) {
     return undefined;
   }, [activeConversation]);
 
-  const patchActive = (updater: (item: Conversation) => Conversation) => {
+  const patchConversation = (conversationId: string, updater: (item: Conversation) => Conversation) => {
     setConversations((prev) =>
       prev
-        .map((item) => (item.id === activeId ? updater(item) : item))
+        .map((item) => (item.id === conversationId ? updater(item) : item))
         .sort((a, b) => b.updatedAt - a.updatedAt)
     );
+  };
+
+  const patchActive = (updater: (item: Conversation) => Conversation) => {
+    if (!activeId) return;
+    patchConversation(activeId, updater);
   };
 
   const listSessions = async (_prefix: string): Promise<ConversationSessionItem[]> => {
@@ -190,30 +195,33 @@ export function useChatSessions(owner: string) {
     }
   };
 
-  const newConversation = async () => {
-    const id = genId();
-    await createReq.runAction(
+  const newConversation = async (): Promise<Conversation | null> => {
+    const localId = genId();
+    const result = await createReq.runAction(
       () => apiPost<ConversationSessionItem>("/api/rag/chat/sessions", { title: "新会话" }),
       {
         errorFallback: "创建会话失败",
-        onError: setNotice,
-        onSuccess: (created) => {
-          const item: Conversation = {
-            id: created.sessionId,
-            title: normalizeTitle(created.title),
-            updatedAt: toMillis(created.updatedAt),
-            messages: [],
-            userId: created.userId || `${(routePrefix || owner).trim() || "anonymous"}::${id}`,
-            sessionId: created.sessionId,
-            loaded: true,
-            persisted: true
-          };
-          setConversations((prev) => [item, ...prev.filter((it) => it.id !== item.id)]);
-          setActiveId(item.id);
-          setNotice("");
-        }
+        onError: setNotice
       }
     );
+    if (!result.ok) {
+      return null;
+    }
+    const created = result.data;
+    const item: Conversation = {
+      id: created.sessionId,
+      title: normalizeTitle(created.title),
+      updatedAt: toMillis(created.updatedAt),
+      messages: [],
+      userId: created.userId || `${(routePrefix || owner).trim() || "anonymous"}::${localId}`,
+      sessionId: created.sessionId,
+      loaded: true,
+      persisted: true
+    };
+    setConversations((prev) => [item, ...prev.filter((it) => it.id !== item.id)]);
+    setActiveId(item.id);
+    setNotice("");
+    return item;
   };
 
   const removeConversation = async (id: string) => {
@@ -320,6 +328,7 @@ export function useChatSessions(owner: string) {
     activeConversation,
     runtimeUserId,
     lastAssistant,
+    patchConversation,
     patchActive,
     refreshSessions,
     syncAfterSend,

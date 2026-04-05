@@ -27,7 +27,7 @@ export function createChatStream(message: string, userId: string, handlers: Stre
   const query = new URLSearchParams({ message, userId }).toString();
   const url = apiUrl(`/api/rag/chat/stream?${query}`);
 
-  const start = async () => {
+  const startOnce = async () => {
     const auth = loadAuth();
     const response = await fetch(url, {
       method: "GET",
@@ -92,6 +92,9 @@ export function createChatStream(message: string, userId: string, handlers: Stre
           flushEvent();
           continue;
         }
+        if (line.startsWith(":")) {
+          continue;
+        }
         if (line.startsWith("event:")) {
           eventName = line.slice(6).trim();
           continue;
@@ -99,6 +102,24 @@ export function createChatStream(message: string, userId: string, handlers: Stre
         if (line.startsWith("data:")) {
           dataLines.push(line.slice(5).trim());
         }
+      }
+    }
+  };
+
+  const start = async () => {
+    let attempt = 0;
+    const maxRetries = 2;
+    while (true) {
+      try {
+        await startOnce();
+        return;
+      } catch (error) {
+        if (controller.signal.aborted || attempt >= maxRetries) {
+          throw error;
+        }
+        const backoff = 600 * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+        attempt += 1;
       }
     }
   };

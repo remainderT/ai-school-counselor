@@ -15,12 +15,14 @@ import java.util.stream.Collectors;
 
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.dao.entity.MessageDO;
+import org.buaa.rag.dao.entity.ChatTraceMetricDO;
 import org.buaa.rag.dao.entity.MessageSourceDO;
 import org.buaa.rag.dao.entity.MessageFeedbackDO;
 import org.buaa.rag.dao.entity.MessageSummaryDO;
 import org.buaa.rag.dao.mapper.MessageMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
 import org.buaa.rag.dao.mapper.MessageFeedbackMapper;
+import org.buaa.rag.dao.mapper.ChatTraceMetricMapper;
 import org.buaa.rag.dao.mapper.MessageSummaryMapper;
 import org.buaa.rag.core.online.memory.ConversationMemoryService;
 import org.buaa.rag.dto.resp.ConversationMessageRespDTO;
@@ -47,6 +49,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final MessageMapper messageMapper;
     private final MessageSourceMapper sourceRepository;
     private final MessageFeedbackMapper messageFeedbackMapper;
+    private final ChatTraceMetricMapper chatTraceMetricMapper;
     private final MessageSummaryMapper messageSummaryMapper;
     private final ConversationMemoryService conversationMemoryService;
 
@@ -56,11 +59,13 @@ public class ConversationServiceImpl implements ConversationService {
     public ConversationServiceImpl(MessageMapper messageMapper,
                                    MessageSourceMapper sourceRepository,
                                    MessageFeedbackMapper messageFeedbackMapper,
+                                   ChatTraceMetricMapper chatTraceMetricMapper,
                                    MessageSummaryMapper messageSummaryMapper,
                                    ConversationMemoryService conversationMemoryService) {
         this.messageMapper = messageMapper;
         this.sourceRepository = sourceRepository;
         this.messageFeedbackMapper = messageFeedbackMapper;
+        this.chatTraceMetricMapper = chatTraceMetricMapper;
         this.messageSummaryMapper = messageSummaryMapper;
         this.conversationMemoryService = conversationMemoryService;
     }
@@ -178,6 +183,8 @@ public class ConversationServiceImpl implements ConversationService {
 
         messageSummaryMapper.delete(Wrappers.lambdaQuery(MessageSummaryDO.class)
             .eq(MessageSummaryDO::getSessionId, normalizedSessionId));
+        chatTraceMetricMapper.delete(Wrappers.lambdaQuery(ChatTraceMetricDO.class)
+            .eq(ChatTraceMetricDO::getSessionId, normalizedSessionId));
         messageMapper.delete(messageQuery);
 
         sessionHistoryMap.remove(normalizedSessionId);
@@ -467,8 +474,8 @@ public class ConversationServiceImpl implements ConversationService {
             messageMapper.insert(messageDO);
             return messageDO.getId();
         } catch (Exception e) {
-            log.debug("持久化对话失败: {}", e.getMessage());
-            return null;
+            log.error("持久化对话失败, sessionId={}, userId={}, role={}", sessionId, userId, role, e);
+            throw new IllegalStateException("会话持久化失败", e);
         }
     }
 

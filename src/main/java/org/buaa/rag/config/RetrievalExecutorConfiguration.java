@@ -45,4 +45,16 @@ public class RetrievalExecutorConfiguration {
         executor.initialize();
         return executor;
     }
+
+    @Bean("chatStreamExecutor")
+    public Executor chatStreamExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(16);
+        executor.setQueueCapacity(500);
+        executor.setThreadNamePrefix("chat-stream-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+        return executor;
+    }
 }

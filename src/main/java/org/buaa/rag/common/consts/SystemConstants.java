@@ -8,7 +8,7 @@ public class SystemConstants {
     /**
      * 邮件内容
      */
-    public static final String MAIL_TEXT = "[北航智能辅导员] 邮箱注册验证码： %s, 5分钟有效, 请勿泄漏";
+    public static final String MAIL_TEXT = "[BUAA问答助手] 邮箱注册验证码： %s, 5分钟有效, 请勿泄漏";
 
     /**
      * 邮件主题

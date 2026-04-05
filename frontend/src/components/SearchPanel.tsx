@@ -36,8 +36,8 @@ export function SearchPanel() {
     <div className="admin-page">
       <div className="admin-page-header">
         <div>
-          <h1 className="admin-page-title">检索调试</h1>
-          <p className="admin-page-desc">调试向量检索效果，验证召回质量与分数分布</p>
+          <h1 className="admin-page-title">问答检索调试</h1>
+          <p className="admin-page-desc">调试问答检索效果，验证召回质量与分数分布</p>
         </div>
       </div>
 

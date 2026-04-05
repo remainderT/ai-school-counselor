@@ -35,19 +35,22 @@ public class LlmChat {
                                Runnable completionHandler) {
         AtomicBoolean completionFlag = new AtomicBoolean(false);
         try {
-            String content = dashscopeClient.chatCompletion(
+            dashscopeClient.streamChatCompletion(
                 buildSystemPrompt(referenceContext),
                 buildUserPrompt(userQuery, conversationHistory),
                 temperature(),
                 topP(),
-                maxTokens(null)
-            );
-            if (chunkHandler != null && content != null) {
-                String cleaned = sanitizeChunk(content);
-                if (hasMeaningfulText(cleaned)) {
-                    chunkHandler.accept(cleaned);
+                maxTokens(null),
+                chunk -> {
+                    if (chunkHandler == null) {
+                        return;
+                    }
+                    String cleaned = sanitizeChunk(chunk);
+                    if (hasMeaningfulText(cleaned)) {
+                        chunkHandler.accept(cleaned);
+                    }
                 }
-            }
+            );
         } catch (Exception e) {
             notifyError(errorHandler, e);
         } finally {

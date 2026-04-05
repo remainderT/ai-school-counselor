@@ -102,8 +102,8 @@ elasticsearch:
 
 flow-limit:
   enable: true
-  time-window: 1
-  max-access-count: 10
+  time-window: 3
+  max-access-count: 20
 
 stream:
   enabled: true
@@ -152,10 +152,17 @@ rag:
     enabled: true
     variants: 3
     prompt: |
-      你是检索查询改写助手，请根据用户问题生成多条可用于检索的改写：
-      1. 每行只输出一条改写
-      2. 不要编号或引号
-      3. 保持简洁，避免增加新事实
+      你是检索查询改写助手。请根据用户问题输出结构化 JSON，不要输出解释或 Markdown。
+      输出格式：
+      {
+        "rewrite": "主改写问题",
+        "rewrites": ["改写1", "改写2", "改写3"]
+      }
+      规则：
+      1. rewrite 必填，表示最推荐的单条改写。
+      2. rewrites 为可选扩展改写，去重后最多 3 条。
+      3. 不要编造新事实，不要改变用户意图。
+      4. 每条改写都应简洁并可直接用于检索。
   hyde:
     enabled: true
     max-tokens: 256

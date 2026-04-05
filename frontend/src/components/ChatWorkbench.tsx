@@ -31,9 +31,6 @@ const ThumbDownIcon = () => (
 const ChevronDownIcon = () => (
   <svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>
 );
-const PlusIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-);
 const TrashIcon = () => (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
 );
@@ -49,6 +46,13 @@ const XIcon = () => (
 const ChatBubbleIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
 );
+const ChevronLeftIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+);
+const ChevronRightIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+);
+const CHAT_SIDEBAR_COLLAPSED_KEY = "chatSidebarCollapsed";
 
 interface ChatWorkbenchProps {
   authUsername?: string;
@@ -57,6 +61,14 @@ interface ChatWorkbenchProps {
 }
 
 export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: ChatWorkbenchProps) {
+  const loadSidebarCollapsed = () => {
+    try {
+      return window.localStorage.getItem(CHAT_SIDEBAR_COLLAPSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  };
+
   const owner = (authUsername || "anonymous").trim() || "anonymous";
   const {
     conversations,
@@ -69,7 +81,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
     setNotice,
     activeConversation,
     runtimeUserId,
-    patchActive,
+    patchConversation,
     syncAfterSend,
     newConversation,
     removeConversation,
@@ -80,6 +92,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState(false);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(loadSidebarCollapsed);
   // 编辑标题状态
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -106,6 +119,14 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
   useEffect(() => {
     adjustTextareaHeight();
   }, [question, adjustTextareaHeight]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CHAT_SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "1" : "0");
+    } catch {
+      // Ignore storage errors (private mode or disabled storage).
+    }
+  }, [sidebarCollapsed]);
 
   /* ===== Scroll helpers ===== */
   const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
@@ -150,19 +171,19 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
     }
   };
 
-  const submitStreamInternal = async (ask: string) => {
-    if (!activeConversation || !ask.trim()) return;
+  const submitStreamInternal = async (ask: string, conversation = activeConversation) => {
+    if (!conversation || !ask.trim()) return;
     setNotice("");
     setPending(true);
-    const usingUserId = runtimeUserId;
-    const currentId = activeConversation.id;
+    const usingUserId = conversation.userId || runtimeUserId;
+    const currentId = conversation.id;
 
     if (streamRef.current) {
       streamRef.current.cancel();
       streamRef.current = null;
     }
 
-    patchActive((item) => ({
+    patchConversation(currentId, (item) => ({
       ...item,
       title: ensureTitle(ask, item.title),
       updatedAt: Date.now(),
@@ -171,7 +192,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
 
     const stream = createChatStream(ask, usingUserId, {
       onText: (chunk) => {
-        patchActive((item) => {
+        patchConversation(currentId, (item) => {
           const messages = [...item.messages];
           const last = messages[messages.length - 1];
           if (last && last.role === "assistant") {
@@ -181,7 +202,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
         });
       },
       onSources: (sources) => {
-        patchActive((item) => {
+        patchConversation(currentId, (item) => {
           const messages = [...item.messages];
           const last = messages[messages.length - 1];
           if (last && last.role === "assistant" && Array.isArray(sources)) {
@@ -191,7 +212,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
         });
       },
       onMessageId: (messageId) => {
-        patchActive((item) => {
+        patchConversation(currentId, (item) => {
           const messages = [...item.messages];
           const last = messages[messages.length - 1];
           if (last && last.role === "assistant") {
@@ -225,8 +246,15 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
   const submitStream = async () => {
     const ask = question.trim();
     if (!ask) return;
+    let target = activeConversation;
+    if (!target) {
+      target = await newConversation();
+      if (!target) {
+        return;
+      }
+    }
     setQuestion("");
-    await submitStreamInternal(ask);
+    await submitStreamInternal(ask, target);
   };
 
   const regenerateLastAnswer = async () => {
@@ -307,19 +335,19 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
   const hasContent = question.trim().length > 0;
 
   const promptCards = [
-    { icon: "📋", title: "学业规划", text: "帮我制定本学期的学习计划，合理安排课程和复习时间。" },
-    { icon: "📖", title: "课程答疑", text: "解释一下这个知识点的核心概念，并举例说明应用场景。" },
-    { icon: "🎓", title: "考试准备", text: "帮我梳理这门课的重点内容，列出高频考点和复习建议。" }
+    { icon: "📘", title: "教务与课程", text: "选课、考试、成绩、学籍这些问题怎么处理？" },
+    { icon: "🏫", title: "校园生活", text: "宿舍报修、校园卡、校医院、校车这些问题该找谁？" },
+    { icon: "🚀", title: "就业与升学", text: "保研、考研、就业手续、三方协议流程怎么走？" }
   ];
 
   return (
-    <section className="chat-layout">
+    <section className={sidebarCollapsed ? "chat-layout sidebar-collapsed" : "chat-layout"}>
       {/* ===== Session Sidebar ===== */}
       <aside className="chat-side">
         <div className="chat-side-head">
           <button className="chat-new-btn" onClick={() => void newConversation()} disabled={creatingSession}>
-            <PlusIcon />
-            <span>{creatingSession ? "创建中..." : "新建对话"}</span>
+            <EditIcon />
+            <span>{creatingSession ? "创建中..." : "发起新对话"}</span>
           </button>
         </div>
 
@@ -418,15 +446,27 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
         </div>
       </aside>
 
+      <button
+        className={sidebarCollapsed ? "chat-sidebar-handle collapsed" : "chat-sidebar-handle"}
+        type="button"
+        onClick={() => setSidebarCollapsed((prev) => !prev)}
+        title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+        aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+      >
+        <span className="sidebar-handle-arrow" aria-hidden="true">
+          {sidebarCollapsed ? ">" : "<"}
+        </span>
+      </button>
+
       {/* ===== Chat Main Area ===== */}
       <div className={hasMessages ? "chat-main" : "chat-main empty-mode"}>
         {/* Welcome Screen */}
         {!hasMessages && (
           <>
             <div className="chat-empty">
-              <div className="chat-empty-badge">BUAA AI 辅导员</div>
+              <div className="chat-empty-badge">BUAA问答助手</div>
               <h2>你好，<span>{owner}</span></h2>
-              <p>有什么学业问题需要帮助？我可以为你解答课程疑问、规划学习路径。</p>
+              <p>学校里的任何问题都可以提问，我会尽力给你清晰、可执行的答案。</p>
             </div>
 
             <div className="chat-composer empty-mode">
@@ -441,10 +481,6 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
                   rows={1}
                 />
                 <div className="composer-actions">
-                  <div className="composer-hint">
-                    <kbd>Enter</kbd> 发送 · <kbd>Shift + Enter</kbd> 换行
-                    {pending && <span style={{ marginLeft: 8, color: "var(--brand)" }}>生成中...</span>}
-                  </div>
                   <button
                     className={`composer-send-btn ${pending ? "streaming" : hasContent ? "ready" : "idle"}`}
                     onClick={pending ? stopStreaming : submitStream}
@@ -572,10 +608,6 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
                 rows={1}
               />
               <div className="composer-actions">
-                <div className="composer-hint">
-                  <kbd>Enter</kbd> 发送 · <kbd>Shift + Enter</kbd> 换行
-                  {pending && <span style={{ marginLeft: 8, color: "#3b82f6" }}>生成中...</span>}
-                </div>
                 <button
                   className="composer-extra-btn"
                   disabled={pending || !activeConversation?.messages.length}

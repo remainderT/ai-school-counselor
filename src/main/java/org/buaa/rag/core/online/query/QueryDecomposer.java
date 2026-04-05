@@ -50,13 +50,13 @@ public class QueryDecomposer {
 
         String output = llmChat.generateCompletion(prompt, query, 256);
         List<String> parts = parseStructured(output, cfg.getMaxSubqueries());
-        if (parts.size() > 1) {
+        if (isValidSplit(parts, query)) {
             return parts;
         }
 
         // 结构化输出失败时，兜底尝试按旧格式提取列表
         parts = normalizeLines(output, cfg.getMaxSubqueries());
-        if (parts.size() > 1) {
+        if (isValidSplit(parts, query)) {
             return parts;
         }
         return List.of(query);
@@ -121,6 +121,44 @@ public class QueryDecomposer {
             }
         }
         return new ArrayList<>(results);
+    }
+
+    private boolean isValidSplit(List<String> parts, String originalQuery) {
+        if (parts == null || parts.size() <= 1) {
+            return false;
+        }
+        String normalizedOriginal = normalize(originalQuery);
+        long uniqueCount = parts.stream()
+            .filter(StringUtils::hasText)
+            .map(this::normalize)
+            .filter(StringUtils::hasText)
+            .distinct()
+            .count();
+        if (uniqueCount <= 1) {
+            return false;
+        }
+        if (uniqueCount == 2) {
+            boolean allSameAsOriginal = parts.stream()
+                .filter(StringUtils::hasText)
+                .map(this::normalize)
+                .allMatch(item -> item.equals(normalizedOriginal));
+            if (allSameAsOriginal) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String normalize(String text) {
+        if (!StringUtils.hasText(text)) {
+            return "";
+        }
+        return text.replaceAll("\\s+", "")
+            .replace("，", "")
+            .replace("。", "")
+            .replace("？", "")
+            .replace("?", "")
+            .trim();
     }
 
     private List<String> ruleBasedDecompose(String query, int max) {

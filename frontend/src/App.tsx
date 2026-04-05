@@ -11,7 +11,8 @@ import { useAuthStore } from "./store/auth-store";
 
 type TabKey = "chat" | "search" | "knowledge" | "document" | "intent-tree";
 
-const BRAND_NAME = "BUAA AI 辅导员";
+const BRAND_NAME = "BUAA问答助手";
+const ADMIN_SIDEBAR_COLLAPSED_KEY = "adminSidebarCollapsed";
 
 /* ---- Inline SVG Icons ---- */
 const AdminIcon = () => (
@@ -36,7 +37,27 @@ const LogoutIcon = () => (
   </svg>
 );
 
+const ChevronLeftIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="15 18 9 12 15 6" />
+  </svg>
+);
+
+const ChevronRightIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="9 18 15 12 9 6" />
+  </svg>
+);
+
 export default function App() {
+  const loadAdminSidebarCollapsed = () => {
+    try {
+      return window.localStorage.getItem(ADMIN_SIDEBAR_COLLAPSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  };
+
   const [tab, setTab] = useState<TabKey>("chat");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -45,12 +66,13 @@ export default function App() {
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authMsg, setAuthMsg] = useState("");
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+  const [adminSidebarCollapsed, setAdminSidebarCollapsed] = useState<boolean>(loadAdminSidebarCollapsed);
 
   const authReq = useActionRequest();
   const { auth, isAdmin, restoring, loginWithPassword, logoutCurrent, registerUser, sendCode } = useAuthStore();
 
   const adminTabs = useMemo(() => [
-    { key: "search" as const, label: "检索调试", icon: "search" },
+    { key: "search" as const, label: "问答检索调试", icon: "search" },
     { key: "knowledge" as const, label: "知识库管理", icon: "knowledge" },
     { key: "intent-tree" as const, label: "意图树管理", icon: "tree" },
     { key: "document" as const, label: "文档管理", icon: "document" },
@@ -68,6 +90,14 @@ export default function App() {
       setUsername(auth.username);
     }
   }, [auth?.username]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ADMIN_SIDEBAR_COLLAPSED_KEY, adminSidebarCollapsed ? "1" : "0");
+    } catch {
+      // ignore storage failures
+    }
+  }, [adminSidebarCollapsed]);
 
   const doLogin = async () => {
     if (!username.trim() || !password.trim()) {
@@ -171,7 +201,7 @@ export default function App() {
             <div className="auth-form">
               <div className="auth-form-head">
                 <h2 className="auth-title">{authMode === "login" ? "欢迎回来" : "创建账号"}</h2>
-                <p className="auth-form-tip">{authMode === "login" ? "登录以开始你的智能学业辅导" : "注册账号，开启 AI 辅导之旅"}</p>
+                <p className="auth-form-tip">{authMode === "login" ? "登录后即可提问学校里的任何问题" : "注册账号，开启 BUAA 问答助手"}</p>
               </div>
 
               <div className="auth-mode-switch" role="tablist" aria-label="登录与注册">
@@ -222,7 +252,7 @@ export default function App() {
               )}
 
               <div className="auth-help-row">
-                <span>© 2026 北京航空航天大学 · AI 学业辅导系统</span>
+                <span>© 2026 北京航空航天大学 · BUAA问答助手</span>
               </div>
             </div>
           </section>
@@ -235,8 +265,8 @@ export default function App() {
   /* ---- Admin panel is open: show admin sidebar + admin content ---- */
   if (isAdmin && adminPanelOpen) {
     return (
-      <div className="console-layout">
-        <aside className="sidebar">
+      <div className={adminSidebarCollapsed ? "console-layout admin-sidebar-collapsed" : "console-layout"}>
+        <aside className="sidebar admin-sidebar">
           <div className="brand">
             <div className="brand-logo">✦</div>
             <div className="brand-title">{BRAND_NAME}</div>
@@ -279,6 +309,17 @@ export default function App() {
             {tab === "intent-tree" && <IntentTreePanel />}
           </main>
         </div>
+        <button
+          className={adminSidebarCollapsed ? "admin-sidebar-handle collapsed" : "admin-sidebar-handle"}
+          type="button"
+          onClick={() => setAdminSidebarCollapsed((v) => !v)}
+          title={adminSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+          aria-label={adminSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+        >
+          <span className="sidebar-handle-arrow" aria-hidden="true">
+            {adminSidebarCollapsed ? ">" : "<"}
+          </span>
+        </button>
         <ToastHost />
       </div>
     );

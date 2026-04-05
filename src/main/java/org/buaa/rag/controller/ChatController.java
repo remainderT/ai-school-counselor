@@ -39,11 +39,6 @@ public class ChatController {
         this.conversationService = conversationService;
     }
 
-    @PostMapping("/chat")
-    public Result<Map<String, Object>> handleChatRequest(@RequestBody Map<String, String> payload) {
-        return chatService.handleChatRequest(payload);
-    }
-
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter handleChatStream(@RequestParam String message,
                                        @RequestParam(defaultValue = "anonymous") String userId) {
@@ -60,6 +55,13 @@ public class ChatController {
     @PostMapping("/feedback")
     public Result<Map<String, Object>> handleFeedback(@RequestBody FeedbackRequest request) {
         return chatService.handleFeedback(request);
+    }
+
+    @GetMapping("/metrics/summary")
+    public Result<Map<String, Object>> queryTraceMetricSummary(
+            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(required = false) String userId) {
+        return chatService.queryTraceMetricSummary(days, userId);
     }
 
     @GetMapping("/sessions")
