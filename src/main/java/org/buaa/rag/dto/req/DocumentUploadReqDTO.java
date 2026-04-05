@@ -18,6 +18,16 @@ public class DocumentUploadReqDTO {
 
     private String url;
 
+    /**
+     * 是否启用 URL 定时更新，仅 URL 上传生效
+     */
+    private Boolean scheduleEnabled;
+
+    /**
+     * Spring cron 表达式，仅 URL 且 scheduleEnabled=true 时必填
+     */
+    private String scheduleCron;
+
     private Long knowledgeId;
 
     /**

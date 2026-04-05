@@ -13,6 +13,7 @@ import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_NOT_EXIST
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import org.apache.commons.codec.digest.DigestUtils;
@@ -28,6 +29,7 @@ import org.buaa.rag.dto.req.DocumentUploadReqDTO;
 import org.buaa.rag.core.offline.ingestion.DocumentArtifactService;
 import org.buaa.rag.core.offline.ingestion.DocumentLifecycleService;
 import org.buaa.rag.core.offline.ingestion.DocumentIngestionTask;
+import org.buaa.rag.core.offline.schedule.CronScheduleHelper;
 import org.buaa.rag.tool.RemoteURLFetcher;
 import org.buaa.rag.tool.RemoteURLFetcher.FetchedRemoteDocument;
 import org.buaa.rag.core.mq.IngestionProducer;
@@ -38,6 +40,7 @@ import org.buaa.rag.core.offline.parser.FileTypeValidate.InspectedFile;
 import org.buaa.rag.tool.RustfsStorage;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.InputStreamSource;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -68,6 +71,9 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final DocumentArtifactService artifactService;
     private final RemoteURLFetcher remoteURLFetcher;
 
+    @Value("${document.refresh.min-interval-seconds:60}")
+    private long refreshMinIntervalSeconds;
+
 
     public record UploadPayload(String originalFilename,
                                  String mimeType,
@@ -83,12 +89,18 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         }
         Long knowledgeId = request.getKnowledgeId();
         MultipartFile file = request.getFile();
-        String url = request.getUrl();
-        String chunkMode = request.getChunkMode();
+        String url = request.getUrl() == null ? null : request.getUrl().trim();
+        String chunkMode = normalizeChunkMode(request.getChunkMode());
+        boolean isUrlSource = StringUtils.hasText(url) && (file == null || file.isEmpty());
+        String scheduleCron = normalizeScheduleCron(request.getScheduleCron());
+        boolean scheduleEnabled = Boolean.TRUE.equals(request.getScheduleEnabled());
 
         verifyUploadKnowledge(knowledgeId);
+        validateScheduleConfig(scheduleEnabled, scheduleCron, isUrlSource);
+        LocalDateTime nextRefreshAt = resolveNextRefreshAt(scheduleEnabled, scheduleCron);
         UploadPayload payload = chooseUploadPayload(file, url);
-        persistUploadPayload(payload, knowledgeId, chunkMode);
+        persistUploadPayload(payload, knowledgeId, chunkMode, isUrlSource ? url : null, scheduleEnabled, scheduleCron,
+            nextRefreshAt);
     }
 
     @Override
@@ -167,14 +179,27 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         throw new ClientException(DOCUMENT_UPLOAD_NULL);
     }
 
-    private void persistUploadPayload(UploadPayload payload, Long knowledgeId, String chunkMode) {
+    private void persistUploadPayload(UploadPayload payload,
+                                      Long knowledgeId,
+                                      String chunkMode,
+                                      String sourceUrl,
+                                      boolean scheduleEnabled,
+                                      String scheduleCron,
+                                      LocalDateTime nextRefreshAt) {
         DocumentDO document = lifecycleService.findDocumentByMd5AndUserId(payload.md5, UserContext.getUserId());
         if (document != null) {
             throw new ClientException(DOCUMENT_EXISTS);
         }
         try {
             rustfsStorage.upload(payload);
-            document = lifecycleService.createPendingDocument(payload, knowledgeId);
+            document = lifecycleService.createPendingDocument(
+                payload,
+                knowledgeId,
+                sourceUrl,
+                scheduleEnabled ? 1 : 0,
+                scheduleEnabled ? scheduleCron : null,
+                scheduleEnabled ? nextRefreshAt : null,
+                chunkMode);
             // 通过任务消息触发离线摄取，接口可快速返回。
             DocumentIngestionTask task = DocumentIngestionTask.initial(document.getId(), chunkMode);
             ingestionProducer.enqueue(task);
@@ -215,5 +240,52 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         // 有文档记录时统一落失败态，便于前端和运维定位失败原因。
         log.error("文件上传失败: documentId={}", document.getId(), error);
         lifecycleService.markFailed(document.getId(), error);
+    }
+
+    private String normalizeChunkMode(String chunkMode) {
+        if (!StringUtils.hasText(chunkMode)) {
+            return fileParseProperties.getChunkMode();
+        }
+        return chunkMode.trim();
+    }
+
+    private String normalizeScheduleCron(String scheduleCron) {
+        if (!StringUtils.hasText(scheduleCron)) {
+            return null;
+        }
+        return scheduleCron.trim();
+    }
+
+    private void validateScheduleConfig(boolean scheduleEnabled, String scheduleCron, boolean isUrlSource) {
+        if (!scheduleEnabled) {
+            return;
+        }
+        if (!isUrlSource) {
+            throw new ClientException("仅 URL 上传支持定时更新");
+        }
+        if (!StringUtils.hasText(scheduleCron)) {
+            throw new ClientException("定时表达式不能为空");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        try {
+            if (CronScheduleHelper.isIntervalLessThan(scheduleCron, now, refreshMinIntervalSeconds)) {
+                throw new ClientException("定时周期不能小于 " + refreshMinIntervalSeconds + " 秒");
+            }
+            LocalDateTime nextRunTime = CronScheduleHelper.nextRunTime(scheduleCron, now);
+            if (nextRunTime == null) {
+                throw new ClientException("无法计算下一次执行时间");
+            }
+        } catch (ClientException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ClientException("定时表达式不合法");
+        }
+    }
+
+    private LocalDateTime resolveNextRefreshAt(boolean scheduleEnabled, String scheduleCron) {
+        if (!scheduleEnabled) {
+            return null;
+        }
+        return CronScheduleHelper.nextRunTime(scheduleCron, LocalDateTime.now());
     }
 }

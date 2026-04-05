@@ -32,7 +32,13 @@ public class DocumentLifecycleService {
 
     private final DocumentMapper documentMapper;
 
-    public DocumentDO createPendingDocument(DocumentServiceImpl.UploadPayload payload, Long knowledgeId) {
+    public DocumentDO createPendingDocument(DocumentServiceImpl.UploadPayload payload,
+                                            Long knowledgeId,
+                                            String sourceUrl,
+                                            Integer scheduleEnabled,
+                                            String scheduleCron,
+                                            LocalDateTime nextRefreshAt,
+                                            String chunkMode) {
         DocumentDO record = new DocumentDO();
         record.setMd5Hash(payload.md5());
         record.setOriginalFileName(payload.originalFilename());
@@ -40,6 +46,12 @@ public class DocumentLifecycleService {
         record.setProcessingStatus(PENDING.getCode());
         record.setUserId(UserContext.getUserId());
         record.setKnowledgeId(knowledgeId);
+        record.setSourceUrl(sourceUrl);
+        record.setScheduleEnabled(scheduleEnabled);
+        record.setScheduleCron(scheduleCron);
+        record.setChunkMode(chunkMode);
+        record.setNextRefreshAt(nextRefreshAt);
+        record.setLastRefreshAt(null);
         record.setFailureReason(null);
         documentMapper.insert(record);
         return record;

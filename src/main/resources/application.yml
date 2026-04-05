@@ -88,6 +88,12 @@ file:
     max-extracted-chars: 800000
     max-cleaned-chars: 500000
 
+document:
+  refresh:
+    scan-delay-ms: 10000
+    batch-size: 20
+    min-interval-seconds: 60
+
 elasticsearch:
   host: localhost
   port: 9200

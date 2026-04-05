@@ -39,6 +39,24 @@ public class DocumentDO extends BaseDO {
 
     private Long knowledgeId;
 
+    private String sourceUrl;
+
+    /**
+     * 是否启用 URL 定时更新：1-启用，0-禁用
+     */
+    private Integer scheduleEnabled;
+
+    /**
+     * Spring cron 表达式
+     */
+    private String scheduleCron;
+
+    private String chunkMode;
+
+    private LocalDateTime nextRefreshAt;
+
+    private LocalDateTime lastRefreshAt;
+
     private String failureReason;
 
     private LocalDateTime processedAt;

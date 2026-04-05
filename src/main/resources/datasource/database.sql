@@ -41,6 +41,12 @@ CREATE TABLE document (
                         processing_status   TINYINT          NOT NULL DEFAULT 0 COMMENT '处理状态：0-待处理，1-处理中，2-已完成，-1-失败',
                         user_id             bigint(20)      NOT NULL COMMENT '上传用户标识',
                         knowledge_id        BIGINT           NOT NULL COMMENT '绑定知识库ID',
+                        source_url          VARCHAR(1024)    DEFAULT NULL COMMENT '来源URL（URL上传时记录）',
+                        schedule_enabled    TINYINT(1)       NOT NULL DEFAULT 0 COMMENT '是否启用定时刷新：1-启用，0-禁用',
+                        schedule_cron       VARCHAR(128)     DEFAULT NULL COMMENT '定时刷新cron表达式',
+                        chunk_mode          VARCHAR(32)      DEFAULT NULL COMMENT '离线分块模式',
+                        next_refresh_at     DATETIME         DEFAULT NULL COMMENT '下次定时刷新时间',
+                        last_refresh_at     DATETIME         DEFAULT NULL COMMENT '上次定时刷新时间',
                         failure_reason      VARCHAR(512)     DEFAULT NULL COMMENT '失败原因',
                         processed_at        DATETIME         DEFAULT NULL COMMENT '处理完成时间',
                         `create_time` datetime     DEFAULT NULL COMMENT '创建时间',
@@ -48,7 +54,8 @@ CREATE TABLE document (
                         `del_flag`    tinyint(1)   DEFAULT 0 COMMENT '删除标识 0：未删除 1：已删除',
                         PRIMARY KEY (id),
                         UNIQUE KEY uk_user_md5_hash (user_id, md5_hash) COMMENT '用户内MD5唯一索引，防止重复上传',
-                        INDEX idx_knowledge_id (knowledge_id) COMMENT '知识库索引'
+                        INDEX idx_knowledge_id (knowledge_id) COMMENT '知识库索引',
+                        INDEX idx_schedule_scan (schedule_enabled, next_refresh_at) COMMENT '定时任务扫描索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档记录表';
 
 DROP TABLE IF EXISTS chunk;
