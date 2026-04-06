@@ -6,7 +6,10 @@ import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_NAME_DUPL
 import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_NAME_EMPTY;
 import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_NOT_EXISTS;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.user.UserContext;
@@ -16,6 +19,7 @@ import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
 import org.buaa.rag.dto.req.KnowledgeCreateReqDTO;
 import org.buaa.rag.dto.req.KnowledgeUpdateReqDTO;
+import org.buaa.rag.dto.resp.KnowledgeListRespDTO;
 import org.buaa.rag.service.KnowledgeService;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -56,14 +60,49 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
     }
 
     @Override
-    public List<KnowledgeDO> listMine() {
+    public List<KnowledgeListRespDTO> listMine() {
         Long userId = requireCurrentUserId();
-        return baseMapper.selectList(
+        List<KnowledgeDO> knowledgeList = baseMapper.selectList(
             Wrappers.lambdaQuery(KnowledgeDO.class)
                 .eq(KnowledgeDO::getUserId, userId)
                 .eq(KnowledgeDO::getDelFlag, 0)
                 .orderByDesc(KnowledgeDO::getId)
         );
+        if (knowledgeList.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 批量查询每个知识库的文档数量
+        List<Long> knowledgeIds = knowledgeList.stream()
+            .map(KnowledgeDO::getId)
+            .collect(Collectors.toList());
+        Map<Long, Long> docCountMap = countDocumentsByKnowledgeIds(knowledgeIds);
+
+        return knowledgeList.stream()
+            .map(kb -> KnowledgeListRespDTO.builder()
+                .id(kb.getId())
+                .name(kb.getName())
+                .description(kb.getDescription())
+                .documentCount(docCountMap.getOrDefault(kb.getId(), 0L))
+                .build())
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * 批量统计各知识库下的文档数量
+     */
+    private Map<Long, Long> countDocumentsByKnowledgeIds(List<Long> knowledgeIds) {
+        if (knowledgeIds == null || knowledgeIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<DocumentDO> documents = documentMapper.selectList(
+            Wrappers.lambdaQuery(DocumentDO.class)
+                .select(DocumentDO::getKnowledgeId)
+                .in(DocumentDO::getKnowledgeId, knowledgeIds)
+                .eq(DocumentDO::getDelFlag, 0)
+        );
+        return documents.stream()
+            .collect(Collectors.groupingBy(DocumentDO::getKnowledgeId, Collectors.counting()));
     }
 
     @Override

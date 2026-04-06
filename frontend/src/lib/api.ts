@@ -1,123 +1,88 @@
 import type { ApiResult } from "../types";
 import { loadAuth } from "./auth-storage";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+const BASE = import.meta.env.VITE_API_BASE_URL || "";
 
-function buildUrl(path: string): string {
-  if (!API_BASE) {
-    return path;
-  }
-  return `${API_BASE}${path}`;
+/** 拼接 API 基础路径与请求路径 */
+function resolveEndpoint(path: string): string {
+  return BASE ? `${BASE}${path}` : path;
 }
 
-async function parseResult<T>(response: Response): Promise<T> {
-  let payload: ApiResult<T> | null = null;
+/** 构造包含认证信息的请求头（若已登录） */
+function authHeaders(): Record<string, string> | undefined {
+  const auth = loadAuth();
+  return auth ? { username: auth.username, token: auth.token } : undefined;
+}
+
+/** 从 fetch Response 中解包统一结果并提取 data 字段 */
+async function unwrapResponse<T>(resp: Response): Promise<T> {
+  let envelope: ApiResult<T> | null = null;
   try {
-    payload = (await response.json()) as ApiResult<T>;
+    envelope = (await resp.json()) as ApiResult<T>;
   } catch {
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+    throw new Error(resp.ok ? "响应格式错误" : `HTTP ${resp.status}`);
+  }
+  if (!resp.ok) {
+    throw new Error(envelope?.message ?? `HTTP ${resp.status}`);
+  }
+  if (envelope == null || typeof envelope !== "object") {
     throw new Error("响应格式错误");
   }
-  if (!response.ok) {
-    throw new Error(payload?.message || `HTTP ${response.status}`);
+  if (String(envelope.code) !== "0") {
+    throw new Error(envelope.message || "请求失败");
   }
-  if (!payload || typeof payload !== "object") {
-    throw new Error("响应格式错误");
-  }
-  if (payload.code !== "0") {
-    throw new Error(payload.message || "请求失败");
-  }
-  return payload.data;
+  return envelope.data;
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const auth = loadAuth();
-  const response = await fetch(buildUrl(path), {
+  const resp = await fetch(resolveEndpoint(path), {
     method: "GET",
-    headers: auth
-      ? {
-          username: auth.username,
-          token: auth.token
-        }
-      : undefined
+    headers: authHeaders()
   });
-  return parseResult<T>(response);
+  return unwrapResponse<T>(resp);
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const auth = loadAuth();
-  const response = await fetch(buildUrl(path), {
+  const hdrs = authHeaders() ?? {};
+  const resp = await fetch(resolveEndpoint(path), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(auth
-        ? {
-            username: auth.username,
-            token: auth.token
-          }
-        : {})
-    },
+    headers: { "Content-Type": "application/json", ...hdrs },
     body: JSON.stringify(body)
   });
-  return parseResult<T>(response);
+  return unwrapResponse<T>(resp);
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
-  const auth = loadAuth();
-  const response = await fetch(buildUrl(path), {
+  const resp = await fetch(resolveEndpoint(path), {
     method: "DELETE",
-    headers: auth
-      ? {
-          username: auth.username,
-          token: auth.token
-        }
-      : undefined
+    headers: authHeaders()
   });
-  return parseResult<T>(response);
+  return unwrapResponse<T>(resp);
 }
 
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
-  const auth = loadAuth();
-  const response = await fetch(buildUrl(path), {
+  const hdrs = authHeaders() ?? {};
+  const resp = await fetch(resolveEndpoint(path), {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      ...(auth
-        ? {
-            username: auth.username,
-            token: auth.token
-          }
-        : {})
-    },
+    headers: { "Content-Type": "application/json", ...hdrs },
     body: JSON.stringify(body)
   });
-  return parseResult<T>(response);
+  return unwrapResponse<T>(resp);
 }
 
 export async function apiPostForm<T>(path: string, form: FormData): Promise<T> {
-  const auth = loadAuth();
-  const response = await fetch(buildUrl(path), {
+  const resp = await fetch(resolveEndpoint(path), {
     method: "POST",
-    headers: auth
-      ? {
-          username: auth.username,
-          token: auth.token
-        }
-      : undefined,
+    headers: authHeaders(),
     body: form
   });
-  return parseResult<T>(response);
+  return unwrapResponse<T>(resp);
 }
 
 export function apiUrl(path: string): string {
-  return buildUrl(path);
+  return resolveEndpoint(path);
 }
 
 export function toErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  return fallback;
+  return error instanceof Error && error.message ? error.message : fallback;
 }

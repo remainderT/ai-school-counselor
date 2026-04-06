@@ -33,7 +33,7 @@ public enum OfflineErrorCodeEnum implements IErrorCode {
 
     KNOWLEDGE_NAME_EMPTY("C000203", "知识库名称不能为空"),
 
-    KNOWLEDGE_NOT_EXISTS("C000203", "知识库不存在"),
+    KNOWLEDGE_NOT_EXISTS("C000202", "知识库不存在"),
 
     KNOWLEDGE_ACCESS_DENIED("C000204", "无权限操作该知识库"),
 

@@ -1,18 +1,15 @@
 package org.buaa.rag.common.convention.errorcode;
 
 /**
- * 错误码接口
- * 定义错误码的基本规范，所有错误码枚举需实现此接口
+ * 统一错误码契约，所有业务错误码枚举均须实现此接口。
+ * <p>
+ * 编码规则：A 前缀表示客户端异常，B 前缀表示服务端异常，C 前缀表示第三方服务异常。
  */
 public interface IErrorCode {
 
-    /**
-     * 错误码
-     */
+    /** 获取错误编号 */
     String code();
 
-    /**
-     * 错误信息
-     */
+    /** 获取可读错误描述 */
     String message();
 }

@@ -6,6 +6,7 @@ import java.util.Map;
 
 import org.buaa.rag.core.offline.ingestion.DocumentIngestionTask;
 import org.buaa.rag.core.offline.ingestion.DocumentIngestionWorkflow;
+import org.buaa.rag.core.offline.ingestion.IngestionExceptionUtils;
 import org.buaa.rag.properties.StreamProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.connection.stream.Consumer;
@@ -125,7 +126,7 @@ public class IngestionConsumer {
     }
 
     private boolean handleFailure(DocumentIngestionTask task, Exception ex) {
-        boolean retryable = DocumentIngestionWorkflow.isRetryable(ex);
+        boolean retryable = IngestionExceptionUtils.isRetryable(ex);
         if (retryable && task.retryCount() < props.getMaxRetries()) {
             DocumentIngestionTask retryTask = task.nextRetry();
             producer.enqueue(retryTask);
@@ -134,7 +135,7 @@ public class IngestionConsumer {
             return true;
         } else {
             // 不可重试或达到上限时，标记最终失败并 ACK 当前消息，避免无限重放。
-            ingestionWorkflow.markFailed(task.documentId(), DocumentIngestionWorkflow.summarizeFailureReason(ex));
+            ingestionWorkflow.markFailed(task.documentId(), IngestionExceptionUtils.summarizeFailureReason(ex));
             if (retryable) {
                 log.error("文档摄取失败，达到最大重试次数: documentId={}, retries={}",
                     task.documentId(), task.retryCount(), ex);

@@ -1,4 +1,4 @@
-package org.buaa.rag.service.impl;
+package org.buaa.rag.core.online.retrieval;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -21,8 +21,6 @@ import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.MessageFeedbackMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
 import org.buaa.rag.core.model.RetrievalMatch;
-import org.buaa.rag.core.offline.index.MilvusRetrieverService;
-import org.buaa.rag.service.SmartRetrieverService;
 import org.buaa.rag.core.offline.index.VectorEncoding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,11 +54,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     private final MessageSourceMapper sourceRepository;
     private final EsProperties esProperties;
     private final MilvusRetrieverService milvusRetrieverService;
-
-    @Override
-    public List<RetrievalMatch> retrieve(String queryText, int topK) {
-        return retrieve(queryText, topK, null);
-    }
 
     @Override
     public List<RetrievalMatch> retrieve(String queryText, int topK, String userId) {
@@ -531,7 +524,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             }
             for (int i = 0; i < resultList.size(); i++) {
                 RetrievalMatch match = resultList.get(i);
-                String key = buildMatchKey(match);
+                String key = match.matchKey();
                 fused.computeIfAbsent(key, ignored -> new RetrievalMatch(
                     match.getFileMd5(),
                     match.getChunkId(),
@@ -551,10 +544,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             ))
             .limit(topK)
             .collect(Collectors.toList());
-    }
-
-    private String buildMatchKey(RetrievalMatch match) {
-        return match.getFileMd5() + "#" + (match.getChunkId() == null ? "null" : match.getChunkId());
     }
 
     private List<String> loadMd5ByOwnerId(String userId) {

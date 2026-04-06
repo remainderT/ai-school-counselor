@@ -14,17 +14,14 @@ import org.springframework.stereotype.Component;
 import org.xml.sax.ContentHandler;
 import org.xml.sax.SAXException;
 
-import lombok.RequiredArgsConstructor;
-
 /**
  * Tika 通用解析器
  */
 @Component
-@RequiredArgsConstructor
 public class TikaDocumentParser implements DocumentParser {
 
     private static final int DEFAULT_WRITE_LIMIT = 800000;
-    private final TextCleaningService textCleaningService;
+
 
     @Override
     public String getParserType() {
@@ -62,7 +59,7 @@ public class TikaDocumentParser implements DocumentParser {
             "resourceName", metadata.get("resourceName") == null ? "" : metadata.get("resourceName"),
             "contentType", metadata.get(Metadata.CONTENT_TYPE) == null ? "" : metadata.get(Metadata.CONTENT_TYPE)
         );
-        return DocumentParseResult.of(textCleaningService.clean(handler.toString(), 0), meta);
+        return DocumentParseResult.withMetadata(handler.toString(), meta);
     }
 
     @Override

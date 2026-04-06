@@ -29,10 +29,11 @@ export interface KnowledgeItem {
   userId?: string;
   name: string;
   description?: string;
+  documentCount?: number;
 }
 
 export interface DocumentItem {
-  id: string;
+  id: number;
   knowledgeId?: number;
   originalFileName?: string;
   fileName?: string;
@@ -40,6 +41,17 @@ export interface DocumentItem {
   processingStatus?: number;
   processingStatusDesc?: string;
   createTime?: string;
+  chunkCount?: number;
+}
+
+export interface ChunkItem {
+  id: number;
+  documentId: number;
+  fragmentIndex: number;
+  textData?: string;
+  encodingModel?: string;
+  md5Hash?: string;
+  tokenEstimate?: number;
 }
 
 export interface StreamEvent {
@@ -76,8 +88,6 @@ export interface IntentNodeItem {
   keywords?: string[];
   knowledgeBaseId?: string;
   actionService?: string;
-  nodeLevel?: string;
-  nodeKind?: string;
   mcpToolId?: string;
   topK?: number;
   sortOrder?: number;

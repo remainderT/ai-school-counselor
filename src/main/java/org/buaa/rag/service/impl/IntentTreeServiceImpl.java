@@ -3,9 +3,9 @@ package org.buaa.rag.service.impl;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,8 +19,7 @@ import org.buaa.rag.core.model.IntentNode;
 import org.buaa.rag.dto.req.IntentNodeCreateReqDTO;
 import org.buaa.rag.dto.req.IntentNodeUpdateReqDTO;
 import org.buaa.rag.dto.resp.IntentNodeTreeRespDTO;
-import org.buaa.rag.core.online.intent.IntentTreeService;
-import org.buaa.rag.service.IntentTreeManageService;
+import org.buaa.rag.service.IntentTreeService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -33,10 +32,10 @@ import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
-public class IntentTreeManageServiceImpl implements IntentTreeManageService {
+public class IntentTreeServiceImpl implements IntentTreeService {
 
     private final IntentNodeMapper intentNodeMapper;
-    private final IntentTreeService intentTreeService;
+    private final org.buaa.rag.core.online.intent.IntentTreeService intentTreeService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -79,13 +78,10 @@ public class IntentTreeManageServiceImpl implements IntentTreeManageService {
             .promptSnippet(normalizeNullable(requestParam.getPromptSnippet()))
             .paramPromptTemplate(normalizeNullable(requestParam.getParamPromptTemplate()))
             .keywordsJson(toJsonArray(requestParam.getKeywords()))
-            .knowledgeBaseId(normalizeNullable(requestParam.getKnowledgeBaseId()))
+            .knowledgeBaseId(requestParam.getKnowledgeBaseId())
             .actionService(normalizeNullable(requestParam.getActionService()))
-            .nodeLevel(normalizeNullable(requestParam.getNodeLevel()))
-            .nodeKind(normalizeNullable(requestParam.getNodeKind()))
             .mcpToolId(normalizeNullable(requestParam.getMcpToolId()))
             .topK(requestParam.getTopK())
-            .sortOrder(requestParam.getSortOrder() == null ? 0 : requestParam.getSortOrder())
             .enabled(requestParam.getEnabled() == null ? 1 : normalizeEnabled(requestParam.getEnabled()))
             .build();
         intentNodeMapper.insert(entity);
@@ -110,9 +106,9 @@ public class IntentTreeManageServiceImpl implements IntentTreeManageService {
         String nextParentId = requestParam.getParentId() == null
             ? existing.getParentId()
             : normalizeNullable(requestParam.getParentId());
-        String nextKnowledgeBaseId = requestParam.getKnowledgeBaseId() == null
+        Long nextKnowledgeBaseId = requestParam.getKnowledgeBaseId() == null
             ? existing.getKnowledgeBaseId()
-            : normalizeNullable(requestParam.getKnowledgeBaseId());
+            : requestParam.getKnowledgeBaseId();
         String nextActionService = requestParam.getActionService() == null
             ? existing.getActionService()
             : normalizeNullable(requestParam.getActionService());
@@ -150,20 +146,11 @@ public class IntentTreeManageServiceImpl implements IntentTreeManageService {
         if (requestParam.getActionService() != null) {
             existing.setActionService(nextActionService);
         }
-        if (requestParam.getNodeLevel() != null) {
-            existing.setNodeLevel(normalizeNullable(requestParam.getNodeLevel()));
-        }
-        if (requestParam.getNodeKind() != null) {
-            existing.setNodeKind(normalizeNullable(requestParam.getNodeKind()));
-        }
         if (requestParam.getMcpToolId() != null) {
             existing.setMcpToolId(normalizeNullable(requestParam.getMcpToolId()));
         }
         if (requestParam.getTopK() != null) {
             existing.setTopK(requestParam.getTopK());
-        }
-        if (requestParam.getSortOrder() != null) {
-            existing.setSortOrder(requestParam.getSortOrder());
         }
         if (requestParam.getEnabled() != null) {
             existing.setEnabled(normalizeEnabled(requestParam.getEnabled()));
@@ -218,66 +205,6 @@ public class IntentTreeManageServiceImpl implements IntentTreeManageService {
         intentTreeService.refreshTreeSnapshot();
     }
 
-    @Override
-    public void reloadCache() {
-        intentTreeService.refreshTreeSnapshot();
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public int initializeFromRuntimeTree() {
-        intentTreeService.loadTree();
-        var rootOpt = intentTreeService.root();
-        if (rootOpt.isEmpty()) {
-            return 0;
-        }
-        List<IntentNode> all = flattenTree(rootOpt.get());
-        if (all.isEmpty()) {
-            return 0;
-        }
-        Set<String> existingNodeIds = intentNodeMapper.selectList(
-            Wrappers.lambdaQuery(IntentNodeDO.class)
-                .eq(IntentNodeDO::getDelFlag, 0)
-                .select(IntentNodeDO::getNodeId)
-        ).stream().map(IntentNodeDO::getNodeId).collect(Collectors.toCollection(HashSet::new));
-
-        int inserted = 0;
-        int order = 0;
-        for (IntentNode node : all) {
-            if (node == null || !StringUtils.hasText(node.getNodeId())) {
-                continue;
-            }
-            if (existingNodeIds.contains(node.getNodeId())) {
-                continue;
-            }
-            IntentNodeDO entity = IntentNodeDO.builder()
-                .nodeId(node.getNodeId().trim())
-                .nodeName(node.getNodeName())
-                .parentId(normalizeNullable(node.getParentId()))
-                .nodeType(node.getType() == null ? IntentNode.NodeType.GROUP.name() : node.getType().name())
-                .description(normalizeNullable(node.getDescription()))
-                .promptTemplate(normalizeNullable(node.getPromptTemplate()))
-                .promptSnippet(normalizeNullable(node.getPromptSnippet()))
-                .paramPromptTemplate(normalizeNullable(node.getParamPromptTemplate()))
-                .keywordsJson(toJsonArray(node.getKeywords()))
-                .knowledgeBaseId(normalizeNullable(node.getKnowledgeBaseId()))
-                .actionService(normalizeNullable(node.getActionService()))
-                .nodeLevel(node.getLevel() == null ? null : node.getLevel().name())
-                .nodeKind(node.getKind() == null ? null : node.getKind().name())
-                .mcpToolId(normalizeNullable(node.getMcpToolId()))
-                .topK(node.getTopK())
-                .sortOrder(order++)
-                .enabled(1)
-                .build();
-            intentNodeMapper.insert(entity);
-            inserted++;
-        }
-        if (inserted > 0) {
-            intentTreeService.refreshTreeSnapshot();
-        }
-        return inserted;
-    }
-
     private void batchSetEnabled(List<Long> ids, int enabled) {
         List<IntentNodeDO> targets = listActiveByIds(ids);
         if (targets.isEmpty()) {
@@ -306,7 +233,7 @@ public class IntentTreeManageServiceImpl implements IntentTreeManageService {
         return intentNodeMapper.selectList(
             Wrappers.lambdaQuery(IntentNodeDO.class)
                 .eq(IntentNodeDO::getDelFlag, 0)
-                .orderByAsc(IntentNodeDO::getSortOrder, IntentNodeDO::getId)
+                .orderByAsc(IntentNodeDO::getCreateTime, IntentNodeDO::getId)
         );
     }
 
@@ -373,8 +300,8 @@ public class IntentTreeManageServiceImpl implements IntentTreeManageService {
         }
     }
 
-    private void validateNodeTypeAndFields(String nodeType, String knowledgeBaseId, String actionService) {
-        if (IntentNode.NodeType.RAG_QA.name().equals(nodeType) && !StringUtils.hasText(knowledgeBaseId)) {
+    private void validateNodeTypeAndFields(String nodeType, Long knowledgeBaseId, String actionService) {
+        if (IntentNode.NodeType.RAG_QA.name().equals(nodeType) && knowledgeBaseId == null) {
             throw new ClientException("RAG_QA 节点必须指定 knowledgeBaseId");
         }
         if (IntentNode.NodeType.API_ACTION.name().equals(nodeType) && !StringUtils.hasText(actionService)) {
@@ -459,10 +386,9 @@ public class IntentTreeManageServiceImpl implements IntentTreeManageService {
         }
         for (List<IntentNodeDO> children : childrenMap.values()) {
             children.sort((a, b) -> {
-                int left = a.getSortOrder() == null ? 0 : a.getSortOrder();
-                int right = b.getSortOrder() == null ? 0 : b.getSortOrder();
-                if (left != right) {
-                    return Integer.compare(left, right);
+                int timeCompare = compareDate(a.getCreateTime(), b.getCreateTime());
+                if (timeCompare != 0) {
+                    return timeCompare;
                 }
                 long idA = a.getId() == null ? 0L : a.getId();
                 long idB = b.getId() == null ? 0L : b.getId();
@@ -503,11 +429,8 @@ public class IntentTreeManageServiceImpl implements IntentTreeManageService {
         dto.setKeywords(parseKeywords(node.getKeywordsJson()));
         dto.setKnowledgeBaseId(node.getKnowledgeBaseId());
         dto.setActionService(node.getActionService());
-        dto.setNodeLevel(node.getNodeLevel());
-        dto.setNodeKind(node.getNodeKind());
         dto.setMcpToolId(node.getMcpToolId());
         dto.setTopK(node.getTopK());
-        dto.setSortOrder(node.getSortOrder());
         dto.setEnabled(node.getEnabled());
 
         List<IntentNodeDO> children = childrenMap.getOrDefault(node.getNodeId(), List.of());
@@ -523,18 +446,9 @@ public class IntentTreeManageServiceImpl implements IntentTreeManageService {
         return dto;
     }
 
-    private List<IntentNode> flattenTree(IntentNode root) {
-        List<IntentNode> all = new ArrayList<>();
-        Deque<IntentNode> stack = new ArrayDeque<>();
-        stack.push(root);
-        while (!stack.isEmpty()) {
-            IntentNode current = stack.pop();
-            all.add(current);
-            List<IntentNode> children = intentTreeService.children(current.getNodeId());
-            for (int i = children.size() - 1; i >= 0; i--) {
-                stack.push(children.get(i));
-            }
-        }
-        return all;
+    private int compareDate(Date left, Date right) {
+        long leftTs = left == null ? 0L : left.getTime();
+        long rightTs = right == null ? 0L : right.getTime();
+        return Long.compare(leftTs, rightTs);
     }
 }

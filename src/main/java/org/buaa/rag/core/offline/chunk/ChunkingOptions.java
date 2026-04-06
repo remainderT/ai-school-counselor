@@ -4,19 +4,24 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 分块参数
+ * 分块参数配置。
+ *
+ * @param chunkSize   每块目标大小（字符数）
+ * @param overlapSize 前后块重叠区域大小（字符数）
+ * @param metadata    策略级附加参数（如 targetChars、maxChars 等）
  */
 public record ChunkingOptions(int chunkSize, int overlapSize, Map<String, Object> metadata) {
 
     public ChunkingOptions {
-        metadata = metadata == null ? new HashMap<>() : metadata;
+        metadata = (metadata != null) ? metadata : new HashMap<>();
     }
 
-    public <T> T getMetadata(String key, T defaultValue) {
-        if (!metadata.containsKey(key)) {
-            return defaultValue;
-        }
-        Object value = metadata.get(key);
-        return value == null ? defaultValue : (T) value;
+    /**
+     * 安全获取 metadata 中的类型化参数，不存在时返回默认值。
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T param(String key, T fallback) {
+        Object val = metadata.get(key);
+        return val != null ? (T) val : fallback;
     }
 }

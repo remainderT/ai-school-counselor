@@ -10,27 +10,33 @@ import java.util.stream.Collectors;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.properties.SearchChannelProperties;
-import org.buaa.rag.service.SmartRetrieverService;
+import org.buaa.rag.core.online.retrieval.SmartRetrieverService;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 意图定向检索通道
- * 基于高置信意图执行精准召回
+ * 意图定向检索通道。
+ * <p>
+ * 当存在高置信意图时执行精准召回，支持多意图并行检索后合并去重。
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class IntentDirectedSearchChannel implements SearchChannel {
 
     private final SmartRetrieverService smartRetrieverService;
     private final SearchChannelProperties properties;
-    @Qualifier("retrievalChannelExecutor")
     private final Executor retrievalChannelExecutor;
+
+    public IntentDirectedSearchChannel(SmartRetrieverService smartRetrieverService,
+                                       SearchChannelProperties properties,
+                                       @Qualifier("retrievalChannelExecutor") Executor retrievalChannelExecutor) {
+        this.smartRetrieverService = smartRetrieverService;
+        this.properties = properties;
+        this.retrievalChannelExecutor = retrievalChannelExecutor;
+    }
 
     @Override
     public String getName() {
@@ -43,64 +49,65 @@ public class IntentDirectedSearchChannel implements SearchChannel {
     }
 
     @Override
-    public boolean isEnabled(SearchContext context) {
+    public boolean canActivate(SearchContext context) {
         if (!properties.getChannels().getIntentDirected().isEnabled()) {
             return false;
         }
+        double minScore = properties.getChannels().getIntentDirected().getMinIntentScore();
         List<IntentDecision> decisions = context.getIntentDecisions();
         if (decisions != null && !decisions.isEmpty()) {
-            double minScore = properties.getChannels().getIntentDirected().getMinIntentScore();
-            return decisions.stream().anyMatch(decision ->
-                decision != null
-                    && decision.getAction() == IntentDecision.Action.ROUTE_RAG
-                    && (decision.getConfidence() == null || decision.getConfidence() >= minScore)
+            return decisions.stream().anyMatch(d ->
+                d != null
+                    && d.getAction() == IntentDecision.Action.ROUTE_RAG
+                    && (d.getConfidence() == null || d.getConfidence() >= minScore)
             );
         }
-        IntentDecision decision = context.getIntentDecision();
-        if (decision == null || decision.getAction() != IntentDecision.Action.ROUTE_RAG) {
+        IntentDecision single = context.getIntentDecision();
+        if (single == null || single.getAction() != IntentDecision.Action.ROUTE_RAG) {
             return false;
         }
-        double confidence = decision.getConfidence() == null ? 0.0 : decision.getConfidence();
-        return confidence >= properties.getChannels().getIntentDirected().getMinIntentScore();
+        double conf = single.getConfidence() == null ? 0.0 : single.getConfidence();
+        return conf >= minScore;
     }
 
     @Override
-    public SearchChannelResult search(SearchContext context) {
-        long start = System.currentTimeMillis();
+    public SearchChannelResult execute(SearchContext context) {
+        long t0 = System.currentTimeMillis();
         try {
             int multiplier = Math.max(1, properties.getChannels().getIntentDirected().getTopKMultiplier());
-            int topK = Math.max(1, context.getTopK() * multiplier);
+            int effectiveTopK = Math.max(1, context.getTopK() * multiplier);
             List<IntentDecision> decisions = context.getIntentDecisions();
-            List<RetrievalMatch> matches;
-            String query;
+            List<RetrievalMatch> hits;
+            String queryUsed;
             if (decisions != null && !decisions.isEmpty()) {
-                matches = searchMultiIntent(context, decisions, topK);
-                query = context.getMainQuery();
+                hits = fetchMultiIntent(context, decisions, effectiveTopK);
+                queryUsed = context.effectiveQuery();
             } else {
-                query = buildDirectedQuery(context.getMainQuery(), context.getIntentDecision());
-                matches = smartRetrieverService.retrieve(query, topK, context.getUserId());
+                queryUsed = enrichQuery(context.effectiveQuery(), context.getIntentDecision());
+                hits = smartRetrieverService.retrieve(queryUsed, effectiveTopK, context.getUserId());
             }
 
-            double confidence = context.getIntentDecision() != null && context.getIntentDecision().getConfidence() != null
+            double conf = context.getIntentDecision() != null && context.getIntentDecision().getConfidence() != null
                 ? context.getIntentDecision().getConfidence()
                 : 0.0;
 
             return SearchChannelResult.builder()
                 .channelType(SearchChannelType.INTENT_DIRECTED)
                 .channelName(getName())
-                .matches(matches)
-                .confidence(confidence)
-                .latencyMs(System.currentTimeMillis() - start)
-                .metadata(Map.of("query", query, "topK", topK, "intentCount", decisions == null ? 0 : decisions.size()))
+                .matches(hits)
+                .confidence(conf)
+                .elapsedMs(System.currentTimeMillis() - t0)
+                .metadata(Map.of("query", queryUsed, "topK", effectiveTopK,
+                                 "intentCount", decisions == null ? 0 : decisions.size()))
                 .build();
-        } catch (Exception e) {
-            log.warn("意图定向检索失败", e);
+        } catch (Exception ex) {
+            log.warn("意图定向检索失败", ex);
             return SearchChannelResult.builder()
                 .channelType(SearchChannelType.INTENT_DIRECTED)
                 .channelName(getName())
                 .matches(List.of())
                 .confidence(0.0)
-                .latencyMs(System.currentTimeMillis() - start)
+                .elapsedMs(System.currentTimeMillis() - t0)
                 .build();
         }
     }
@@ -110,108 +117,80 @@ public class IntentDirectedSearchChannel implements SearchChannel {
         return SearchChannelType.INTENT_DIRECTED;
     }
 
-    private String buildDirectedQuery(String query, IntentDecision decision) {
+    // ----- 内部方法 -----
+
+    private String enrichQuery(String query, IntentDecision decision) {
         String base = StringUtils.hasText(query) ? query.trim() : "";
         if (decision == null) {
             return base;
         }
-
-        StringBuilder builder = new StringBuilder(base);
-        appendIfAbsent(builder, base, decision.getLevel2());
-        appendIfAbsent(builder, base, decision.getLevel1());
-        return builder.toString().trim();
+        StringBuilder sb = new StringBuilder(base);
+        appendIfNotPresent(sb, base, decision.getLevel2());
+        appendIfNotPresent(sb, base, decision.getLevel1());
+        return sb.toString().trim();
     }
 
-    private void appendIfAbsent(StringBuilder builder, String base, String extra) {
+    private void appendIfNotPresent(StringBuilder sb, String base, String extra) {
         if (!StringUtils.hasText(extra)) {
             return;
         }
-        String normalized = extra.trim();
-        if (base.contains(normalized)) {
+        String trimmed = extra.trim();
+        if (base.contains(trimmed)) {
             return;
         }
-        if (!builder.isEmpty()) {
-            builder.append(' ');
+        if (!sb.isEmpty()) {
+            sb.append(' ');
         }
-        builder.append(normalized);
+        sb.append(trimmed);
     }
 
-    private List<RetrievalMatch> searchMultiIntent(SearchContext context,
+    private List<RetrievalMatch> fetchMultiIntent(SearchContext context,
                                                    List<IntentDecision> decisions,
                                                    int topK) {
         double minScore = properties.getChannels().getIntentDirected().getMinIntentScore();
-        List<IntentDecision> ragDecisions = decisions.stream()
-            .filter(decision -> decision != null && decision.getAction() == IntentDecision.Action.ROUTE_RAG)
-            .filter(decision -> decision.getConfidence() == null || decision.getConfidence() >= minScore)
+        List<IntentDecision> qualified = decisions.stream()
+            .filter(d -> d != null && d.getAction() == IntentDecision.Action.ROUTE_RAG)
+            .filter(d -> d.getConfidence() == null || d.getConfidence() >= minScore)
             .limit(4)
             .toList();
-        if (ragDecisions.isEmpty()) {
+        if (qualified.isEmpty()) {
             return List.of();
         }
 
-        List<CompletableFuture<List<RetrievalMatch>>> futures = ragDecisions.stream()
-            .map(decision -> CompletableFuture.supplyAsync(
-                () -> searchSingleIntent(context, decision, topK),
-                retrievalChannelExecutor
-            ))
+        List<CompletableFuture<List<RetrievalMatch>>> tasks = qualified.stream()
+            .map(d -> CompletableFuture.supplyAsync(
+                () -> fetchSingleIntent(context, d, topK), retrievalChannelExecutor))
             .toList();
 
-        Map<String, RetrievalMatch> dedup = futures.stream()
+        Map<String, RetrievalMatch> dedup = tasks.stream()
             .map(CompletableFuture::join)
             .flatMap(List::stream)
             .collect(Collectors.toMap(
-                this::keyOf,
-                match -> match,
-                (left, right) -> scoreOf(left) >= scoreOf(right) ? left : right
+                RetrievalMatch::matchKey,
+                m -> m,
+                (a, b) -> relevance(a) >= relevance(b) ? a : b
             ));
-        List<RetrievalMatch> merged = dedup.values().stream()
-            .sorted((a, b) -> Double.compare(scoreOf(b), scoreOf(a)))
+        List<RetrievalMatch> sorted = dedup.values().stream()
+            .sorted((a, b) -> Double.compare(relevance(b), relevance(a)))
             .toList();
-        if (merged.size() > topK) {
-            return merged.subList(0, topK);
-        }
-        return merged;
+        return sorted.size() > topK ? sorted.subList(0, topK) : sorted;
     }
 
-    private List<RetrievalMatch> searchSingleIntent(SearchContext context,
+    private List<RetrievalMatch> fetchSingleIntent(SearchContext context,
                                                     IntentDecision decision,
                                                     int topK) {
-        String query = buildDirectedQuery(context.getMainQuery(), decision);
-        Set<Long> knowledgeIds = parseKnowledgeIds(decision.getKnowledgeBaseId());
-        if (!knowledgeIds.isEmpty()) {
-            return smartRetrieverService.retrieveScoped(query, topK, context.getUserId(), knowledgeIds);
+        String query = enrichQuery(context.effectiveQuery(), decision);
+        Set<Long> kbIds = decision.getKnowledgeBaseId() != null
+            ? Set.of(decision.getKnowledgeBaseId())
+            : Set.of();
+        if (!kbIds.isEmpty()) {
+            return smartRetrieverService.retrieveScoped(query, topK, context.getUserId(), kbIds);
         }
         return smartRetrieverService.retrieve(query, topK, context.getUserId());
     }
 
-    private Set<Long> parseKnowledgeIds(String text) {
-        if (!StringUtils.hasText(text)) {
-            return Set.of();
-        }
-        return List.of(text.split(",")).stream()
-            .map(String::trim)
-            .filter(StringUtils::hasText)
-            .map(value -> {
-                try {
-                    return Long.valueOf(value);
-                } catch (Exception ignore) {
-                    return null;
-                }
-            })
-            .filter(id -> id != null)
-            .collect(Collectors.toSet());
-    }
 
-    private String keyOf(RetrievalMatch match) {
-        String md5 = match == null || match.getFileMd5() == null ? "unknown" : match.getFileMd5();
-        String chunk = match == null || match.getChunkId() == null ? "0" : String.valueOf(match.getChunkId());
-        return md5 + ":" + chunk;
-    }
-
-    private double scoreOf(RetrievalMatch match) {
-        if (match == null || match.getRelevanceScore() == null) {
-            return 0.0;
-        }
-        return match.getRelevanceScore();
+    private double relevance(RetrievalMatch m) {
+        return m == null || m.getRelevanceScore() == null ? 0.0 : m.getRelevanceScore();
     }
 }

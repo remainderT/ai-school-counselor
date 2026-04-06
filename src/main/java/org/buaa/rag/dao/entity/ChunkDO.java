@@ -1,5 +1,7 @@
 package org.buaa.rag.dao.entity;
 
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
 import lombok.AllArgsConstructor;
@@ -18,6 +20,7 @@ import lombok.NoArgsConstructor;
 @TableName("chunk")
 public class ChunkDO {
 
+    @TableId(type = IdType.AUTO)
     private Long id;
 
     private Long documentId;

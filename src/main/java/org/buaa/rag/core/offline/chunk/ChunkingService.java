@@ -5,7 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.buaa.rag.properties.FIleParseProperties;
+import org.buaa.rag.properties.FileParseProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -29,7 +29,7 @@ public class ChunkingService {
     private static final int DEFAULT_MAX_CHARS = 1800;
     private static final int DEFAULT_MIN_CHARS = 600;
 
-    private final FIleParseProperties fileParseProperties;
+    private final FileParseProperties fileParseProperties;
 
     // 直接组合两种具体策略，去掉 Strategy 接口和 Factory 的额外层级。
     private final FixedSizeChunkingStrategy fixedSizeChunkingStrategy = new FixedSizeChunkingStrategy();
@@ -49,7 +49,7 @@ public class ChunkingService {
 
         // 上传入参可覆盖全局默认策略，未指定时仍走配置值。
         String modeValue = StringUtils.hasText(overrideChunkMode) ? overrideChunkMode : fileParseProperties.getChunkMode();
-        ChunkingMode mode = ChunkingMode.fromValue(modeValue);
+        ChunkingMode mode = ChunkingMode.resolve(modeValue);
         int configuredChunkSize = Math.max(MIN_CHUNK_SIZE, fileParseProperties.getChunkSize());
         // 运行时传入值优先于配置值，便于不同离线任务按需调节 chunk 大小。
         int chunkSize = maxChunkSize > 0 ? Math.max(MIN_CHUNK_SIZE, maxChunkSize) : configuredChunkSize;

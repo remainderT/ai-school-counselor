@@ -9,24 +9,24 @@ import org.buaa.rag.dto.resp.ConversationSessionRespDTO;
 
 public interface ConversationService {
 
-    String obtainOrCreateSession(String userId);
+    String obtainOrCreateSession(Long userId);
 
-    ConversationSessionRespDTO createSession(String userId, String title);
+    ConversationSessionRespDTO createSession(Long userId, String title);
 
-    void deleteSession(String sessionId, String userIdPrefix);
+    void deleteSession(String sessionId, Long userId);
 
-    ConversationSessionRespDTO renameSession(String sessionId, String userIdPrefix, String title);
+    ConversationSessionRespDTO renameSession(String sessionId, Long userId, String title);
 
     List<Map<String, String>> loadConversationHistory(String sessionId);
 
     List<Map<String, String>> loadConversationContext(String sessionId);
 
     Long appendUserMessage(String sessionId,
-                           String userId,
+                           Long userId,
                            String userMessage);
 
     Long createAssistantPlaceholder(String sessionId,
-                                    String userId);
+                                    Long userId);
 
     void completeAssistantMessage(String sessionId,
                                   Long assistantMessageId,
@@ -37,13 +37,7 @@ public interface ConversationService {
                               Long assistantMessageId,
                               String fallbackResponse);
 
-    Long appendToHistory(String sessionId,
-                         String userId,
-                         String userMessage,
-                         String aiResponse,
-                         List<RetrievalMatch> sources);
-
-    List<ConversationSessionRespDTO> listSessions(String userIdPrefix);
+    List<ConversationSessionRespDTO> listSessions(Long userId);
 
     List<ConversationMessageRespDTO> listMessages(String sessionId, int limit);
 }

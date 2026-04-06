@@ -17,18 +17,6 @@ public class IntentNode {
         CHITCHAT      // 闲聊
     }
 
-    public enum NodeLevel {
-        DOMAIN,
-        CATEGORY,
-        TOPIC
-    }
-
-    public enum NodeKind {
-        KB,
-        MCP,
-        SYSTEM
-    }
-
     private String nodeId;
     private String nodeName;
     private String parentId;
@@ -38,10 +26,8 @@ public class IntentNode {
     private String promptSnippet;
     private String paramPromptTemplate;
     private List<String> keywords;
-    private String knowledgeBaseId;
+    private Long knowledgeBaseId;
     private String actionService;
-    private NodeLevel level;
-    private NodeKind kind;
     private String mcpToolId;
     private Integer topK;
     private List<String> children;

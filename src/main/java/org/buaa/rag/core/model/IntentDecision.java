@@ -31,5 +31,5 @@ public class IntentDecision {
     private Action action;
     private Strategy strategy = Strategy.HYBRID;
     private String promptTemplate;
-    private String knowledgeBaseId;
+    private Long knowledgeBaseId;
 }

@@ -89,13 +89,13 @@ export function useChatSessions(owner: string) {
   };
 
   const listSessions = async (_prefix: string): Promise<ConversationSessionItem[]> => {
-    return apiGet<ConversationSessionItem[]>("/api/rag/chat/sessions");
+    return apiGet<ConversationSessionItem[]>("/api/rag/conversations/sessions");
   };
 
   const loadHistory = async (conversationId: string, sessionId: string) => {
     const result = await historyReq.runAction(() => {
       const query = new URLSearchParams({ sessionId, limit: "160" }).toString();
-      return apiGet<ConversationMessageItem[]>(`/api/rag/chat/history?${query}`);
+      return apiGet<ConversationMessageItem[]>(`/api/rag/conversations/history?${query}`);
     }, {
       errorFallback: "加载会话历史失败",
       onError: setNotice
@@ -198,7 +198,7 @@ export function useChatSessions(owner: string) {
   const newConversation = async (): Promise<Conversation | null> => {
     const localId = genId();
     const result = await createReq.runAction(
-      () => apiPost<ConversationSessionItem>("/api/rag/chat/sessions", { title: "新会话" }),
+      () => apiPost<ConversationSessionItem>("/api/rag/conversations/sessions", { title: "新会话" }),
       {
         errorFallback: "创建会话失败",
         onError: setNotice
@@ -231,7 +231,7 @@ export function useChatSessions(owner: string) {
     }
     if (target.persisted && target.sessionId) {
       const result = await deleteReq.runAction(
-        () => apiDelete<void>(`/api/rag/chat/sessions/${encodeURIComponent(target.sessionId as string)}`),
+        () => apiDelete<void>(`/api/rag/conversations/sessions/${encodeURIComponent(target.sessionId as string)}`),
         {
           errorFallback: "删除会话失败",
           onError: setNotice
@@ -266,7 +266,7 @@ export function useChatSessions(owner: string) {
       return;
     }
     const result = await renameReq.runAction(
-      () => apiPut<ConversationSessionItem>(`/api/rag/chat/sessions/${encodeURIComponent(target.sessionId as string)}`, {
+      () => apiPut<ConversationSessionItem>(`/api/rag/conversations/sessions/${encodeURIComponent(target.sessionId as string)}`, {
         title
       }),
       {

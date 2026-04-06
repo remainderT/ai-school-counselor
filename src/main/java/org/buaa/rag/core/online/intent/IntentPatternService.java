@@ -23,6 +23,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+
 import co.elastic.clients.elasticsearch._types.mapping.Property;
 import co.elastic.clients.elasticsearch.core.BulkRequest;
 import co.elastic.clients.elasticsearch.core.BulkResponse;
@@ -32,18 +33,31 @@ import co.elastic.clients.elasticsearch.core.bulk.BulkOperation;
 import co.elastic.clients.elasticsearch.indices.CreateIndexRequest;
 import co.elastic.clients.elasticsearch.indices.ExistsRequest;
 import co.elastic.clients.elasticsearch.indices.PutMappingRequest;
-import lombok.RequiredArgsConstructor;
+import org.buaa.rag.properties.IntentRoutingProperties;
+
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class IntentPatternService {
 
     private final ElasticsearchClient esClient;
     private final VectorEncoding vectorEncoding;
     private final IntentNodeMapper intentNodeMapper;
     private final ObjectMapper objectMapper;
+    private final IntentRoutingProperties intentRoutingProperties;
+
+    public IntentPatternService(ElasticsearchClient esClient,
+                                VectorEncoding vectorEncoding,
+                                IntentNodeMapper intentNodeMapper,
+                                ObjectMapper objectMapper,
+                                IntentRoutingProperties intentRoutingProperties) {
+        this.esClient = esClient;
+        this.vectorEncoding = vectorEncoding;
+        this.intentNodeMapper = intentNodeMapper;
+        this.objectMapper = objectMapper;
+        this.intentRoutingProperties = intentRoutingProperties;
+    }
 
     @Value("${elasticsearch.intent-index:intent_patterns}")
     private String intentIndex;
@@ -76,7 +90,7 @@ public class IntentPatternService {
 
             var hit = resp.hits().hits().get(0);
             double score = normalizeConfidence(hit.score());
-            if (score < 0.7) {
+            if (score < intentRoutingProperties.getSemanticMinScore()) {
                 return Optional.empty();
             }
 
@@ -231,7 +245,7 @@ public class IntentPatternService {
                 Wrappers.lambdaQuery(IntentNodeDO.class)
                         .eq(IntentNodeDO::getDelFlag, 0)
                         .eq(IntentNodeDO::getEnabled, 1)
-                        .orderByAsc(IntentNodeDO::getSortOrder, IntentNodeDO::getId)
+                        .orderByAsc(IntentNodeDO::getCreateTime, IntentNodeDO::getId)
         );
         if (rows == null || rows.isEmpty()) {
             seedPatterns = List.of();

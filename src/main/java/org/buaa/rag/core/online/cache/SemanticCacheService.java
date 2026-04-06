@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.buaa.rag.common.util.VectorMathUtils;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.offline.index.VectorEncoding;
@@ -49,7 +50,7 @@ public class SemanticCacheService {
         CacheEntry best = null;
         double bestScore = 0.0;
         for (CacheEntry entry : cache.values()) {
-            double score = cosine(queryVector, entry.queryVector());
+            double score = VectorMathUtils.cosine(queryVector, entry.queryVector());
             if (score > bestScore) {
                 bestScore = score;
                 best = entry;
@@ -146,28 +147,6 @@ public class SemanticCacheService {
             log.debug("语义缓存向量编码失败: {}", e.getMessage());
             return null;
         }
-    }
-
-    private double cosine(float[] a, float[] b) {
-        if (a == null || b == null || a.length == 0 || b.length == 0 || a.length != b.length) {
-            return 0.0;
-        }
-        double dot = 0.0;
-        double normA = 0.0;
-        double normB = 0.0;
-        for (int i = 0; i < a.length; i++) {
-            dot += a[i] * b[i];
-            normA += a[i] * a[i];
-            normB += b[i] * b[i];
-        }
-        if (normA == 0.0 || normB == 0.0) {
-            return 0.0;
-        }
-        double cos = dot / (Math.sqrt(normA) * Math.sqrt(normB));
-        if (Double.isNaN(cos) || Double.isInfinite(cos)) {
-            return 0.0;
-        }
-        return Math.max(0.0, Math.min(1.0, (cos + 1.0) / 2.0));
     }
 
     private List<RetrievalMatch> copySources(List<RetrievalMatch> sources) {

@@ -69,31 +69,38 @@ export function KnowledgePanel() {
           <p className="admin-page-desc">管理知识库条目，为检索与问答提供数据来源</p>
         </div>
         <div className="admin-page-actions">
-          <button className="admin-btn admin-btn-primary" onClick={() => setShowCreate(!showCreate)}>
+          <button className="admin-btn admin-btn-primary" onClick={() => setShowCreate(true)}>
             + 创建知识库
           </button>
         </div>
       </div>
 
-      {/* Create Form */}
+      {/* Create Modal */}
       {showCreate && (
-        <div className="admin-card admin-card-highlight">
-          <div className="admin-card-header">
-            <h3 className="admin-card-title">创建知识库</h3>
-            <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => setShowCreate(false)}>取消</button>
-          </div>
-          <div className="admin-card-body">
-            <div className="admin-form-grid admin-form-grid-2">
-              <div className="admin-form-group">
-                <label className="admin-label">名称 *</label>
-                <input className="admin-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="输入知识库名称" />
+        <div className="admin-upload-modal">
+          <div className="admin-upload-modal-backdrop" onClick={() => setShowCreate(false)} />
+          <div className="admin-upload-modal-panel" style={{ width: "min(520px, 100%)" }}>
+            <div className="admin-upload-modal-header">
+              <div>
+                <h3 className="admin-card-title">创建知识库</h3>
+                <p className="admin-card-desc">添加新的知识库，用于检索与问答</p>
               </div>
-              <div className="admin-form-group">
-                <label className="admin-label">描述</label>
-                <input className="admin-input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="可选描述" />
+              <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => setShowCreate(false)}>✕</button>
+            </div>
+            <div className="admin-upload-modal-body">
+              <div className="admin-form-grid" style={{ marginBottom: 0 }}>
+                <div className="admin-form-group">
+                  <label className="admin-label">名称 *</label>
+                  <input className="admin-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="输入知识库名称" autoFocus />
+                </div>
+                <div className="admin-form-group">
+                  <label className="admin-label">描述</label>
+                  <input className="admin-input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="可选描述" />
+                </div>
               </div>
             </div>
-            <div className="admin-form-actions">
+            <div className="admin-upload-modal-footer">
+              <button className="admin-btn admin-btn-ghost" onClick={() => setShowCreate(false)}>取消</button>
               <button className="admin-btn admin-btn-primary" onClick={create} disabled={actionReq.loading || !name.trim()}>
                 {actionReq.loading ? "创建中..." : "创建"}
               </button>
@@ -116,18 +123,18 @@ export function KnowledgePanel() {
             <table className="admin-table">
               <thead>
                 <tr>
-                  <th style={{ width: 80 }}>ID</th>
                   <th>名称</th>
                   <th>描述</th>
+                  <th style={{ width: 100 }}>文档数</th>
                   <th style={{ width: 120 }}>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((item) => (
                   <tr key={item.id}>
-                    <td className="admin-table-num">{item.id}</td>
                     <td><strong>{item.name}</strong></td>
                     <td className="admin-table-text">{item.description || <span className="admin-muted">暂无描述</span>}</td>
+                    <td className="admin-table-num">{item.documentCount ?? 0}</td>
                     <td>
                       <button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => void remove(item.id)} disabled={actionReq.loading}>
                         删除

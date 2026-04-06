@@ -10,9 +10,9 @@ import java.util.Collection;
 import java.util.List;
 
 import org.buaa.rag.common.user.UserContext;
+import org.buaa.rag.core.model.UploadPayload;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
-import org.buaa.rag.service.impl.DocumentServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -32,7 +32,7 @@ public class DocumentLifecycleService {
 
     private final DocumentMapper documentMapper;
 
-    public DocumentDO createPendingDocument(DocumentServiceImpl.UploadPayload payload,
+    public DocumentDO createPendingDocument(UploadPayload payload,
                                             Long knowledgeId,
                                             String sourceUrl,
                                             Integer scheduleEnabled,
@@ -105,7 +105,7 @@ public class DocumentLifecycleService {
     }
 
     public boolean markFailed(Long documentId, Throwable throwable) {
-        return markFailed(documentId, DocumentIngestionWorkflow.summarizeFailureReason(throwable));
+        return markFailed(documentId, IngestionExceptionUtils.summarizeFailureReason(throwable));
     }
 
     public boolean markFailed(Long documentId, String failureReason) {
@@ -137,7 +137,7 @@ public class DocumentLifecycleService {
         updateWrapper
             .set(DocumentDO::getProcessingStatus, targetStatus)
             .set(DocumentDO::getProcessedAt, processedAt)
-            .set(DocumentDO::getFailureReason, DocumentIngestionWorkflow.normalizeFailureReason(failureReason));
+            .set(DocumentDO::getFailureReason, IngestionExceptionUtils.normalizeFailureReason(failureReason));
         return documentMapper.update(null, updateWrapper) > 0;
     }
 }

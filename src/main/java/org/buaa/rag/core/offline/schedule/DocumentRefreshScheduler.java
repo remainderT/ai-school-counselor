@@ -17,9 +17,9 @@ import org.buaa.rag.core.offline.ingestion.DocumentIngestionTask;
 import org.buaa.rag.core.offline.ingestion.DocumentLifecycleService;
 import org.buaa.rag.core.offline.parser.FileTypeValidate;
 import org.buaa.rag.core.offline.parser.FileTypeValidate.InspectedFile;
+import org.buaa.rag.core.model.UploadPayload;
 import org.buaa.rag.core.mq.IngestionProducer;
-import org.buaa.rag.properties.FIleParseProperties;
-import org.buaa.rag.service.impl.DocumentServiceImpl;
+import org.buaa.rag.properties.FileParseProperties;
 import org.buaa.rag.tool.RemoteURLFetcher;
 import org.buaa.rag.tool.RemoteURLFetcher.FetchedRemoteDocument;
 import org.buaa.rag.tool.RustfsStorage;
@@ -49,7 +49,7 @@ public class DocumentRefreshScheduler {
     private final RemoteURLFetcher remoteURLFetcher;
     private final RustfsStorage rustfsStorage;
     private final IngestionProducer ingestionProducer;
-    private final FIleParseProperties fileParseProperties;
+    private final FileParseProperties fileParseProperties;
 
     @Value("${document.refresh.batch-size:20}")
     private int batchSize;
@@ -133,7 +133,7 @@ public class DocumentRefreshScheduler {
         String chunkMode = StringUtils.hasText(document.getChunkMode())
             ? document.getChunkMode()
             : fileParseProperties.getChunkMode();
-        DocumentServiceImpl.UploadPayload payload = new DocumentServiceImpl.UploadPayload(
+        UploadPayload payload = new UploadPayload(
             inspectedFile.fileName(),
             inspectedFile.mimeType(),
             body.length,
@@ -165,7 +165,7 @@ public class DocumentRefreshScheduler {
             newMd5);
     }
 
-    private void rustfsStorageUpload(DocumentServiceImpl.UploadPayload payload,
+    private void rustfsStorageUpload(UploadPayload payload,
                                      Long documentId,
                                      LocalDateTime nextRunAt,
                                      LocalDateTime now) {
@@ -179,7 +179,7 @@ public class DocumentRefreshScheduler {
 
     private LocalDateTime resolveNextRun(String cron, LocalDateTime now) {
         try {
-            if (CronScheduleHelper.isIntervalLessThan(cron, now, refreshMinIntervalSeconds)) {
+            if (CronScheduleHelper.isIntervalTooShort(cron, now, refreshMinIntervalSeconds)) {
                 throw new ClientException("定时周期不能小于 " + refreshMinIntervalSeconds + " 秒");
             }
             return CronScheduleHelper.nextRunTime(cron, now);

@@ -10,16 +10,12 @@ import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Component;
 
-import lombok.RequiredArgsConstructor;
-
 /**
  * Markdown / 纯文本解析器
  */
 @Component
-@RequiredArgsConstructor
 public class MarkdownDocumentParser implements DocumentParser {
 
-    private final TextCleaningService textCleaningService;
 
     @Override
     public String getParserType() {
@@ -38,12 +34,19 @@ public class MarkdownDocumentParser implements DocumentParser {
                                      Map<String, Object> options) throws Exception {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
             String text = reader.lines().collect(Collectors.joining("\n"));
-            return DocumentParseResult.ofText(textCleaningService.clean(text, 0));
+            return DocumentParseResult.textOnly(text);
         }
     }
 
     @Override
     public boolean supports(String mimeType, String fileName) {
+        // 优先按文件扩展名判断，避免 mimeType 为 null 时无法命中
+        if (fileName != null) {
+            String lower = fileName.toLowerCase(Locale.ROOT);
+            if (lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".txt")) {
+                return true;
+            }
+        }
         String normalizedMime = mimeType == null ? "" : mimeType.toLowerCase(Locale.ROOT);
         return normalizedMime.contains("markdown")
             || normalizedMime.startsWith("text/plain");

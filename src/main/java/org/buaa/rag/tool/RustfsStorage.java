@@ -4,8 +4,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Locale;
 
+import org.buaa.rag.core.model.UploadPayload;
 import org.buaa.rag.properties.StorageProperties;
-import org.buaa.rag.service.impl.DocumentServiceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
@@ -31,7 +31,7 @@ public class RustfsStorage {
         return properties.getStorageBucket();
     }
 
-    public void upload(DocumentServiceImpl.UploadPayload payload) throws Exception {
+    public void upload(UploadPayload payload) throws Exception {
 
         String objectPath = buildPrimaryPath(payload.md5(), payload.originalFilename());
         InputStream data = payload.source().getInputStream();

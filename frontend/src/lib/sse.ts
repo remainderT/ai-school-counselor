@@ -11,121 +11,113 @@ export interface StreamHandlers {
   onError?: (error: Error) => void;
 }
 
-function parseData(raw: string): unknown {
-  if (!raw) {
-    return "";
-  }
+/** 尝试将 SSE data 字段解析为 JSON；解析失败时返回原始字符串 */
+function tryParseJson(text: string): unknown {
+  if (text === "") return text;
   try {
-    return JSON.parse(raw);
+    return JSON.parse(text);
   } catch {
-    return raw;
+    // 非 JSON 内容，按原始文本返回
+    return text;
+  }
+}
+
+/** 将解析出的事件分派到对应的 handler 回调 */
+function routeEvent(name: string, payload: unknown, handlers: StreamHandlers): void {
+  handlers.onEvent?.({ event: name, data: payload });
+  switch (name) {
+    case "message":
+      handlers.onText?.(String(payload));
+      break;
+    case "sources":
+      handlers.onSources?.(payload);
+      break;
+    case "messageId":
+      handlers.onMessageId?.(Number(payload));
+      break;
+    case "done":
+      handlers.onDone?.();
+      break;
+    case "error":
+      handlers.onError?.(new Error(String(payload)));
+      break;
   }
 }
 
 export function createChatStream(message: string, userId: string, handlers: StreamHandlers) {
-  const controller = new AbortController();
+  const abortCtl = new AbortController();
   const query = new URLSearchParams({ message, userId }).toString();
-  const url = apiUrl(`/api/rag/chat/stream?${query}`);
+  const endpoint = apiUrl(`/api/rag/chat/stream?${query}`);
 
-  const startOnce = async () => {
+  const attempt = async () => {
     const auth = loadAuth();
-    const response = await fetch(url, {
+    const resp = await fetch(endpoint, {
       method: "GET",
       headers: {
         Accept: "text/event-stream",
-        ...(auth
-          ? {
-              username: auth.username,
-              token: auth.token
-            }
-          : {})
+        ...(auth ? { username: auth.username, token: auth.token } : {})
       },
-      signal: controller.signal
+      signal: abortCtl.signal
     });
-    if (!response.ok || !response.body) {
-      throw new Error(`流式请求失败 (${response.status})`);
+    if (!resp.ok || !resp.body) {
+      throw new Error(`流式请求失败 (${resp.status})`);
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let buffer = "";
-    let eventName = "message";
-    let dataLines: string[] = [];
+    const reader = resp.body.getReader();
+    const utf8 = new TextDecoder("utf-8");
+    let pending = "";
+    let currentEvent = "message";
+    let dataChunks: string[] = [];
 
-    const flushEvent = () => {
-      if (dataLines.length === 0) {
-        eventName = "message";
+    const dispatchBuffered = () => {
+      if (dataChunks.length === 0) {
+        currentEvent = "message";
         return;
       }
-      const raw = dataLines.join("\n");
-      const data = parseData(raw);
-      handlers.onEvent?.({ event: eventName, data });
-
-      if (eventName === "message") {
-        handlers.onText?.(String(data));
-      } else if (eventName === "sources") {
-        handlers.onSources?.(data);
-      } else if (eventName === "messageId") {
-        handlers.onMessageId?.(Number(data));
-      } else if (eventName === "done") {
-        handlers.onDone?.();
-      } else if (eventName === "error") {
-        handlers.onError?.(new Error(String(data)));
-      }
-
-      eventName = "message";
-      dataLines = [];
+      const merged = dataChunks.join("\n");
+      routeEvent(currentEvent, tryParseJson(merged), handlers);
+      currentEvent = "message";
+      dataChunks = [];
     };
 
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) {
-        flushEvent();
-        break;
+        dispatchBuffered();
+        return;
       }
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() ?? "";
+      pending += utf8.decode(value, { stream: true });
 
-      for (const line of lines) {
-        if (!line) {
-          flushEvent();
-          continue;
-        }
-        if (line.startsWith(":")) {
-          continue;
-        }
-        if (line.startsWith("event:")) {
-          eventName = line.slice(6).trim();
-          continue;
-        }
-        if (line.startsWith("data:")) {
-          dataLines.push(line.slice(5).trim());
+      const segments = pending.split(/\r?\n/);
+      pending = segments.pop() ?? "";
+
+      for (const seg of segments) {
+        if (seg === "") {
+          dispatchBuffered();
+        } else if (seg[0] === ":") {
+          // SSE 注释行，忽略
+        } else if (seg.startsWith("event:")) {
+          currentEvent = seg.substring(6).trim();
+        } else if (seg.startsWith("data:")) {
+          dataChunks.push(seg.substring(5).trim());
         }
       }
     }
   };
 
   const start = async () => {
-    let attempt = 0;
-    const maxRetries = 2;
-    while (true) {
+    const MAX_RETRIES = 2;
+    for (let tries = 0; ; tries++) {
       try {
-        await startOnce();
+        await attempt();
         return;
-      } catch (error) {
-        if (controller.signal.aborted || attempt >= maxRetries) {
-          throw error;
-        }
-        const backoff = 600 * Math.pow(2, attempt);
-        await new Promise((resolve) => setTimeout(resolve, backoff));
-        attempt += 1;
+      } catch (err) {
+        if (abortCtl.signal.aborted || tries >= MAX_RETRIES) throw err;
+        // 指数退避：500ms → 1s → 2s
+        await new Promise<void>((ok) => setTimeout(ok, 500 * (1 << tries)));
       }
     }
   };
 
-  return {
-    start,
-    cancel: () => controller.abort()
-  };
+  return { start, cancel: () => abortCtl.abort() };
 }

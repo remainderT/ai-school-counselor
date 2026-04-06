@@ -19,10 +19,10 @@ public class StructureAwareChunkingStrategy {
             return List.of();
         }
 
-        int targetChars = options.getMetadata("targetChars", 1400);
-        int maxChars = options.getMetadata("maxChars", 1800);
-        int minChars = options.getMetadata("minChars", 600);
-        int overlapChars = options.getMetadata("overlapChars", 0);
+        int targetChars = options.param("targetChars", 1400);
+        int maxChars = options.param("maxChars", 1800);
+        int minChars = options.param("minChars", 600);
+        int overlapChars = options.param("overlapChars", 0);
 
         List<Block> blocks = segmentBlocks(text);
         if (blocks.isEmpty()) {

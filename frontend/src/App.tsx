@@ -14,6 +14,29 @@ type TabKey = "chat" | "search" | "knowledge" | "document" | "intent-tree";
 const BRAND_NAME = "BUAA问答助手";
 const ADMIN_SIDEBAR_COLLAPSED_KEY = "adminSidebarCollapsed";
 
+const ADMIN_TABS: TabKey[] = ["search", "knowledge", "intent-tree", "document"];
+
+/** 从 URL hash 解析出当前 tab 和是否处于管理面板 */
+function parseHash(): { tab: TabKey; adminOpen: boolean } {
+  const raw = window.location.hash.replace(/^#\/?/, "");
+  if (raw.startsWith("admin/")) {
+    const key = raw.slice("admin/".length) as TabKey;
+    if (ADMIN_TABS.includes(key)) {
+      return { tab: key, adminOpen: true };
+    }
+    return { tab: "search", adminOpen: true };
+  }
+  return { tab: "chat", adminOpen: false };
+}
+
+/** 将当前 tab 写入 URL hash（不触发页面刷新） */
+function setHash(tab: TabKey, adminOpen: boolean) {
+  const hash = adminOpen && tab !== "chat" ? `#admin/${tab}` : "#chat";
+  if (window.location.hash !== hash) {
+    window.history.replaceState(null, "", hash);
+  }
+}
+
 /* ---- Inline SVG Icons ---- */
 const AdminIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -37,18 +60,6 @@ const LogoutIcon = () => (
   </svg>
 );
 
-const ChevronLeftIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="15 18 9 12 15 6" />
-  </svg>
-);
-
-const ChevronRightIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="9 18 15 12 9 6" />
-  </svg>
-);
-
 export default function App() {
   const loadAdminSidebarCollapsed = () => {
     try {
@@ -58,18 +69,30 @@ export default function App() {
     }
   };
 
-  const [tab, setTab] = useState<TabKey>("chat");
+  const initialRoute = parseHash();
+  const [tab, setTabRaw] = useState<TabKey>(initialRoute.tab);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [mail, setMail] = useState("");
   const [code, setCode] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authMsg, setAuthMsg] = useState("");
-  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+  const [adminPanelOpen, setAdminPanelOpenRaw] = useState(initialRoute.adminOpen);
   const [adminSidebarCollapsed, setAdminSidebarCollapsed] = useState<boolean>(loadAdminSidebarCollapsed);
 
   const authReq = useActionRequest();
   const { auth, isAdmin, restoring, loginWithPassword, logoutCurrent, registerUser, sendCode } = useAuthStore();
+
+  // 监听浏览器前进/后退
+  useEffect(() => {
+    const onHashChange = () => {
+      const route = parseHash();
+      setTabRaw(route.tab);
+      setAdminPanelOpenRaw(route.adminOpen);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   const adminTabs = useMemo(() => [
     { key: "search" as const, label: "问答检索调试", icon: "search" },
@@ -79,11 +102,13 @@ export default function App() {
   ], []);
 
   useEffect(() => {
-    if (!isAdmin && tab !== "chat") {
-      setTab("chat");
-      setAdminPanelOpen(false);
+    // restoring 期间 isAdmin 尚未确定，不应重置路由
+    if (!restoring && !isAdmin && tab !== "chat") {
+      setTabRaw("chat");
+      setAdminPanelOpenRaw(false);
+      setHash("chat", false);
     }
-  }, [isAdmin, tab]);
+  }, [restoring, isAdmin, tab]);
 
   useEffect(() => {
     if (auth?.username) {
@@ -165,12 +190,14 @@ export default function App() {
   };
 
   const handleAdminTabClick = (key: TabKey) => {
-    setTab(key);
+    setTabRaw(key);
+    setHash(key, true);
   };
 
   const handleBackToChat = () => {
-    setTab("chat");
-    setAdminPanelOpen(false);
+    setTabRaw("chat");
+    setAdminPanelOpenRaw(false);
+    setHash("chat", false);
   };
 
   if (restoring) {
@@ -330,8 +357,10 @@ export default function App() {
     <button
       className="admin-entry-btn"
       onClick={() => {
-        setAdminPanelOpen(true);
-        if (tab === "chat") setTab("search");
+        const nextTab: TabKey = tab === "chat" ? "search" : tab;
+        setAdminPanelOpenRaw(true);
+        setTabRaw(nextTab);
+        setHash(nextTab, true);
       }}
       title="管理后台"
     >

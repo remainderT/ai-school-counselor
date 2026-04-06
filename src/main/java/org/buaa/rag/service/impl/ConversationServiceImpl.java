@@ -53,7 +53,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final MessageSummaryMapper messageSummaryMapper;
     private final ConversationMemoryService conversationMemoryService;
 
-    private final Map<String, String> userSessionMap = new ConcurrentHashMap<>();
+    private final Map<Long, String> userSessionMap = new ConcurrentHashMap<>();
     private final Map<String, List<Map<String, String>>> sessionHistoryMap = new ConcurrentHashMap<>();
 
     public ConversationServiceImpl(MessageMapper messageMapper,
@@ -71,32 +71,31 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     @Override
-    public String obtainOrCreateSession(String userId) {
-        String normalizedUserId = normalizeUserId(userId);
-        return userSessionMap.computeIfAbsent(normalizedUserId, key -> {
-            String existingSession = loadLatestSessionId(normalizedUserId);
+    public String obtainOrCreateSession(Long userId) {
+        Long resolvedUserId = resolveUserId(userId);
+        return userSessionMap.computeIfAbsent(resolvedUserId, key -> {
+            String existingSession = loadLatestSessionId(resolvedUserId);
             if (existingSession != null) {
-                log.info("复用历史会话 - 用户: {}, 会话ID: {}", normalizedUserId, existingSession);
+                log.info("复用历史会话 - 用户: {}, 会话ID: {}", resolvedUserId, existingSession);
                 return existingSession;
             }
             String newSessionId = UUID.randomUUID().toString();
-            log.info("创建新会话 - 用户: {}, 会话ID: {}", normalizedUserId, newSessionId);
+            log.info("创建新会话 - 用户: {}, 会话ID: {}", resolvedUserId, newSessionId);
             return newSessionId;
         });
     }
 
     @Override
-    public ConversationSessionRespDTO createSession(String userId, String title) {
-        String ownerPrefix = normalizeUserId(userId);
+    public ConversationSessionRespDTO createSession(Long userId, String title) {
+        Long resolvedUserId = resolveUserId(userId);
         String sessionId = UUID.randomUUID().toString();
-        String scopedUserId = buildScopedUserId(ownerPrefix, sessionId);
         String normalizedTitle = normalizeSessionTitle(title);
-        persistMessage(sessionId, scopedUserId, "system", buildSessionMetaContent(normalizedTitle));
-        userSessionMap.put(scopedUserId, sessionId);
+        persistMessage(sessionId, resolvedUserId, "system", buildSessionMetaContent(normalizedTitle));
+        userSessionMap.put(resolvedUserId, sessionId);
 
         ConversationSessionRespDTO dto = new ConversationSessionRespDTO();
         dto.setSessionId(sessionId);
-        dto.setUserId(scopedUserId);
+        dto.setUserId(resolvedUserId);
         dto.setTitle(normalizedTitle);
         dto.setMessageCount(0);
         dto.setUpdatedAt(getCurrentTimestamp());
@@ -104,24 +103,24 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     @Override
-    public ConversationSessionRespDTO renameSession(String sessionId, String userIdPrefix, String title) {
+    public ConversationSessionRespDTO renameSession(String sessionId, Long userId, String title) {
         String normalizedSessionId = sessionId == null ? "" : sessionId.trim();
         String normalizedTitle = normalizeSessionTitle(title);
-        String normalizedUser = normalizeUserId(userIdPrefix);
+        Long resolvedUserId = resolveUserId(userId);
         if (!StringUtils.hasText(normalizedSessionId)) {
             ConversationSessionRespDTO empty = new ConversationSessionRespDTO();
             empty.setSessionId(normalizedSessionId);
-            empty.setUserId(normalizedUser);
+            empty.setUserId(resolvedUserId);
             empty.setTitle(normalizedTitle);
             empty.setMessageCount(0);
             empty.setUpdatedAt(getCurrentTimestamp());
             return empty;
         }
-        if (!isSessionOwnedBy(normalizedSessionId, normalizedUser)) {
-            log.warn("忽略重命名非本人会话请求 - userIdPrefix: {}, sessionId: {}", normalizedUser, normalizedSessionId);
+        if (!isSessionOwnedBy(normalizedSessionId, resolvedUserId)) {
+            log.warn("忽略重命名非本人会话请求 - userId: {}, sessionId: {}", resolvedUserId, normalizedSessionId);
             ConversationSessionRespDTO denied = new ConversationSessionRespDTO();
             denied.setSessionId(normalizedSessionId);
-            denied.setUserId(normalizedUser);
+            denied.setUserId(resolvedUserId);
             denied.setTitle(normalizedTitle);
             denied.setMessageCount(0);
             denied.setUpdatedAt(getCurrentTimestamp());
@@ -138,7 +137,7 @@ public class ConversationServiceImpl implements ConversationService {
             .orderByAsc(MessageDO::getId)
             .last("limit 1"));
         if (meta == null) {
-            persistMessage(normalizedSessionId, normalizedUser, "system", buildSessionMetaContent(normalizedTitle));
+            persistMessage(normalizedSessionId, resolvedUserId, "system", buildSessionMetaContent(normalizedTitle));
         } else {
             MessageDO update = new MessageDO();
             update.setId(meta.getId());
@@ -148,7 +147,7 @@ public class ConversationServiceImpl implements ConversationService {
 
         ConversationSessionRespDTO dto = new ConversationSessionRespDTO();
         dto.setSessionId(normalizedSessionId);
-        dto.setUserId(normalizedUser);
+        dto.setUserId(resolvedUserId);
         dto.setTitle(normalizedTitle);
         dto.setUpdatedAt(getCurrentTimestamp());
         dto.setMessageCount(listMessages(normalizedSessionId, 500).size());
@@ -157,13 +156,14 @@ public class ConversationServiceImpl implements ConversationService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void deleteSession(String sessionId, String userIdPrefix) {
+    public void deleteSession(String sessionId, Long userId) {
         String normalizedSessionId = sessionId == null ? "" : sessionId.trim();
         if (!StringUtils.hasText(normalizedSessionId)) {
             return;
         }
-        if (!isSessionOwnedBy(normalizedSessionId, userIdPrefix)) {
-            log.warn("忽略删除非本人会话请求 - userIdPrefix: {}, sessionId: {}", userIdPrefix, normalizedSessionId);
+        Long resolvedUserId = resolveUserId(userId);
+        if (!isSessionOwnedBy(normalizedSessionId, resolvedUserId)) {
+            log.warn("忽略删除非本人会话请求 - userId: {}, sessionId: {}", resolvedUserId, normalizedSessionId);
             return;
         }
 
@@ -204,25 +204,29 @@ public class ConversationServiceImpl implements ConversationService {
 
     @Override
     public List<Map<String, String>> loadConversationContext(String sessionId) {
-        List<Map<String, String>> history = loadConversationHistory(sessionId);
-        if (history.isEmpty()) {
-            return history;
+        // 使用并行加载：历史消息 + 摘要同时从 DB 获取，减少一次串行网络往返
+        Long userId = resolveSessionUserIdFromCache(sessionId);
+        List<Map<String, String>> context = conversationMemoryService.loadContextParallel(
+            sessionId, userId, MAX_HISTORY_SIZE);
+        // 同步更新内存缓存（保持 sessionHistoryMap 一致）
+        if (!context.isEmpty()) {
+            sessionHistoryMap.put(sessionId, cloneHistoryList(context));
         }
-        return conversationMemoryService.buildContext(sessionId, history);
+        return context;
     }
 
     @Override
-    public Long appendUserMessage(String sessionId, String userId, String userMessage) {
+    public Long appendUserMessage(String sessionId, Long userId, String userMessage) {
         String timestamp = getCurrentTimestamp();
         appendHistoryEntry(sessionId, "user", userMessage, timestamp);
-        return persistMessage(sessionId, userId, "user", userMessage);
+        return persistMessage(sessionId, resolveUserId(userId), "user", userMessage);
     }
 
     @Override
-    public Long createAssistantPlaceholder(String sessionId, String userId) {
+    public Long createAssistantPlaceholder(String sessionId, Long userId) {
         String timestamp = getCurrentTimestamp();
         appendHistoryEntry(sessionId, "assistant", STREAM_PLACEHOLDER, timestamp);
-        return persistMessage(sessionId, userId, "assistant", STREAM_PLACEHOLDER);
+        return persistMessage(sessionId, resolveUserId(userId), "assistant", STREAM_PLACEHOLDER);
     }
 
     @Override
@@ -234,7 +238,7 @@ public class ConversationServiceImpl implements ConversationService {
         updateMessageContent(assistantMessageId, response);
         persistSources(assistantMessageId, sources);
         replaceLatestAssistantPlaceholder(sessionId, response);
-        String userId = loadUserIdByMessageId(assistantMessageId);
+        Long userId = loadUserIdByMessageId(assistantMessageId);
         conversationMemoryService.scheduleSummary(sessionId, userId);
     }
 
@@ -244,29 +248,11 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     @Override
-    public Long appendToHistory(String sessionId,
-                                String userId,
-                                String userMessage,
-                                String aiResponse,
-                                List<RetrievalMatch> sources) {
-        appendUserMessage(sessionId, userId, userMessage);
-        Long assistantMessageId = createAssistantPlaceholder(sessionId, userId);
-        completeAssistantMessage(sessionId, assistantMessageId, aiResponse, sources);
-        trimHistory(sessionId);
-        List<Map<String, String>> history = sessionHistoryMap.getOrDefault(sessionId, List.of());
-        log.debug("更新会话历史 - 会话: {}, 总消息数: {}", sessionId, history.size());
-        return assistantMessageId;
-    }
-
-    @Override
-    public List<ConversationSessionRespDTO> listSessions(String userIdPrefix) {
-        String owner = normalizeUserId(userIdPrefix);
+    public List<ConversationSessionRespDTO> listSessions(Long userId) {
+        Long resolvedUserId = resolveUserId(userId);
         try {
             LambdaQueryWrapper<MessageDO> queryWrapper = Wrappers.lambdaQuery(MessageDO.class)
-                .and(wrapper -> wrapper
-                    .eq(MessageDO::getUserId, owner)
-                    .or()
-                    .likeRight(MessageDO::getUserId, owner + "::"))
+                .eq(MessageDO::getUserId, resolvedUserId)
                 .orderByDesc(MessageDO::getCreatedAt);
             List<MessageDO> rows = messageMapper.selectList(queryWrapper);
             if (rows == null || rows.isEmpty()) {
@@ -305,7 +291,7 @@ public class ConversationServiceImpl implements ConversationService {
 
                 ConversationSessionRespDTO dto = new ConversationSessionRespDTO();
                 dto.setSessionId(entry.getKey());
-                dto.setUserId(latest == null ? owner : latest.getUserId());
+                dto.setUserId(latest == null ? resolvedUserId : latest.getUserId());
                 dto.setTitle(title);
                 dto.setMessageCount(messageCount);
                 dto.setUpdatedAt(formatTimestamp(latest == null ? null : latest.getCreatedAt()));
@@ -418,7 +404,7 @@ public class ConversationServiceImpl implements ConversationService {
         return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
     }
 
-    private String loadLatestSessionId(String userId) {
+    private String loadLatestSessionId(Long userId) {
         try {
             LambdaQueryWrapper<MessageDO> queryWrapper = Wrappers.lambdaQuery(MessageDO.class)
                 .eq(MessageDO::getUserId, userId)
@@ -464,11 +450,11 @@ public class ConversationServiceImpl implements ConversationService {
         }
     }
 
-    private Long persistMessage(String sessionId, String userId, String role, String content) {
+    private Long persistMessage(String sessionId, Long userId, String role, String content) {
         try {
             MessageDO messageDO = new MessageDO();
             messageDO.setSessionId(sessionId);
-            messageDO.setUserId(normalizeUserId(userId));
+            messageDO.setUserId(userId);
             messageDO.setRole(role);
             messageDO.setContent(content);
             messageMapper.insert(messageDO);
@@ -514,26 +500,16 @@ public class ConversationServiceImpl implements ConversationService {
         return text;
     }
 
-    private String buildScopedUserId(String ownerPrefix, String sessionId) {
-        String normalizedOwner = normalizeUserId(ownerPrefix);
-        if (normalizedOwner.contains("::")) {
-            return normalizedOwner;
-        }
-        return normalizedOwner + "::" + sessionId;
-    }
-
-    private boolean isSessionOwnedBy(String sessionId, String userIdPrefix) {
-        String owner = normalizeUserId(userIdPrefix);
+    private boolean isSessionOwnedBy(String sessionId, Long userId) {
         try {
             MessageDO any = messageMapper.selectOne(Wrappers.lambdaQuery(MessageDO.class)
                 .eq(MessageDO::getSessionId, sessionId)
                 .orderByDesc(MessageDO::getId)
                 .last("limit 1"));
-            if (any == null || !StringUtils.hasText(any.getUserId())) {
+            if (any == null || any.getUserId() == null) {
                 return true;
             }
-            String actual = any.getUserId();
-            return owner.equals(actual) || actual.startsWith(owner + "::");
+            return userId.equals(any.getUserId());
         } catch (Exception e) {
             log.debug("校验会话归属失败: {}", e.getMessage());
             return false;
@@ -590,19 +566,32 @@ public class ConversationServiceImpl implements ConversationService {
         return copied;
     }
 
-    private String normalizeUserId(String userId) {
-        if (!StringUtils.hasText(userId)) {
-            return "anonymous";
-        }
-        return userId.trim();
+    /**
+     * 将 null userId 解析为默认值 1L（admin 用户）。
+     */
+    private Long resolveUserId(Long userId) {
+        return userId != null ? userId : 1L;
     }
 
-    private String loadUserIdByMessageId(Long messageId) {
+    private Long loadUserIdByMessageId(Long messageId) {
         if (messageId == null) {
             return null;
         }
         MessageDO messageDO = messageMapper.selectById(messageId);
         return messageDO == null ? null : messageDO.getUserId();
+    }
+
+    /**
+     * 从内存缓存 userSessionMap 反推 userId（避免额外 DB 查询）。
+     * 用于 loadContextParallel 传入 userId 过滤摘要。
+     */
+    private Long resolveSessionUserIdFromCache(String sessionId) {
+        for (Map.Entry<Long, String> entry : userSessionMap.entrySet()) {
+            if (sessionId.equals(entry.getValue())) {
+                return entry.getKey();
+            }
+        }
+        return null;
     }
 
     private Map<Long, List<RetrievalMatch>> loadSourcesByMessageIds(Set<Long> messageIds) {

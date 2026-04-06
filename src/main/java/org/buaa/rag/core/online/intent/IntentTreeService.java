@@ -111,7 +111,7 @@ public class IntentTreeService {
             Wrappers.lambdaQuery(IntentNodeDO.class)
                 .eq(IntentNodeDO::getDelFlag, 0)
                 .eq(IntentNodeDO::getEnabled, 1)
-                .orderByAsc(IntentNodeDO::getSortOrder, IntentNodeDO::getId)
+                .orderByAsc(IntentNodeDO::getCreateTime, IntentNodeDO::getId)
         );
         if (list == null || list.isEmpty()) {
             return List.of();
@@ -149,8 +149,6 @@ public class IntentTreeService {
 
         IntentNode.NodeType type = parseNodeType(node.getNodeType());
         result.setType(type == null ? IntentNode.NodeType.GROUP : type);
-        result.setLevel(parseNodeLevel(node.getNodeLevel()));
-        result.setKind(parseNodeKind(node.getNodeKind()));
         return result;
     }
 
@@ -160,28 +158,6 @@ public class IntentTreeService {
         }
         try {
             return IntentNode.NodeType.valueOf(nodeType.trim().toUpperCase());
-        } catch (Exception ignore) {
-            return null;
-        }
-    }
-
-    private IntentNode.NodeLevel parseNodeLevel(String nodeLevel) {
-        if (!StringUtils.hasText(nodeLevel)) {
-            return null;
-        }
-        try {
-            return IntentNode.NodeLevel.valueOf(nodeLevel.trim().toUpperCase());
-        } catch (Exception ignore) {
-            return null;
-        }
-    }
-
-    private IntentNode.NodeKind parseNodeKind(String nodeKind) {
-        if (!StringUtils.hasText(nodeKind)) {
-            return null;
-        }
-        try {
-            return IntentNode.NodeKind.valueOf(nodeKind.trim().toUpperCase());
         } catch (Exception ignore) {
             return null;
         }
@@ -273,10 +249,21 @@ public class IntentTreeService {
         for (Map.Entry<String, List<IntentNode>> entry : childrenMap.entrySet()) {
             immutableChildren.put(entry.getKey(), List.copyOf(entry.getValue()));
         }
+
+        // 预计算叶子节点列表，避免每次请求做全树 DFS
+        List<IntentNode> leafNodes = nodeMap.values().stream()
+            .filter(node -> {
+                List<IntentNode> ch = childrenMap.get(node.getNodeId());
+                return ch == null || ch.isEmpty();
+            })
+            .filter(node -> !"root".equalsIgnoreCase(node.getNodeId()))
+            .toList();
+
         return new TreeSnapshot(
             Collections.unmodifiableMap(new LinkedHashMap<>(nodeMap)),
             Collections.unmodifiableMap(immutableChildren),
-            root
+            root,
+            List.copyOf(leafNodes)
         );
     }
 
@@ -301,11 +288,25 @@ public class IntentTreeService {
         return parentId.trim();
     }
 
+    /**
+     * 返回意图树所有叶子节点（即无子节点的节点）。
+     *
+     * <p>叶子列表在 {@link #buildSnapshot} 时一次性计算并缓存，
+     * 后续所有调用（{@code IntentRouterService.routeByTree}、
+     * {@code IntentRouterService.rankIntentCandidates}）直接复用，
+     * 避免每次请求都做全树 DFS 遍历。
+     */
+    public List<IntentNode> leaves() {
+        ensureLoaded();
+        return snapshot.leafNodes();
+    }
+
     private record TreeSnapshot(Map<String, IntentNode> nodes,
                                 Map<String, List<IntentNode>> children,
-                                IntentNode root) {
+                                IntentNode root,
+                                List<IntentNode> leafNodes) {
         private static TreeSnapshot empty() {
-            return new TreeSnapshot(Map.of(), Map.of(), null);
+            return new TreeSnapshot(Map.of(), Map.of(), null, List.of());
         }
     }
 }

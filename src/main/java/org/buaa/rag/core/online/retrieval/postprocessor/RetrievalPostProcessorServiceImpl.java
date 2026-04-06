@@ -1,20 +1,14 @@
 package org.buaa.rag.core.online.retrieval.postprocessor;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
+import org.buaa.rag.core.online.rerank.RerankService;
 import org.buaa.rag.properties.LlmProperties;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.core.model.CragDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.tool.LlmChat;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -23,8 +17,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 检索后处理服务实现
- * 包含检索质量评估与重排
+ * 检索后处理服务实现。
+ * <p>
+ * 包含 CRAG 检索质量评估；rerank 委托给 {@link RerankService}（路由式，支持独立模型 + LLM 降级）。
  */
 @Slf4j
 @Service
@@ -34,20 +29,22 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
 
     private static final String DEFAULT_CLARIFY_PROMPT = PromptTemplateLoader.load("retrieval-clarify.st");
 
-    private static final String DEFAULT_RERANK_PROMPT = PromptTemplateLoader.load("retrieval-rerank.st");
-
     private final LlmChat llmChat;
     private final RagProperties ragProperties;
     private final LlmProperties llmProperties;
+    private final RerankService rerankService;
     private final ObjectMapper objectMapper;
 
     public RetrievalPostProcessorServiceImpl(LlmChat llmChat,
                                              RagProperties ragProperties,
-                                             LlmProperties llmProperties) {
+                                             LlmProperties llmProperties,
+                                             RerankService rerankService,
+                                             ObjectMapper objectMapper) {
         this.llmChat = llmChat;
         this.ragProperties = ragProperties;
         this.llmProperties = llmProperties;
-        this.objectMapper = new ObjectMapper();
+        this.rerankService = rerankService;
+        this.objectMapper = objectMapper;
     }
 
     public CragDecision evaluate(String query, List<RetrievalMatch> matches) {
@@ -95,44 +92,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
         if (config == null || !config.isEnabled()) {
             return matches;
         }
-
-        int candidateLimit = Math.min(config.getMaxCandidates(), matches.size());
-        List<RetrievalMatch> candidates = new ArrayList<>(matches.subList(0, candidateLimit));
-        String prompt = buildRerankPrompt(query, candidates, config);
-
-        String output = llmChat.generateCompletion(
-            resolveRerankPrompt(config),
-            prompt,
-            256
-        );
-
-        Map<Integer, Double> scoreMap = parseScores(output);
-        if (scoreMap.isEmpty()) {
-            log.debug("重排输出为空，保持原排序");
-            return matches;
-        }
-
-        for (int i = 0; i < candidates.size(); i++) {
-            RetrievalMatch match = candidates.get(i);
-            Double score = scoreMap.get(i + 1);
-            if (score != null) {
-                match.setRelevanceScore(score);
-            }
-        }
-
-        candidates.sort(Comparator.comparingDouble(
-            (RetrievalMatch match) -> match.getRelevanceScore() != null ? match.getRelevanceScore() : 0.0
-        ).reversed());
-
-        List<RetrievalMatch> reranked = new ArrayList<>(candidates);
-        if (matches.size() > candidateLimit) {
-            reranked.addAll(matches.subList(candidateLimit, matches.size()));
-        }
-
-        if (reranked.size() > topK) {
-            return reranked.subList(0, topK);
-        }
-        return reranked;
+        return rerankService.rerank(query, matches, topK);
     }
 
     private boolean isLowQuality(List<RetrievalMatch> matches, double minScore) {
@@ -157,10 +117,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
     private CragDecision evaluateWithLlm(String query,
                                          List<RetrievalMatch> matches,
                                          RagProperties.Crag config) {
-        String prompt = config.getPrompt();
-        if (prompt == null || prompt.isBlank()) {
-            prompt = DEFAULT_CRAG_PROMPT;
-        }
+        String prompt = DEFAULT_CRAG_PROMPT;
 
         StringBuilder content = new StringBuilder();
         content.append("问题：").append(query).append("\n");
@@ -218,11 +175,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
         if (!config.isUseLlm()) {
             return "为了更准确回答，请补充问题的具体场景，例如涉及哪一年、学院或制度名称。";
         }
-        String prompt = config.getClarifyPrompt();
-        if (prompt == null || prompt.isBlank()) {
-            prompt = DEFAULT_CLARIFY_PROMPT;
-        }
-        String output = llmChat.generateCompletion(prompt, query, 64);
+        String output = llmChat.generateCompletion(DEFAULT_CLARIFY_PROMPT, query, 64);
         if (output == null || output.isBlank()) {
             return "为了更准确回答，请补充问题的具体场景，例如涉及哪一年、学院或制度名称。";
         }
@@ -234,12 +187,16 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
             return true;
         }
         String trimmed = message.trim();
-        if (trimmed.length() < 6) {
+        RagProperties.Crag cragConfig = ragProperties.getCrag();
+        if (trimmed.length() < cragConfig.getAmbiguityMinLength()) {
             return true;
         }
-        return trimmed.contains("这个") || trimmed.contains("那个")
-            || trimmed.contains("之前") || trimmed.contains("上面")
-            || trimmed.contains("怎么弄") || trimmed.contains("怎么办");
+        for (String word : cragConfig.getAmbiguityWords()) {
+            if (trimmed.contains(word)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String truncate(String text, int maxLength) {
@@ -250,79 +207,5 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
             return text;
         }
         return text.substring(0, maxLength) + "...";
-    }
-
-    private String buildRerankPrompt(String query,
-                                     List<RetrievalMatch> candidates,
-                                     RagProperties.Rerank config) {
-        StringBuilder builder = new StringBuilder();
-        builder.append("问题：").append(query).append("\n");
-        builder.append("候选片段：\n");
-        int snippetLength = config.getSnippetLength();
-        for (int i = 0; i < candidates.size(); i++) {
-            RetrievalMatch match = candidates.get(i);
-            String snippet = buildSnippet(match.getTextContent(), snippetLength);
-            String fileName = match.getSourceFileName() != null ? match.getSourceFileName() : "未知来源";
-            builder.append(i + 1)
-                .append("|")
-                .append(fileName)
-                .append("|")
-                .append(snippet)
-                .append("\n");
-        }
-        builder.append("请输出评分：\n");
-        return builder.toString();
-    }
-
-    private String buildSnippet(String text, int maxLength) {
-        if (text == null) {
-            return "";
-        }
-        String trimmed = text.replaceAll("\\s+", " ").trim();
-        if (trimmed.length() <= maxLength) {
-            return trimmed;
-        }
-        return trimmed.substring(0, maxLength) + "...";
-    }
-
-    private String resolveRerankPrompt(RagProperties.Rerank config) {
-        if (config.getPrompt() != null && !config.getPrompt().isBlank()) {
-            return config.getPrompt();
-        }
-        return DEFAULT_RERANK_PROMPT;
-    }
-
-    private Map<Integer, Double> parseScores(String output) {
-        Map<Integer, Double> scores = new HashMap<>();
-        if (output == null || output.isBlank()) {
-            return scores;
-        }
-        String[] lines = output.split("\\r?\\n");
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) {
-                continue;
-            }
-            String[] parts = trimmed.split("[:：]");
-            if (parts.length < 2) {
-                continue;
-            }
-            try {
-                int id = Integer.parseInt(parts[0].trim());
-                double score = Double.parseDouble(parts[1].trim());
-                if (score < 0) {
-                    score = 0;
-                } else if (score > 1) {
-                    score = 1;
-                }
-                scores.put(id, score);
-            } catch (NumberFormatException ignored) {
-                String normalized = trimmed.toLowerCase(Locale.ROOT);
-                if (normalized.contains("score")) {
-                    continue;
-                }
-            }
-        }
-        return scores;
     }
 }

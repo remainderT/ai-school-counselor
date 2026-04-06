@@ -1,8 +1,6 @@
 package org.buaa.rag.core.online.intent;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -10,12 +8,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
+import org.buaa.rag.common.util.VectorMathUtils;
 import org.buaa.rag.core.model.IntentClassifyResult;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.IntentNode;
 import org.buaa.rag.tool.LlmChat;
 import org.buaa.rag.core.offline.index.VectorEncoding;
 import org.buaa.rag.properties.IntentGuidanceProperties;
+import org.buaa.rag.properties.IntentRoutingProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -28,23 +28,9 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class IntentRouterService {
 
-    private static final double SEMANTIC_DIRECT_THRESHOLD = 0.9;
-    private static final double LLM_RAG_THRESHOLD = 0.5;
-
     private static final String INTENT_PROMPT = PromptTemplateLoader.load("intent-router.st");
     private static final String TREE_CLASSIFIER_PROMPT = PromptTemplateLoader.load("intent-tree-classifier.st");
-
-    private static final Map<String, String> TOOL_KEYWORDS = Map.of(
-        "请假", "leave",
-        "销假", "leave",
-        "报修", "repair",
-        "成绩", "score",
-        "绩点", "score",
-        "天气", "weather",
-        "气温", "weather",
-        "降雨", "weather",
-        "下雨", "weather"
-    );
+    private static final String GUIDANCE_PROMPT_FILE = "guidance-prompt.st";
     private static final float[] EMPTY_VECTOR = new float[0];
 
     private final LlmChat llmChat;
@@ -52,19 +38,24 @@ public class IntentRouterService {
     private final IntentTreeService intentTreeService;
     private final VectorEncoding vectorEncoding;
     private final IntentGuidanceProperties intentGuidanceProperties;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final IntentRoutingProperties intentRoutingProperties;
+    private final ObjectMapper objectMapper;
     private final Map<String, float[]> nodeEmbeddingCache = new ConcurrentHashMap<>();
 
     public IntentRouterService(LlmChat llmChat,
                                IntentPatternService intentPatternService,
                                IntentTreeService intentTreeService,
                                VectorEncoding vectorEncoding,
-                               IntentGuidanceProperties intentGuidanceProperties) {
+                               IntentGuidanceProperties intentGuidanceProperties,
+                               IntentRoutingProperties intentRoutingProperties,
+                               ObjectMapper objectMapper) {
         this.llmChat = llmChat;
         this.intentPatternService = intentPatternService;
         this.intentTreeService = intentTreeService;
         this.vectorEncoding = vectorEncoding;
         this.intentGuidanceProperties = intentGuidanceProperties;
+        this.intentRoutingProperties = intentRoutingProperties;
+        this.objectMapper = objectMapper;
     }
 
     public IntentDecision decide(String userId, String query) {
@@ -76,7 +67,7 @@ public class IntentRouterService {
         }
 
         // 1) 关键词轻量工具路由
-        for (Map.Entry<String, String> entry : TOOL_KEYWORDS.entrySet()) {
+        for (Map.Entry<String, String> entry : intentRoutingProperties.getToolKeywords().entrySet()) {
             if (query.contains(entry.getKey())) {
                 return IntentDecision.builder()
                     .action(IntentDecision.Action.ROUTE_TOOL)
@@ -101,7 +92,7 @@ public class IntentRouterService {
         var semantic = intentPatternService.semanticRoute(query);
         if (semantic.isPresent()) {
             IntentDecision hit = semantic.get();
-            if (hit.getConfidence() != null && hit.getConfidence() >= SEMANTIC_DIRECT_THRESHOLD) {
+            if (hit.getConfidence() != null && hit.getConfidence() >= intentRoutingProperties.getSemanticDirectThreshold()) {
                 hit.setStrategy(pickStrategy(hit.getLevel2(), hit.getToolName()));
                 return hit;
             }
@@ -111,7 +102,7 @@ public class IntentRouterService {
         // 4) 语义/LLM 分类兜底
         IntentDecision llmDecision = classifyWithLlm(query);
         if (llmDecision.getAction() == IntentDecision.Action.ROUTE_TOOL
-            || (llmDecision.getConfidence() != null && llmDecision.getConfidence() >= LLM_RAG_THRESHOLD)) {
+            || (llmDecision.getConfidence() != null && llmDecision.getConfidence() >= intentRoutingProperties.getLlmRagThreshold())) {
             return llmDecision;
         }
 
@@ -132,11 +123,7 @@ public class IntentRouterService {
             return List.of();
         }
         intentTreeService.loadTree();
-        var rootOpt = intentTreeService.root();
-        if (rootOpt.isEmpty()) {
-            return List.of();
-        }
-        List<IntentNode> leaves = collectLeafNodes(rootOpt.get());
+        List<IntentNode> leaves = intentTreeService.leaves();
         if (leaves.isEmpty()) {
             return List.of();
         }
@@ -202,18 +189,14 @@ public class IntentRouterService {
 
     /**
      * 意图树候选路由：
-     * 1. 对叶子节点统一打分
-     * 2. 识别多候选歧义并触发澄清
+     * 1. 对叶子节点统一打分（叶子列表从缓存快照读取，无需每次 DFS）
+     * 2. 识别多候选歧义并触发澄清（若问题已含系统名则跳过）
      * 3. 选择最高分候选落地动作
      */
     private IntentDecision routeByTree(String query) {
         intentTreeService.loadTree();
-        var rootOpt = intentTreeService.root();
-        if (rootOpt.isEmpty()) {
-            return null;
-        }
 
-        List<IntentNode> leaves = collectLeafNodes(rootOpt.get());
+        List<IntentNode> leaves = intentTreeService.leaves();
         if (leaves.isEmpty()) {
             return null;
         }
@@ -227,7 +210,10 @@ public class IntentRouterService {
         }
 
         if (intentGuidanceProperties.isEnabled() && needsGuidance(candidates)) {
-            return buildGuidanceDecision(candidates);
+            IntentDecision guidance = buildGuidanceDecision(query, candidates);
+            if (guidance != null) {
+                return guidance;
+            }
         }
         return toDecision(candidates.get(0), query);
     }
@@ -295,25 +281,6 @@ public class IntentRouterService {
             .toList();
     }
 
-    private List<IntentNode> collectLeafNodes(IntentNode root) {
-        Deque<IntentNode> stack = new ArrayDeque<>();
-        stack.push(root);
-        List<IntentNode> leaves = new ArrayList<>();
-
-        while (!stack.isEmpty()) {
-            IntentNode node = stack.pop();
-            List<IntentNode> children = intentTreeService.children(node.getNodeId());
-            if (children == null || children.isEmpty()) {
-                leaves.add(node);
-                continue;
-            }
-            for (int i = children.size() - 1; i >= 0; i--) {
-                stack.push(children.get(i));
-            }
-        }
-        return leaves;
-    }
-
     private boolean needsGuidance(List<IntentCandidate> candidates) {
         if (candidates == null || candidates.size() < 2) {
             return false;
@@ -330,26 +297,62 @@ public class IntentRouterService {
         return extractGuidanceOptions(candidates).size() > 1;
     }
 
-    private IntentDecision buildGuidanceDecision(List<IntentCandidate> candidates) {
-        IntentDecision sameTopicGuidance = buildSameTopicGuidance(candidates);
-        if (sameTopicGuidance != null) {
-            return sameTopicGuidance;
-        }
+    /**
+     * 构建歧义引导决策。
+     *
+     * <p>若问题中已经包含候选系统名（如"教务系统"），说明用户意图已明确，
+     * 无需再弹出引导提示，直接返回 {@code null} 让调用方走最高分候选。
+     * 这与 ragent {@code IntentGuidanceService.shouldSkipGuidance()} 的逻辑一致。
+     */
+    private IntentDecision buildGuidanceDecision(String query, List<IntentCandidate> candidates) {
         List<String> options = extractGuidanceOptions(candidates);
         if (options.isEmpty()) {
             return null;
         }
-        String clarify = "你想咨询哪个方向？"
-            + options.stream()
-            .limit(Math.max(1, intentGuidanceProperties.getMaxOptions()))
-            .map(option -> "\n- " + option)
-            .collect(Collectors.joining(""));
+
+        // G3: 若问题中已含候选系统名，跳过引导直接走最高分候选
+        if (shouldSkipGuidance(query, options)) {
+            log.debug("问题已含系统名，跳过歧义引导: query={}", query);
+            return null;
+        }
+
+        IntentDecision sameTopicGuidance = buildSameTopicGuidance(candidates);
+        if (sameTopicGuidance != null) {
+            return sameTopicGuidance;
+        }
+
+        String clarify = buildGuidancePrompt(options);
         return IntentDecision.builder()
             .action(IntentDecision.Action.CLARIFY)
             .clarifyQuestion(clarify)
             .confidence(candidates.get(0).score())
             .strategy(IntentDecision.Strategy.CLARIFY_ONLY)
             .build();
+    }
+
+    /**
+     * 若问题已包含候选域名（系统名）中的任意一个，则跳过引导。
+     *
+     * <p>比较时先 normalize（去标点/空白/小写），避免全角/半角等差异导致误判。
+     */
+    private boolean shouldSkipGuidance(String question, List<String> domainNames) {
+        if (!StringUtils.hasText(question) || domainNames == null || domainNames.isEmpty()) {
+            return false;
+        }
+        String normalizedQ = normalizeName(question);
+        for (String name : domainNames) {
+            if (!StringUtils.hasText(name) || name.length() < 2) {
+                continue;
+            }
+            String normalizedName = normalizeName(name);
+            if (normalizedName.length() < 2) {
+                continue;
+            }
+            if (normalizedQ.contains(normalizedName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -387,11 +390,17 @@ public class IntentRouterService {
         if (options.size() < 2) {
             return null;
         }
-        String clarify = "你提到的是同名主题，我先确认下具体系统："
-            + options.stream()
+        // 同名主题歧义使用专有提示语，直接拼装后包装进标准 guidance prompt
+        List<String> limitedOptions = options.stream()
             .limit(Math.max(1, intentGuidanceProperties.getMaxOptions()))
-            .map(option -> "\n- " + option)
-            .collect(Collectors.joining(""));
+            .toList();
+        String optionsText = "你提到的是同名主题，我先确认下具体系统：\n"
+            + limitedOptions.stream().map(option -> "- " + option).collect(Collectors.joining("\n"));
+        String clarify = PromptTemplateLoader.render(GUIDANCE_PROMPT_FILE,
+            Map.of("options", optionsText));
+        if (!StringUtils.hasText(clarify)) {
+            clarify = optionsText;
+        }
         return IntentDecision.builder()
             .action(IntentDecision.Action.CLARIFY)
             .clarifyQuestion(clarify)
@@ -416,6 +425,31 @@ public class IntentRouterService {
             }
         }
         return new ArrayList<>(options);
+    }
+
+    /**
+     * 使用 {@code guidance-prompt.st} 模板构建歧义引导问句。
+     *
+     * <p>模板内容（G4）：
+     * <pre>
+     * 你想咨询哪个方向？
+     * {options}
+     * </pre>
+     * 其中 {@code {options}} 将被替换为以 "- " 开头的选项列表。
+     */
+    private String buildGuidancePrompt(List<String> options) {
+        if (options == null || options.isEmpty()) {
+            return "你想咨询哪个方向？";
+        }
+        List<String> limited = options.stream()
+            .limit(Math.max(1, intentGuidanceProperties.getMaxOptions()))
+            .toList();
+        String optionsText = limited.stream()
+            .map(o -> "- " + o)
+            .collect(Collectors.joining("\n"));
+        String rendered = PromptTemplateLoader.render(GUIDANCE_PROMPT_FILE,
+            Map.of("options", optionsText));
+        return StringUtils.hasText(rendered) ? rendered : "你想咨询哪个方向？\n" + optionsText;
     }
 
     private double similarity(String query, float[] queryVector, IntentNode node) {
@@ -467,7 +501,7 @@ public class IntentRouterService {
             return 0.0;
         }
 
-        return cosine(queryVector, nodeVector);
+        return VectorMathUtils.cosine(queryVector, nodeVector);
     }
 
     private float[] encodeSingle(String text) {
@@ -481,33 +515,6 @@ public class IntentRouterService {
             log.debug("查询向量计算失败，回退关键词路由: {}", e.getMessage());
             return null;
         }
-    }
-
-    private double cosine(float[] a, float[] b) {
-        if (a == null || b == null || a.length == 0 || b.length == 0 || a.length != b.length) {
-            return 0.0;
-        }
-
-        double dot = 0.0;
-        double normA = 0.0;
-        double normB = 0.0;
-        for (int i = 0; i < a.length; i++) {
-            dot += a[i] * b[i];
-            normA += a[i] * a[i];
-            normB += b[i] * b[i];
-        }
-
-        if (normA == 0.0 || normB == 0.0) {
-            return 0.0;
-        }
-
-        double cos = dot / (Math.sqrt(normA) * Math.sqrt(normB));
-        if (Double.isNaN(cos) || Double.isInfinite(cos)) {
-            return 0.0;
-        }
-
-        // [-1,1] -> [0,1]
-        return Math.max(0.0, Math.min(1.0, (cos + 1.0) / 2.0));
     }
 
     private IntentDecision toDecision(IntentCandidate cand, String query) {
@@ -654,7 +661,7 @@ public class IntentRouterService {
         IntentDecision.Action action;
         if (toolName != null) {
             action = IntentDecision.Action.ROUTE_TOOL;
-        } else if (confidence >= LLM_RAG_THRESHOLD) {
+        } else if (confidence >= intentRoutingProperties.getLlmRagThreshold()) {
             action = IntentDecision.Action.ROUTE_RAG;
         } else {
             action = IntentDecision.Action.CLARIFY;

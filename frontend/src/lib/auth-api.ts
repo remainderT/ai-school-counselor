@@ -1,47 +1,45 @@
 import type { ApiResult } from "../types";
 import type { AuthState } from "./auth-storage";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+const BASE = import.meta.env.VITE_API_BASE_URL || "";
 
-function url(path: string): string {
-  return API_BASE ? `${API_BASE}${path}` : path;
+function endpoint(path: string): string {
+  return BASE ? `${BASE}${path}` : path;
 }
 
-function authHeaders(username: string, token: string): HeadersInit {
-  return {
-    username,
-    token
-  };
+function credentialHeaders(user: string, tok: string): HeadersInit {
+  return { username: user, token: tok };
 }
 
-async function parseResult<T>(response: Response): Promise<T> {
-  const payload = (await response.json()) as ApiResult<T>;
-  if (!response.ok) {
-    throw new Error(payload?.message || `HTTP ${response.status}`);
+/** 解包后端统一响应结构，校验业务码后返回 data */
+async function extractData<T>(resp: Response): Promise<T> {
+  const body = (await resp.json()) as ApiResult<T>;
+  if (!resp.ok) {
+    throw new Error(body?.message ?? `HTTP ${resp.status}`);
   }
-  if (!payload || payload.code !== "0") {
-    throw new Error(payload?.message || "请求失败");
+  if (body == null || String(body.code) !== "0") {
+    throw new Error(body?.message ?? "请求失败");
   }
-  return payload.data;
+  return body.data;
 }
 
 export async function login(username: string, password: string): Promise<AuthState> {
-  const response = await fetch(url("/api/rag/user/login"), {
+  const resp = await fetch(endpoint("/api/rag/user/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password })
   });
-  const data = await parseResult<{ token: string; isAdmin?: number }>(response);
-  if (!data?.token) {
+  const result = await extractData<{ token: string; isAdmin?: number }>(resp);
+  if (!result?.token) {
     throw new Error("登录未返回 token");
   }
-  return { username, token: data.token, isAdmin: data.isAdmin === 1 };
+  return { username, token: result.token, isAdmin: result.isAdmin === 1 };
 }
 
 export async function sendRegisterCode(mail: string): Promise<boolean> {
-  const query = new URLSearchParams({ mail }).toString();
-  const response = await fetch(url(`/api/rag/user/send-code?${query}`), { method: "GET" });
-  return parseResult<boolean>(response);
+  const qs = new URLSearchParams({ mail }).toString();
+  const resp = await fetch(endpoint(`/api/rag/user/send-code?${qs}`), { method: "GET" });
+  return extractData<boolean>(resp);
 }
 
 export async function register(payload: {
@@ -50,37 +48,37 @@ export async function register(payload: {
   mail: string;
   code: string;
 }): Promise<void> {
-  const response = await fetch(url("/api/rag/user"), {
+  const resp = await fetch(endpoint("/api/rag/user"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  await parseResult<void>(response);
+  await extractData<void>(resp);
 }
 
 export async function checkLogin(username: string, token: string): Promise<boolean> {
-  const query = new URLSearchParams({ username, token }).toString();
-  const response = await fetch(url(`/api/rag/user/check-login?${query}`), {
+  const qs = new URLSearchParams({ username, token }).toString();
+  const resp = await fetch(endpoint(`/api/rag/user/check-login?${qs}`), {
     method: "GET",
-    headers: authHeaders(username, token)
+    headers: credentialHeaders(username, token)
   });
-  return parseResult<boolean>(response);
+  return extractData<boolean>(resp);
 }
 
 export async function logout(username: string, token: string): Promise<void> {
-  const query = new URLSearchParams({ username, token }).toString();
-  const response = await fetch(url(`/api/rag/user/logout?${query}`), {
+  const qs = new URLSearchParams({ username, token }).toString();
+  const resp = await fetch(endpoint(`/api/rag/user/logout?${qs}`), {
     method: "DELETE",
-    headers: authHeaders(username, token)
+    headers: credentialHeaders(username, token)
   });
-  await parseResult<void>(response);
+  await extractData<void>(resp);
 }
 
 export async function getUserInfo(username: string, token: string): Promise<{ username: string; isAdmin: boolean }> {
-  const response = await fetch(url(`/api/rag/user/info/${encodeURIComponent(username)}`), {
+  const resp = await fetch(endpoint(`/api/rag/user/info/${encodeURIComponent(username)}`), {
     method: "GET",
-    headers: authHeaders(username, token)
+    headers: credentialHeaders(username, token)
   });
-  const data = await parseResult<{ username: string; isAdmin?: number }>(response);
-  return { username: data.username, isAdmin: data.isAdmin === 1 };
+  const info = await extractData<{ username: string; isAdmin?: number }>(resp);
+  return { username: info.username, isAdmin: info.isAdmin === 1 };
 }

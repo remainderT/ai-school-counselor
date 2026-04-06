@@ -7,7 +7,7 @@ public class ConversationSessionRespDTO {
 
     private String sessionId;
 
-    private String userId;
+    private Long userId;
 
     private String title;
 

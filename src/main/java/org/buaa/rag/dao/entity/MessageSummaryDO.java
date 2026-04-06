@@ -2,6 +2,8 @@ package org.buaa.rag.dao.entity;
 
 import java.time.LocalDateTime;
 
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
 import lombok.AllArgsConstructor;
@@ -19,6 +21,7 @@ import lombok.NoArgsConstructor;
 @TableName("message_summary")
 public class MessageSummaryDO {
 
+    @TableId(type = IdType.AUTO)
     private Long id;
 
     /**
@@ -29,7 +32,7 @@ public class MessageSummaryDO {
     /**
      * 用户ID（可选，用于审计）
      */
-    private String userId;
+    private Long userId;
 
     /**
      * 摘要正文

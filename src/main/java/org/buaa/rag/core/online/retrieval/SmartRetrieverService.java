@@ -1,4 +1,4 @@
-package org.buaa.rag.service;
+package org.buaa.rag.core.online.retrieval;
 
 import java.util.List;
 import java.util.Set;
@@ -10,15 +10,6 @@ import org.buaa.rag.core.model.RetrievalMatch;
  * 结合向量检索和文本匹配的混合搜索策略
  */
 public interface SmartRetrieverService {
-
-    /**
-     * 执行混合检索
-     *
-     * @param queryText 查询文本
-     * @param topK      返回结果数量
-     * @return 检索匹配结果列表
-     */
-    List<RetrievalMatch> retrieve(String queryText, int topK);
 
     /**
      * 执行混合检索（带权限过滤）

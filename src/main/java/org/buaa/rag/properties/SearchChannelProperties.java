@@ -52,6 +52,10 @@ public class SearchChannelProperties {
          * 全局召回倍数
          */
         private int topKMultiplier = 2;
+        /**
+         * 无意图信息时的默认通道置信度
+         */
+        private double defaultConfidence = 0.7;
     }
 
     @Data

@@ -1,81 +1,55 @@
 package org.buaa.rag.common.web;
 
-import java.util.Objects;
-import java.util.Optional;
+import java.util.List;
 
 import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
 import org.buaa.rag.common.convention.exception.AbstractException;
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
-import org.springframework.validation.BindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import cn.hutool.core.collection.CollectionUtil;
-import cn.hutool.core.util.ReflectUtil;
-import cn.hutool.core.util.StrUtil;
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 全局异常处理器
+ * 全局异常拦截，将各类异常统一转换为 {@link Result} 响应。
  */
-@Component("globalExceptionHandlerByAdmin")
 @Slf4j
+@Component("globalExceptionHandlerByAdmin")
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    /**
-     * 拦截参数验证异常
-     */
-    @SneakyThrows
-    @ExceptionHandler(value = MethodArgumentNotValidException.class)
-    public Result validExceptionHandler(HttpServletRequest request, MethodArgumentNotValidException ex) {
-        BindingResult bindingResult = ex.getBindingResult();
-        FieldError firstFieldError = CollectionUtil.getFirst(bindingResult.getFieldErrors());
-        String exceptionStr = Optional.ofNullable(firstFieldError)
-                .map(FieldError::getDefaultMessage)
-                .orElse(StrUtil.EMPTY);
-        log.error("[{}] {} [ex] {}", request.getMethod(), getUrl(request), exceptionStr);
-        return Results.failure(BaseErrorCode.CLIENT_ERROR.code(), exceptionStr);
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public Result<?> handleValidation(HttpServletRequest req, MethodArgumentNotValidException ex) {
+        List<FieldError> fieldErrors = ex.getBindingResult().getFieldErrors();
+        String detail = fieldErrors.isEmpty() ? "参数校验失败" : fieldErrors.get(0).getDefaultMessage();
+        log.error("[{}] {} 参数校验异常: {}", req.getMethod(), fullUrl(req), detail);
+        return Results.failure(BaseErrorCode.CLIENT_ERROR.code(), detail != null ? detail : "参数校验失败");
     }
 
-    /**
-     * 拦截应用内抛出的异常
-     */
-    @ExceptionHandler(value = {AbstractException.class})
-    public Result abstractException(HttpServletRequest request, AbstractException ex) {
-        if (ex.getCause() != null) {
-            log.error("[{}] {} [ex] {}", request.getMethod(), request.getRequestURL().toString(), ex.toString(), ex.getCause());
-            return Results.failure(ex);
-        }
-        log.error("[{}] {} [ex] {}", request.getMethod(), request.getRequestURL().toString(), ex.toString());
+    @ExceptionHandler(AbstractException.class)
+    public Result<?> handleBusiness(HttpServletRequest req, AbstractException ex) {
+        log.error("[{}] {} 业务异常: {}", req.getMethod(), req.getRequestURL(), ex.toString(), ex.getCause());
         return Results.failure(ex);
     }
 
-    /**
-     * 拦截未捕获异常
-     */
-    @ExceptionHandler(value = Throwable.class)
-    public Result defaultErrorHandler(HttpServletRequest request, Throwable throwable) {
-        log.error("[{}] {} ", request.getMethod(), getUrl(request), throwable);
-        if (Objects.equals(throwable.getClass().getSuperclass().getSimpleName(), AbstractException.class.getSimpleName())) {
-            String errorCode = ReflectUtil.getFieldValue(throwable, "errorCode").toString();
-            String errorMessage = ReflectUtil.getFieldValue(throwable, "errorMessage").toString();
-            return Results.failure(errorCode, errorMessage);
+    @ExceptionHandler(Throwable.class)
+    public Result<?> handleUnexpected(HttpServletRequest req, Throwable ex) {
+        log.error("[{}] {} 未知异常", req.getMethod(), fullUrl(req), ex);
+        if (ex instanceof AbstractException biz) {
+            return Results.failure(biz);
         }
         return Results.failure();
     }
 
-    private String getUrl(HttpServletRequest request) {
-        if (StringUtils.isEmpty(request.getQueryString())) {
-            return request.getRequestURL().toString();
-        }
-        return request.getRequestURL().toString() + "?" + request.getQueryString();
+    private String fullUrl(HttpServletRequest req) {
+        String qs = req.getQueryString();
+        return (qs == null || qs.isEmpty())
+                ? req.getRequestURL().toString()
+                : req.getRequestURL().append('?').append(qs).toString();
     }
 }

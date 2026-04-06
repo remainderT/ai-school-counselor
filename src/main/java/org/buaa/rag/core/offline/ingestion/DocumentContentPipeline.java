@@ -16,7 +16,7 @@ import org.buaa.rag.core.offline.parser.DocumentParser;
 import org.buaa.rag.core.offline.parser.DocumentParserSelector;
 import org.buaa.rag.core.offline.parser.TextCleaningService;
 import org.buaa.rag.core.offline.chunk.ChunkingService;
-import org.buaa.rag.properties.FIleParseProperties;
+import org.buaa.rag.properties.FileParseProperties;
 import org.buaa.rag.tool.RustfsStorage;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -38,7 +38,7 @@ public class DocumentContentPipeline {
     private final TextCleaningService textCleaningService;
     private final DocumentParserSelector documentParserSelector;
     private final ChunkingService chunkingService;
-    private final FIleParseProperties fileParseProperties;
+    private final FileParseProperties fileParseProperties;
 
     public List<ContentFragment> extract(DocumentDO document, String chunkMode) {
         if (document == null) {

@@ -1,4 +1,4 @@
-package org.buaa.rag.core.offline.index;
+package org.buaa.rag.core.online.retrieval;
 
 import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.SEARCH_SERVICE_ERROR;
 
@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 
 import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.core.model.RetrievalMatch;
+import org.buaa.rag.core.offline.index.MilvusCollectionManager;
 import org.buaa.rag.properties.MilvusProperties;
 import org.springframework.stereotype.Service;
 
@@ -40,7 +41,7 @@ public class MilvusRetrieverService {
         collectionManager.ensureReady();
 
         try {
-            float[] vector = normalize(toArray(queryVector));
+            float[] vector = l2Normalize(toFloatArray(queryVector));
             List<BaseVector> vectors = List.of(new FloatVec(vector));
             Map<String, Object> searchParams = Map.of(
                 "metric_type", milvusProperties.getMetricType(),
@@ -75,28 +76,34 @@ public class MilvusRetrieverService {
         }
     }
 
-    private float[] toArray(List<Float> values) {
-        float[] vector = new float[values.size()];
-        for (int i = 0; i < values.size(); i++) {
-            vector[i] = values.get(i);
+    /**
+     * 将 Float 列表展开为原始 float 数组，便于传入 Milvus SDK。
+     */
+    private float[] toFloatArray(List<Float> src) {
+        float[] dst = new float[src.size()];
+        for (int idx = 0; idx < src.size(); idx++) {
+            dst[idx] = src.get(idx);
         }
-        return vector;
+        return dst;
     }
 
-    private float[] normalize(float[] vector) {
-        double sum = 0.0;
-        for (float value : vector) {
-            sum += value * value;
+    /**
+     * 对向量执行 L2 归一化，使其模长为 1；零向量原样返回。
+     */
+    private float[] l2Normalize(float[] vector) {
+        double squaredSum = 0.0;
+        for (float v : vector) {
+            squaredSum += (double) v * v;
         }
-        double norm = Math.sqrt(sum);
-        if (norm <= 0) {
+        double magnitude = Math.sqrt(squaredSum);
+        if (magnitude <= 1e-12) {
             return vector;
         }
-        float[] normalized = new float[vector.length];
+        float[] unit = new float[vector.length];
         for (int i = 0; i < vector.length; i++) {
-            normalized[i] = (float) (vector[i] / norm);
+            unit[i] = (float) (vector[i] / magnitude);
         }
-        return normalized;
+        return unit;
     }
 
     private Integer parseInteger(Object value) {

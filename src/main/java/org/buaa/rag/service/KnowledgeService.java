@@ -5,6 +5,7 @@ import java.util.List;
 import org.buaa.rag.dao.entity.KnowledgeDO;
 import org.buaa.rag.dto.req.KnowledgeCreateReqDTO;
 import org.buaa.rag.dto.req.KnowledgeUpdateReqDTO;
+import org.buaa.rag.dto.resp.KnowledgeListRespDTO;
 
 /**
  * 知识库服务
@@ -17,9 +18,9 @@ public interface KnowledgeService {
     Long create(KnowledgeCreateReqDTO requestParam);
 
     /**
-     * 获取当前用户知识库列表
+     * 获取当前用户知识库列表（含文档数量）
      */
-    List<KnowledgeDO> listMine();
+    List<KnowledgeListRespDTO> listMine();
 
     /**
      * 查询知识库详情

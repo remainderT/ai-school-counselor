@@ -2,14 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { apiDelete, apiGet, apiPost, apiPut } from "../lib/api";
 import type { IntentNodeItem } from "../types";
 import { useActionRequest } from "../hooks/useActionRequest";
+import { CustomSelect } from "./CustomSelect";
 
 type FormState = {
   nodeId: string;
   nodeName: string;
   parentId: string;
   nodeType: string;
-  nodeLevel: string;
-  nodeKind: string;
   description: string;
   promptSnippet: string;
   keywords: string;
@@ -26,8 +25,6 @@ const defaultForm: FormState = {
   nodeName: "",
   parentId: "root",
   nodeType: "GROUP",
-  nodeLevel: "",
-  nodeKind: "",
   description: "",
   promptSnippet: "",
   keywords: "",
@@ -61,8 +58,6 @@ function toForm(item?: IntentNodeItem): FormState {
     nodeName: item.nodeName || "",
     parentId: item.parentId || "root",
     nodeType: item.nodeType || "GROUP",
-    nodeLevel: item.nodeLevel || "",
-    nodeKind: item.nodeKind || "",
     description: item.description || "",
     promptSnippet: item.promptSnippet || "",
     keywords: (item.keywords || []).join(","),
@@ -80,8 +75,6 @@ function buildPayload(form: FormState, withNodeId: boolean) {
     nodeName: form.nodeName.trim(),
     parentId: form.parentId.trim() || "root",
     nodeType: form.nodeType,
-    nodeLevel: form.nodeLevel || undefined,
-    nodeKind: form.nodeKind || undefined,
     description: form.description.trim() || undefined,
     promptSnippet: form.promptSnippet.trim() || undefined,
     keywords: form.keywords
@@ -330,7 +323,6 @@ export function IntentTreePanel() {
             <span className="intent-tree-id">{item.nodeId}</span>
           </button>
           <span className="admin-tag admin-tag-sm">{item.nodeType || "-"}</span>
-          {item.nodeKind && <span className="admin-tag admin-tag-sm admin-tag-outline">{item.nodeKind}</span>}
           <span className={`admin-status-dot ${item.enabled === 1 ? "admin-status-dot-success" : "admin-status-dot-error"}`} />
         </div>
         {!collapsed ? (item.children || []).map((child) => renderNode(child, depth + 1)) : null}
@@ -418,7 +410,6 @@ export function IntentTreePanel() {
                 <div className="intent-detail-name">
                   {activeNode.nodeName}
                   <span className="admin-tag">{activeNode.nodeType}</span>
-                  {activeNode.nodeKind && <span className="admin-tag admin-tag-outline">{activeNode.nodeKind}</span>}
                   <span className={`admin-tag ${activeNode.enabled === 1 ? "admin-tag-success" : "admin-tag-error"}`}>
                     {activeNode.enabled === 1 ? "启用" : "停用"}
                   </span>
@@ -492,32 +483,16 @@ export function IntentTreePanel() {
                       </div>
                       <div className="admin-form-group">
                         <label className="admin-label">nodeType</label>
-                        <select className="admin-select" value={form.nodeType} onChange={(e) => setForm((prev) => ({ ...prev, nodeType: e.target.value }))}>
-                          <option value="GROUP">GROUP</option>
-                          <option value="RAG_QA">RAG_QA</option>
-                          <option value="API_ACTION">API_ACTION</option>
-                          <option value="CHITCHAT">CHITCHAT</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="admin-form-grid admin-form-grid-2">
-                      <div className="admin-form-group">
-                        <label className="admin-label">nodeLevel</label>
-                        <select className="admin-select" value={form.nodeLevel} onChange={(e) => setForm((prev) => ({ ...prev, nodeLevel: e.target.value }))}>
-                          <option value="">-</option>
-                          <option value="DOMAIN">DOMAIN</option>
-                          <option value="CATEGORY">CATEGORY</option>
-                          <option value="TOPIC">TOPIC</option>
-                        </select>
-                      </div>
-                      <div className="admin-form-group">
-                        <label className="admin-label">nodeKind</label>
-                        <select className="admin-select" value={form.nodeKind} onChange={(e) => setForm((prev) => ({ ...prev, nodeKind: e.target.value }))}>
-                          <option value="">-</option>
-                          <option value="KB">KB</option>
-                          <option value="MCP">MCP</option>
-                          <option value="SYSTEM">SYSTEM</option>
-                        </select>
+                        <CustomSelect
+                          value={form.nodeType}
+                          options={[
+                            { value: "GROUP", label: "GROUP" },
+                            { value: "RAG_QA", label: "RAG_QA" },
+                            { value: "API_ACTION", label: "API_ACTION" },
+                            { value: "CHITCHAT", label: "CHITCHAT" }
+                          ]}
+                          onChange={(v) => setForm((prev) => ({ ...prev, nodeType: v }))}
+                        />
                       </div>
                     </div>
                     <div className="admin-form-grid admin-form-grid-2">
@@ -527,10 +502,14 @@ export function IntentTreePanel() {
                       </div>
                       <div className="admin-form-group">
                         <label className="admin-label">enabled</label>
-                        <select className="admin-select" value={form.enabled} onChange={(e) => setForm((prev) => ({ ...prev, enabled: e.target.value }))}>
-                          <option value="1">启用</option>
-                          <option value="0">停用</option>
-                        </select>
+                        <CustomSelect
+                          value={form.enabled}
+                          options={[
+                            { value: "1", label: "启用" },
+                            { value: "0", label: "停用" }
+                          ]}
+                          onChange={(v) => setForm((prev) => ({ ...prev, enabled: v }))}
+                        />
                       </div>
                     </div>
                     <div className="admin-form-grid admin-form-grid-2">
@@ -594,39 +573,27 @@ export function IntentTreePanel() {
                   <div className="admin-form-grid admin-form-grid-2">
                     <div className="admin-form-group">
                       <label className="admin-label">nodeType</label>
-                      <select className="admin-select" value={form.nodeType} onChange={(e) => setForm((prev) => ({ ...prev, nodeType: e.target.value }))}>
-                        <option value="GROUP">GROUP</option>
-                        <option value="RAG_QA">RAG_QA</option>
-                        <option value="API_ACTION">API_ACTION</option>
-                        <option value="CHITCHAT">CHITCHAT</option>
-                      </select>
-                    </div>
-                    <div className="admin-form-group">
-                      <label className="admin-label">nodeLevel</label>
-                      <select className="admin-select" value={form.nodeLevel} onChange={(e) => setForm((prev) => ({ ...prev, nodeLevel: e.target.value }))}>
-                        <option value="">-</option>
-                        <option value="DOMAIN">DOMAIN</option>
-                        <option value="CATEGORY">CATEGORY</option>
-                        <option value="TOPIC">TOPIC</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="admin-form-grid admin-form-grid-2">
-                    <div className="admin-form-group">
-                      <label className="admin-label">nodeKind</label>
-                      <select className="admin-select" value={form.nodeKind} onChange={(e) => setForm((prev) => ({ ...prev, nodeKind: e.target.value }))}>
-                        <option value="">-</option>
-                        <option value="KB">KB</option>
-                        <option value="MCP">MCP</option>
-                        <option value="SYSTEM">SYSTEM</option>
-                      </select>
+                      <CustomSelect
+                        value={form.nodeType}
+                        options={[
+                          { value: "GROUP", label: "GROUP" },
+                          { value: "RAG_QA", label: "RAG_QA" },
+                          { value: "API_ACTION", label: "API_ACTION" },
+                          { value: "CHITCHAT", label: "CHITCHAT" }
+                        ]}
+                        onChange={(v) => setForm((prev) => ({ ...prev, nodeType: v }))}
+                      />
                     </div>
                     <div className="admin-form-group">
                       <label className="admin-label">enabled</label>
-                      <select className="admin-select" value={form.enabled} onChange={(e) => setForm((prev) => ({ ...prev, enabled: e.target.value }))}>
-                        <option value="1">启用</option>
-                        <option value="0">停用</option>
-                      </select>
+                      <CustomSelect
+                        value={form.enabled}
+                        options={[
+                          { value: "1", label: "启用" },
+                          { value: "0", label: "停用" }
+                        ]}
+                        onChange={(v) => setForm((prev) => ({ ...prev, enabled: v }))}
+                      />
                     </div>
                   </div>
                   <div className="admin-form-grid admin-form-grid-2">

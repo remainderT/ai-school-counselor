@@ -1,21 +1,17 @@
 package org.buaa.rag.core.offline.parser;
 
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+
 /**
- * 解析器类型
+ * 文档解析器类型标识。
  */
+@Getter
+@AllArgsConstructor
 public enum ParserType {
 
     TIKA("tika"),
     MARKDOWN("markdown");
 
     private final String type;
-
-    ParserType(String type) {
-        this.type = type;
-    }
-
-    public String getType() {
-        return type;
-    }
 }
-

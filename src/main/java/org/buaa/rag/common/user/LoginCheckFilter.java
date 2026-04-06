@@ -6,12 +6,12 @@ import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_TOKEN_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_TOKEN_NULL;
 
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.util.List;
 import java.util.Objects;
 
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.result.Results;
+import org.buaa.rag.common.util.FilterResponseUtils;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import com.alibaba.fastjson2.JSON;
@@ -41,6 +41,10 @@ public class LoginCheckFilter implements Filter {
     );
 
     private boolean requireLogin(String URI, String method) {
+        // 非 API 请求（静态资源等）不需要登录校验
+        if (!URI.startsWith("/api/")) {
+            return false;
+        }
         if (IGNORE_URI.contains(URI)) {
             return false;
         }
@@ -58,29 +62,11 @@ public class LoginCheckFilter implements Filter {
         String requestURI = httpServletRequest.getRequestURI();
         String method = httpServletRequest.getMethod();
         if (requireLogin(requestURI, method) && UserContext.getUsername() == null) {
-            returnJson((HttpServletResponse) servletResponse, JSON.toJSONString(Results.failure(new ClientException(USER_TOKEN_NULL))));
+            FilterResponseUtils.writeJsonResponse((HttpServletResponse) servletResponse, JSON.toJSONString(Results.failure(new ClientException(USER_TOKEN_NULL))));
             return;
         }
 
         filterChain.doFilter(servletRequest, servletResponse);
-    }
-
-
-    private void returnJson(HttpServletResponse response, String json) throws Exception {
-        PrintWriter writer = null;
-        response.setCharacterEncoding("UTF-8");
-        response.setContentType("application/json; charset=utf-8");
-        try {
-            writer = response.getWriter();
-            writer.print(json);
-
-        } catch (IOException e) {
-
-        } finally {
-            if (writer != null) {
-                writer.close();
-            }
-        }
     }
 
 

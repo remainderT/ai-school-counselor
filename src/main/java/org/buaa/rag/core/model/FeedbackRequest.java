@@ -8,7 +8,7 @@ import lombok.Data;
 @Data
 public class FeedbackRequest {
     private Long messageId;
-    private String userId;
+    private Long userId;
     private Integer score;
     private String comment;
 }

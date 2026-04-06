@@ -4,7 +4,9 @@ import java.time.LocalDateTime;
 
 import org.buaa.rag.common.database.BaseDO;
 
+import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
 import lombok.AllArgsConstructor;
@@ -22,6 +24,7 @@ import lombok.NoArgsConstructor;
 @TableName("document")
 public class DocumentDO extends BaseDO {
 
+    @TableId(type = IdType.AUTO)
     private Long id;
 
     private String md5Hash;
@@ -34,6 +37,12 @@ public class DocumentDO extends BaseDO {
 
     @TableField(exist = false)
     private String processingStatusDesc;
+
+    /**
+     * chunk 数量（非数据库字段，查询时动态填充）
+     */
+    @TableField(exist = false)
+    private Integer chunkCount;
 
     private Long userId;
 

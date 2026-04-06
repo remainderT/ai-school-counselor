@@ -43,20 +43,30 @@ public class EmbeddingService {
             .map(ContentFragment::getTextContent)
             .toList();
 
+        long startTime = System.currentTimeMillis();
         List<float[]> vectors = encodeTexts(texts);
-        log.info("文档向量化完成，片段数: {}", vectors.size());
+        long elapsed = System.currentTimeMillis() - startTime;
+        log.info("文档向量化完成，片段数: {}，耗时: {}ms", vectors.size(), elapsed);
         return vectors;
     }
 
     private List<float[]> encodeTexts(List<String> texts) {
         int resolvedBatchSize = Math.max(1, batchSize);
+        int totalBatches = (int) Math.ceil((double) texts.size() / resolvedBatchSize);
         List<float[]> allVectors = new ArrayList<>(texts.size());
+
+        log.info("开始向量编码，共 {} 个文本，分 {} 批处理（每批 {}）", texts.size(), totalBatches, resolvedBatchSize);
 
         // 按批次调用 embedding，降低单次请求体积与超时风险。
         for (int start = 0; start < texts.size(); start += resolvedBatchSize) {
             List<String> batch = texts.subList(start, Math.min(start + resolvedBatchSize, texts.size()));
             int batchNo = start / resolvedBatchSize + 1;
             allVectors.addAll(encodeBatch(batch, batchNo));
+
+            // 每5批或最后一批打印一次进度
+            if (batchNo % 5 == 0 || batchNo == totalBatches) {
+                log.info("向量编码进度: {}/{}批完成，已生成 {} 个向量", batchNo, totalBatches, allVectors.size());
+            }
         }
 
         if (allVectors.size() != texts.size()) {

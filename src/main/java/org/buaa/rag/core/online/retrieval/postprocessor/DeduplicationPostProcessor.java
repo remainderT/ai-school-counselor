@@ -14,6 +14,9 @@ import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
 
+/**
+ * 跨通道去重：按通道优先级遍历结果，同一 matchKey 只保留最高分的那条。
+ */
 @Component
 @RequiredArgsConstructor
 public class DeduplicationPostProcessor implements SearchResultPostProcessor {
@@ -31,23 +34,22 @@ public class DeduplicationPostProcessor implements SearchResultPostProcessor {
     }
 
     @Override
-    public boolean isEnabled(SearchContext context) {
+    public boolean shouldApply(SearchContext context) {
         return properties.getPostProcessor().isDeduplicate();
     }
 
     @Override
-    public List<RetrievalMatch> process(List<RetrievalMatch> matches,
-                                        List<SearchChannelResult> results,
-                                        SearchContext context) {
-        Map<String, RetrievalMatch> bucket = new LinkedHashMap<>();
-
-        List<SearchChannelResult> sortedResults = new ArrayList<>(results);
-        sortedResults.sort((a, b) -> Integer.compare(
-            getChannelPriority(a.getChannelType()),
-            getChannelPriority(b.getChannelType())
+    public List<RetrievalMatch> apply(List<RetrievalMatch> matches,
+                                      List<SearchChannelResult> channelResults,
+                                      SearchContext context) {
+        List<SearchChannelResult> ordered = new ArrayList<>(channelResults);
+        ordered.sort((a, b) -> Integer.compare(
+            channelWeight(a.getChannelType()),
+            channelWeight(b.getChannelType())
         ));
 
-        for (SearchChannelResult result : sortedResults) {
+        Map<String, RetrievalMatch> seen = new LinkedHashMap<>();
+        for (SearchChannelResult result : ordered) {
             if (result == null || result.getMatches() == null) {
                 continue;
             }
@@ -55,36 +57,29 @@ public class DeduplicationPostProcessor implements SearchResultPostProcessor {
                 if (match == null) {
                     continue;
                 }
-                String key = buildMatchKey(match);
-                RetrievalMatch existing = bucket.get(key);
-                if (existing == null) {
-                    bucket.put(key, match);
-                    continue;
-                }
-                double existingScore = existing.getRelevanceScore() == null ? 0.0 : existing.getRelevanceScore();
-                double currentScore = match.getRelevanceScore() == null ? 0.0 : match.getRelevanceScore();
-                if (currentScore > existingScore) {
-                    bucket.put(key, match);
+                String key = match.matchKey();
+                RetrievalMatch prev = seen.get(key);
+                if (prev == null) {
+                    seen.put(key, match);
+                } else {
+                    double prevScore = prev.getRelevanceScore() == null ? 0.0 : prev.getRelevanceScore();
+                    double curScore = match.getRelevanceScore() == null ? 0.0 : match.getRelevanceScore();
+                    if (curScore > prevScore) {
+                        seen.put(key, match);
+                    }
                 }
             }
         }
-
-        return new ArrayList<>(bucket.values());
+        return new ArrayList<>(seen.values());
     }
 
-    private int getChannelPriority(SearchChannelType channelType) {
-        if (channelType == SearchChannelType.INTENT_DIRECTED) {
-            return 1;
-        }
-        if (channelType == SearchChannelType.VECTOR_GLOBAL) {
-            return 2;
-        }
-        return 99;
-    }
-
-    private String buildMatchKey(RetrievalMatch match) {
-        String fileMd5 = match.getFileMd5() == null ? "unknown" : match.getFileMd5();
-        String chunkId = match.getChunkId() == null ? "0" : match.getChunkId().toString();
-        return fileMd5 + ":" + chunkId;
+    /**
+     * 通道权重：数字越小越优先保留。
+     */
+    private int channelWeight(SearchChannelType type) {
+        return switch (type) {
+            case INTENT_DIRECTED -> 1;
+            case VECTOR_GLOBAL -> 2;
+        };
     }
 }

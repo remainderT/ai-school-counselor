@@ -7,36 +7,27 @@ import lombok.Data;
 import lombok.experimental.Accessors;
 
 /**
- * 全局返回对象
+ * REST 接口统一响应信封。
+ * <p>
+ * 前端约定：{@code code == "0"} 代表请求成功，其余均视为异常。
  */
 @Data
 @Accessors(chain = true)
 public class Result<T> implements Serializable {
 
     @Serial
-    private static final long serialVersionUID = 5679018624309023727L;
+    private static final long serialVersionUID = 8127304561920476853L;
 
-    /**
-     * 正确返回码
-     */
+    /** 成功时的固定状态码 */
     public static final String SUCCESS_CODE = "0";
 
-    /**
-     * 返回码
-     */
     private String code;
 
-    /**
-     * 返回消息
-     */
     private String message;
 
-    /**
-     * 响应数据
-     */
     private T data;
 
-
+    /** 判断本次请求是否成功 */
     public boolean isSuccess() {
         return SUCCESS_CODE.equals(code);
     }

@@ -16,22 +16,27 @@ import org.buaa.rag.core.online.retrieval.postprocessor.SearchResultPostProcesso
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 多通道检索引擎
+ * 多通道检索引擎：并行调度所有激活的 {@link SearchChannel}，
+ * 合并结果后按顺序执行 {@link SearchResultPostProcessor} 链。
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MultiChannelRetrievalEngine {
 
-    private final List<SearchChannel> searchChannels;
-    private final List<SearchResultPostProcessor> postProcessors;
+    private final List<SearchChannel> channels;
+    private final List<SearchResultPostProcessor> processors;
+    private final Executor executor;
 
-    @Qualifier("retrievalChannelExecutor")
-    private final Executor retrievalChannelExecutor;
+    public MultiChannelRetrievalEngine(List<SearchChannel> channels,
+                                       List<SearchResultPostProcessor> processors,
+                                       @Qualifier("retrievalChannelExecutor") Executor executor) {
+        this.channels = channels;
+        this.processors = processors;
+        this.executor = executor;
+    }
 
     public List<RetrievalMatch> retrieve(String userId,
                                          String query,
@@ -45,7 +50,7 @@ public class MultiChannelRetrievalEngine {
                                          int topK,
                                          IntentDecision intentDecision,
                                          List<IntentDecision> intentDecisions) {
-        SearchContext context = SearchContext.builder()
+        SearchContext ctx = SearchContext.builder()
             .userId(userId)
             .originalQuery(query)
             .rewrittenQuery(query)
@@ -53,102 +58,95 @@ public class MultiChannelRetrievalEngine {
             .intentDecision(intentDecision)
             .intentDecisions(intentDecisions == null ? List.of() : intentDecisions)
             .build();
-        return retrieve(context);
+        return retrieve(ctx);
     }
 
-    public List<RetrievalMatch> retrieve(SearchContext context) {
-        List<SearchChannel> enabledChannels = searchChannels.stream()
-            .filter(channel -> safeChannelEnabled(channel, context))
+    public List<RetrievalMatch> retrieve(SearchContext ctx) {
+        // 1. 筛选可激活的通道并按优先级排序
+        List<SearchChannel> active = channels.stream()
+            .filter(ch -> tryCanActivate(ch, ctx))
             .sorted(Comparator.comparingInt(SearchChannel::getPriority))
             .toList();
-
-        if (enabledChannels.isEmpty()) {
+        if (active.isEmpty()) {
             return List.of();
         }
 
-        List<CompletableFuture<SearchChannelResult>> futures = enabledChannels.stream()
-            .map(channel -> CompletableFuture.supplyAsync(
-                () -> runChannel(channel, context), retrievalChannelExecutor
-            ))
+        // 2. 并行执行各通道
+        List<CompletableFuture<SearchChannelResult>> futures = active.stream()
+            .map(ch -> CompletableFuture.supplyAsync(() -> invokeChannel(ch, ctx), executor))
             .toList();
 
         List<SearchChannelResult> channelResults = futures.stream()
-            .map(future -> {
-                try {
-                    return future.join();
-                } catch (Exception e) {
-                    log.warn("等待检索通道结果失败", e);
+            .map(f -> {
+                try { return f.join(); }
+                catch (Exception ex) {
+                    log.warn("等待检索通道结果失败", ex);
                     return null;
                 }
             })
-            .filter(result -> result != null)
+            .filter(r -> r != null)
             .toList();
-
         if (channelResults.isEmpty()) {
             return List.of();
         }
 
+        // 3. 扁平合并所有通道的匹配结果
         List<RetrievalMatch> merged = channelResults.stream()
-            .flatMap(result -> result.getMatches() == null
-                ? Stream.empty()
-                : result.getMatches().stream())
+            .flatMap(r -> r.getMatches() == null ? Stream.empty() : r.getMatches().stream())
             .toList();
 
-        List<SearchResultPostProcessor> enabledProcessors = postProcessors.stream()
-            .filter(processor -> safeProcessorEnabled(processor, context))
+        // 4. 按序执行后处理链
+        List<SearchResultPostProcessor> activeProcessors = processors.stream()
+            .filter(p -> tryShouldApply(p, ctx))
             .sorted(Comparator.comparingInt(SearchResultPostProcessor::getOrder))
             .toList();
 
-        List<RetrievalMatch> current = new ArrayList<>(merged);
-        for (SearchResultPostProcessor processor : enabledProcessors) {
+        List<RetrievalMatch> result = new ArrayList<>(merged);
+        for (SearchResultPostProcessor proc : activeProcessors) {
             try {
-                current = processor.process(current, channelResults, context);
-            } catch (Exception e) {
-                log.warn("检索后处理器执行失败: {}", processor.getName(), e);
+                result = proc.apply(result, channelResults, ctx);
+            } catch (Exception ex) {
+                log.warn("检索后处理器执行失败: {}", proc.getName(), ex);
             }
         }
-        return current;
+        return result;
     }
 
-    private SearchChannelResult runChannel(SearchChannel channel, SearchContext context) {
+    private SearchChannelResult invokeChannel(SearchChannel channel, SearchContext ctx) {
         try {
-            SearchChannelResult result = channel.search(context);
-            if (result == null) {
-                return SearchChannelResult.builder()
-                    .channelType(channel.getType())
-                    .channelName(channel.getName())
-                    .matches(List.of())
-                    .confidence(0.0)
-                    .latencyMs(0L)
-                    .build();
+            SearchChannelResult result = channel.execute(ctx);
+            if (result != null) {
+                return result;
             }
-            return result;
-        } catch (Exception e) {
-            log.warn("检索通道执行失败: {}", channel.getName(), e);
-            return SearchChannelResult.builder()
-                .channelType(channel.getType())
-                .channelName(channel.getName())
-                .matches(List.of())
-                .confidence(0.0)
-                .latencyMs(0L)
-                .build();
+            return emptyResult(channel);
+        } catch (Exception ex) {
+            log.warn("检索通道执行失败: {}", channel.getName(), ex);
+            return emptyResult(channel);
         }
     }
 
-    private boolean safeChannelEnabled(SearchChannel channel, SearchContext context) {
-        try {
-            return channel.isEnabled(context);
-        } catch (Exception e) {
-            log.warn("判断通道启用状态失败: {}", channel.getName(), e);
+    private SearchChannelResult emptyResult(SearchChannel channel) {
+        return SearchChannelResult.builder()
+            .channelType(channel.getType())
+            .channelName(channel.getName())
+            .matches(List.of())
+            .confidence(0.0)
+            .elapsedMs(0L)
+            .build();
+    }
+
+    private boolean tryCanActivate(SearchChannel ch, SearchContext ctx) {
+        try { return ch.canActivate(ctx); }
+        catch (Exception ex) {
+            log.warn("判断通道启用状态失败: {}", ch.getName(), ex);
             return false;
         }
     }
 
-    private boolean safeProcessorEnabled(SearchResultPostProcessor processor, SearchContext context) {
-        try {
-            return processor.isEnabled(context);
-        } catch (Exception e) {
-            log.warn("判断后处理器启用状态失败: {}", processor.getName(), e);
+    private boolean tryShouldApply(SearchResultPostProcessor p, SearchContext ctx) {
+        try { return p.shouldApply(ctx); }
+        catch (Exception ex) {
+            log.warn("判断后处理器启用状态失败: {}", p.getName(), ex);
             return false;
         }
     }

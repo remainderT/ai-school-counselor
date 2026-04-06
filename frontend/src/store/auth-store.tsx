@@ -35,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         const refreshed = await loadProfile(saved.username, saved.token);
         if (!refreshed) {
+          // checkLogin 返回 false —— token 确实失效
           clearAuth();
           setAuth(null);
           return;
@@ -42,8 +43,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         saveAuth(refreshed);
         setAuth(refreshed);
       } catch {
-        clearAuth();
-        setAuth(null);
+        // 网络错误 / 限流等非确定性失败 → 保留本地凭据，避免丢失登录态
+        const saved = loadAuth();
+        if (saved) {
+          setAuth(saved);
+        } else {
+          setAuth(null);
+        }
       } finally {
         setRestoring(false);
       }

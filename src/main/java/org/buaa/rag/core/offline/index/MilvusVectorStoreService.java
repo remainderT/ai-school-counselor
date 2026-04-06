@@ -59,7 +59,7 @@ public class MilvusVectorStoreService {
                 row.addProperty("knowledge_id", document.getKnowledgeId());
             }
             row.addProperty("text_payload", truncateText(fragment.getTextContent()));
-            row.add("embedding", toJsonArray(vectors.get(i)));
+            row.add("embedding", vectorToGsonArray(vectors.get(i)));
             rows.add(row);
         }
 
@@ -117,12 +117,15 @@ public class MilvusVectorStoreService {
         return value.substring(0, maxLength);
     }
 
-    private JsonArray toJsonArray(float[] vector) {
-        JsonArray array = new JsonArray(vector.length);
-        for (float value : vector) {
-            array.add(value);
+    /**
+     * 将 float 数组序列化为 Gson {@link JsonArray}，供 Milvus upsert 使用。
+     */
+    private JsonArray vectorToGsonArray(float[] embedding) {
+        JsonArray arr = new JsonArray(embedding.length);
+        for (int k = 0; k < embedding.length; k++) {
+            arr.add(embedding[k]);
         }
-        return array;
+        return arr;
     }
 
     private String escapeLiteral(String value) {

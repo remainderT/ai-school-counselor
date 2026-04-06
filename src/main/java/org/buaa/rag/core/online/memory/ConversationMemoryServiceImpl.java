@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
@@ -76,7 +77,7 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
             return recentMessages;
         }
 
-        String userId = resolveSessionUserId(sessionId);
+        Long userId = resolveSessionUserId(sessionId);
         scheduleSummaryIfNeeded(sessionId, userId, memoryConfig);
         String summary = selectSummary(sessionId, userId, oldMessages, memoryConfig);
         if (!StringUtils.hasText(summary)) {
@@ -93,7 +94,78 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
     }
 
     @Override
-    public void scheduleSummary(String sessionId, String userId) {
+    public List<Map<String, String>> loadContextParallel(String sessionId, Long userId, int maxHistory) {
+        RagProperties.Memory memoryConfig = ragProperties.getMemory();
+        int limit = maxHistory > 0 ? maxHistory : ragProperties.getMemory().getDefaultMaxHistory();
+
+        // 并行：历史消息 + 最新摘要同时从 DB 加载
+        CompletableFuture<List<Map<String, String>>> historyFuture = CompletableFuture.supplyAsync(
+            () -> {
+                try {
+                    return loadMessagesBetween(sessionId, null, null, limit);
+                } catch (Exception e) {
+                    log.debug("并行加载历史消息失败, sessionId={}, error={}", sessionId, e.getMessage());
+                    return List.of();
+                }
+            },
+            memorySummaryExecutor
+        );
+
+        CompletableFuture<MessageSummaryDO> summaryFuture = CompletableFuture.supplyAsync(
+            () -> {
+                try {
+                    return loadLatestSummary(sessionId, userId);
+                } catch (Exception e) {
+                    log.debug("并行加载摘要失败, sessionId={}, error={}", sessionId, e.getMessage());
+                    return null;
+                }
+            },
+            memorySummaryExecutor
+        );
+
+        // 等待两个任务都完成
+        CompletableFuture.allOf(historyFuture, summaryFuture).join();
+
+        List<Map<String, String>> history = historyFuture.join();
+        MessageSummaryDO summary = summaryFuture.join();
+
+        if (history.isEmpty()) {
+            return List.of();
+        }
+
+        // 按 buildContext 相同逻辑截取 + 注入摘要
+        int keepTurns = resolveHistoryKeepTurns(memoryConfig);
+        int keepMessages = Math.max(2, keepTurns * 2);
+
+        List<Map<String, String>> recentMessages = history.size() <= keepMessages
+            ? cloneHistoryList(history)
+            : cloneHistoryList(history.subList(history.size() - keepMessages, history.size()));
+
+        if (memoryConfig == null || !memoryConfig.isSummaryEnabled()
+                || summary == null || !StringUtils.hasText(summary.getContent())) {
+            // 摘要加载完之后异步触发压缩检查
+            scheduleSummaryIfNeeded(sessionId, userId, memoryConfig);
+            return recentMessages;
+        }
+
+        // 摘要已加载，直接注入（不再二次查 DB）
+        String normalizedSummary = normalizeSummary(summary.getContent(), resolveSummaryMaxChars(memoryConfig));
+        scheduleSummaryIfNeeded(sessionId, userId, memoryConfig);
+
+        if (!StringUtils.hasText(normalizedSummary)) {
+            return recentMessages;
+        }
+        List<Map<String, String>> context = new ArrayList<>(recentMessages.size() + 1);
+        Map<String, String> summaryMessage = new HashMap<>();
+        summaryMessage.put("role", "system");
+        summaryMessage.put("content", SUMMARY_PREFIX + normalizedSummary);
+        context.add(summaryMessage);
+        context.addAll(recentMessages);
+        return context;
+    }
+
+    @Override
+    public void scheduleSummary(String sessionId, Long userId) {
         RagProperties.Memory memoryConfig = ragProperties.getMemory();
         if (memoryConfig == null || !memoryConfig.isSummaryEnabled()) {
             return;
@@ -102,7 +174,7 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
     }
 
     private void scheduleSummaryIfNeeded(String sessionId,
-                                         String userId,
+                                         Long userId,
                                          RagProperties.Memory memoryConfig) {
         if (memoryConfig == null || !memoryConfig.isSummaryEnabled()) {
             return;
@@ -152,7 +224,7 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
     }
 
     private String selectSummary(String sessionId,
-                                 String userId,
+                                 Long userId,
                                  List<Map<String, String>> oldMessages,
                                  RagProperties.Memory memoryConfig) {
         MessageSummaryDO summary = loadLatestSummary(sessionId, userId);
@@ -282,7 +354,7 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
         return Math.max(64, memoryConfig.getSummaryMaxTokens());
     }
 
-    private String resolveSessionUserId(String sessionId) {
+    private Long resolveSessionUserId(String sessionId) {
         if (!StringUtils.hasText(sessionId)) {
             return null;
         }
@@ -320,6 +392,10 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
     }
 
     private List<Map<String, String>> loadMessagesBetween(String sessionId, Long afterId, Long beforeId) {
+        return loadMessagesBetween(sessionId, afterId, beforeId, -1);
+    }
+
+    private List<Map<String, String>> loadMessagesBetween(String sessionId, Long afterId, Long beforeId, int limit) {
         LambdaQueryWrapper<MessageDO> query = Wrappers.lambdaQuery(MessageDO.class)
             .eq(MessageDO::getSessionId, sessionId)
             .in(MessageDO::getRole, "user", "assistant");
@@ -328,6 +404,9 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
         }
         if (beforeId != null) {
             query.lt(MessageDO::getId, beforeId);
+        }
+        if (limit > 0) {
+            query.last("limit " + limit);
         }
         List<MessageDO> messageDOS = messageMapper.selectList(query.orderByAsc(MessageDO::getId));
         if (messageDOS == null || messageDOS.isEmpty()) {
@@ -369,32 +448,25 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
         return fallback;
     }
 
-    private MessageSummaryDO loadLatestSummary(String sessionId, String userId) {
+    private MessageSummaryDO loadLatestSummary(String sessionId, Long userId) {
         LambdaQueryWrapper<MessageSummaryDO> query = Wrappers.lambdaQuery(MessageSummaryDO.class)
             .eq(MessageSummaryDO::getSessionId, sessionId)
             .orderByDesc(MessageSummaryDO::getId)
             .last("limit 1");
-        if (StringUtils.hasText(userId)) {
-            query.eq(MessageSummaryDO::getUserId, userId.trim());
+        if (userId != null) {
+            query.eq(MessageSummaryDO::getUserId, userId);
         }
         return messageSummaryMapper.selectOne(query);
     }
 
-    private void persistSummary(String sessionId, String userId, String content, Long lastMessageId) {
+    private void persistSummary(String sessionId, Long userId, String content, Long lastMessageId) {
         MessageSummaryDO summaryDO = MessageSummaryDO.builder()
             .sessionId(sessionId)
-            .userId(normalizeUserId(userId))
+            .userId(userId)
             .content(content)
             .lastMessageId(lastMessageId)
             .build();
         messageSummaryMapper.insert(summaryDO);
-    }
-
-    private String normalizeUserId(String userId) {
-        if (!StringUtils.hasText(userId)) {
-            return "anonymous";
-        }
-        return userId.trim();
     }
 
     private boolean tryAcquireSummaryLock(String lockKey) {

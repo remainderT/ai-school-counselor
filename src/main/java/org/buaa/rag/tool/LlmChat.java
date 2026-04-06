@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
+import org.buaa.rag.common.prompt.PromptTemplateLoader;
 import org.buaa.rag.properties.LlmProperties;
 import org.springframework.stereotype.Service;
 
@@ -33,13 +34,34 @@ public class LlmChat {
                                Consumer<String> chunkHandler,
                                Consumer<Throwable> errorHandler,
                                Runnable completionHandler) {
+        streamResponse(userQuery, referenceContext, conversationHistory,
+            null, null, chunkHandler, errorHandler, completionHandler);
+    }
+
+    /**
+     * 支持自定义温度和 topP 的流式调用重载。
+     *
+     * @param temperatureOverride 动态温度（null 时使用配置默认值）；
+     *                            KB 精确问答建议 0.0，Tool 结果混合建议 0.3
+     * @param topPOverride        动态 topP（null 时使用配置默认值）
+     */
+    public void streamResponse(String userQuery,
+                               String referenceContext,
+                               List<Map<String, String>> conversationHistory,
+                               Double temperatureOverride,
+                               Double topPOverride,
+                               Consumer<String> chunkHandler,
+                               Consumer<Throwable> errorHandler,
+                               Runnable completionHandler) {
         AtomicBoolean completionFlag = new AtomicBoolean(false);
+        Double temperature = temperatureOverride != null ? temperatureOverride : temperature();
+        Double topP = topPOverride != null ? topPOverride : topP();
         try {
             dashscopeClient.streamChatCompletion(
                 buildSystemPrompt(referenceContext),
                 buildUserPrompt(userQuery, conversationHistory),
-                temperature(),
-                topP(),
+                temperature,
+                topP,
                 maxTokens(null),
                 chunk -> {
                     if (chunkHandler == null) {
@@ -102,8 +124,10 @@ public class LlmChat {
         LlmProperties.PromptTemplate template = llmProperties.getPromptTemplate();
         StringBuilder systemMessageBuilder = new StringBuilder();
 
-        if (template != null && template.getRules() != null && !template.getRules().isEmpty()) {
-            systemMessageBuilder.append(template.getRules()).append("\n\n");
+        // 系统角色指令：从 prompts/system-rules.st 加载
+        String rules = PromptTemplateLoader.load("system-rules.st");
+        if (rules != null && !rules.isEmpty()) {
+            systemMessageBuilder.append(rules).append("\n\n");
         }
 
         String refStart = template == null ? "<<参考资料开始>>" : getOrDefault(template.getRefStart(), "<<参考资料开始>>");

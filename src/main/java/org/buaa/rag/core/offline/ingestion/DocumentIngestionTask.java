@@ -83,6 +83,6 @@ public record DocumentIngestionTask(Long documentId, int retryCount, String chun
         if (raw == null || raw.isBlank()) {
             return null;
         }
-        return ChunkingMode.fromValue(raw).value();
+        return ChunkingMode.resolve(raw).getValue();
     }
 }

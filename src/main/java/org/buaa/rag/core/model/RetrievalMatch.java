@@ -13,6 +13,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class RetrievalMatch {
 
+    private Long documentId;
+
     private String fileMd5;
 
     private Integer chunkId;
@@ -31,6 +33,16 @@ public class RetrievalMatch {
         this.chunkId = chunkId;
         this.textContent = textContent;
         this.relevanceScore = score;
+    }
+
+    /**
+     * 构建唯一标识 key，用于去重、合并等场景。
+     * 格式：{fileMd5}:{chunkId}
+     */
+    public String matchKey() {
+        String md5 = fileMd5 == null ? "" : fileMd5;
+        String chunk = chunkId == null ? "null" : String.valueOf(chunkId);
+        return md5 + ":" + chunk;
     }
 
     /**

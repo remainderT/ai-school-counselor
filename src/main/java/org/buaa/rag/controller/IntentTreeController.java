@@ -8,7 +8,7 @@ import org.buaa.rag.dto.req.IntentNodeBatchReqDTO;
 import org.buaa.rag.dto.req.IntentNodeCreateReqDTO;
 import org.buaa.rag.dto.req.IntentNodeUpdateReqDTO;
 import org.buaa.rag.dto.resp.IntentNodeTreeRespDTO;
-import org.buaa.rag.service.IntentTreeManageService;
+import org.buaa.rag.service.IntentTreeService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,45 +25,45 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class IntentTreeController {
 
-    private final IntentTreeManageService intentTreeManageService;
+    private final IntentTreeService intentTreeService;
 
     @GetMapping("/trees")
     public Result<List<IntentNodeTreeRespDTO>> tree() {
-        return Results.success(intentTreeManageService.tree());
+        return Results.success(intentTreeService.tree());
     }
 
     @PostMapping
     public Result<Long> create(@RequestBody IntentNodeCreateReqDTO requestParam) {
-        return Results.success(intentTreeManageService.create(requestParam));
+        return Results.success(intentTreeService.create(requestParam));
     }
 
     @PutMapping("/{id}")
     public Result<Void> update(@PathVariable Long id, @RequestBody IntentNodeUpdateReqDTO requestParam) {
-        intentTreeManageService.update(id, requestParam);
+        intentTreeService.update(id, requestParam);
         return Results.success();
     }
 
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
-        intentTreeManageService.delete(id);
+        intentTreeService.delete(id);
         return Results.success();
     }
 
     @PostMapping("/batch/enable")
     public Result<Void> batchEnable(@RequestBody IntentNodeBatchReqDTO requestParam) {
-        intentTreeManageService.batchEnable(requestParam == null ? null : requestParam.getIds());
+        intentTreeService.batchEnable(requestParam == null ? null : requestParam.getIds());
         return Results.success();
     }
 
     @PostMapping("/batch/disable")
     public Result<Void> batchDisable(@RequestBody IntentNodeBatchReqDTO requestParam) {
-        intentTreeManageService.batchDisable(requestParam == null ? null : requestParam.getIds());
+        intentTreeService.batchDisable(requestParam == null ? null : requestParam.getIds());
         return Results.success();
     }
 
     @PostMapping("/batch/delete")
     public Result<Void> batchDelete(@RequestBody IntentNodeBatchReqDTO requestParam) {
-        intentTreeManageService.batchDelete(requestParam == null ? null : requestParam.getIds());
+        intentTreeService.batchDelete(requestParam == null ? null : requestParam.getIds());
         return Results.success();
     }
 

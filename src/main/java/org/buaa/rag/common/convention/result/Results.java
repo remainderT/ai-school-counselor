@@ -1,61 +1,39 @@
 package org.buaa.rag.common.convention.result;
 
-import java.util.Optional;
-
 import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
 import org.buaa.rag.common.convention.exception.AbstractException;
 
-
 /**
- * 全局返回对象构造器
+ * {@link Result} 的静态工厂，简化 Controller 层返回值构造。
  */
 public final class Results {
 
-    /**
-     * 构造成功响应
-     */
+    private Results() {
+    }
+
     public static Result<Void> success() {
-        return new Result<Void>()
-                .setCode(Result.SUCCESS_CODE);
+        return new Result<Void>().setCode(Result.SUCCESS_CODE);
     }
 
-    /**
-     * 构造带返回数据的成功响应
-     */
     public static <T> Result<T> success(T data) {
-        return new Result<T>()
-                .setCode(Result.SUCCESS_CODE)
-                .setData(data);
+        return new Result<T>().setCode(Result.SUCCESS_CODE).setData(data);
     }
 
-    /**
-     * 构建服务端失败响应
-     */
     public static Result<Void> failure() {
-        return new Result<Void>()
-                .setCode(BaseErrorCode.SERVICE_ERROR.code())
-                .setMessage(BaseErrorCode.SERVICE_ERROR.message());
+        return ofError(BaseErrorCode.SERVICE_ERROR.code(), BaseErrorCode.SERVICE_ERROR.message());
     }
 
-    /**
-     * 通过 {@link AbstractException} 构建失败响应
-     */
-    public static Result<Void> failure(AbstractException abstractException) {
-        String errorCode = Optional.ofNullable(abstractException.getErrorCode())
-                .orElse(BaseErrorCode.SERVICE_ERROR.code());
-        String errorMessage = Optional.ofNullable(abstractException.getErrorMessage())
-                .orElse(BaseErrorCode.SERVICE_ERROR.message());
-        return new Result<Void>()
-                .setCode(errorCode)
-                .setMessage(errorMessage);
+    public static Result<Void> failure(AbstractException ex) {
+        String code = ex.getErrorCode() != null ? ex.getErrorCode() : BaseErrorCode.SERVICE_ERROR.code();
+        String msg = ex.getErrorMessage() != null ? ex.getErrorMessage() : BaseErrorCode.SERVICE_ERROR.message();
+        return ofError(code, msg);
     }
 
-    /**
-     * 通过 errorCode、errorMessage 构建失败响应
-     */
     public static Result<Void> failure(String errorCode, String errorMessage) {
-        return new Result<Void>()
-                .setCode(errorCode)
-                .setMessage(errorMessage);
+        return ofError(errorCode, errorMessage);
+    }
+
+    private static Result<Void> ofError(String code, String message) {
+        return new Result<Void>().setCode(code).setMessage(message);
     }
 }

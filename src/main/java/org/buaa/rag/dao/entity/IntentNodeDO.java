@@ -2,6 +2,8 @@ package org.buaa.rag.dao.entity;
 
 import org.buaa.rag.common.database.BaseDO;
 
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
 import lombok.AllArgsConstructor;
@@ -19,6 +21,7 @@ import lombok.NoArgsConstructor;
 @TableName("intent_node")
 public class IntentNodeDO extends BaseDO {
 
+    @TableId(type = IdType.AUTO)
     private Long id;
 
     /**
@@ -72,24 +75,14 @@ public class IntentNodeDO extends BaseDO {
     private String examplesJson;
 
     /**
-     * 关联知识库ID（字符串，兼容已有检索逻辑）
+     * 关联知识库ID
      */
-    private String knowledgeBaseId;
+    private Long knowledgeBaseId;
 
     /**
      * 动作服务名（工具名）
      */
     private String actionService;
-
-    /**
-     * 节点层级：DOMAIN/CATEGORY/TOPIC
-     */
-    private String nodeLevel;
-
-    /**
-     * 节点类型语义：KB/MCP/SYSTEM
-     */
-    private String nodeKind;
 
     /**
      * MCP 工具ID
@@ -100,11 +93,6 @@ public class IntentNodeDO extends BaseDO {
      * 节点级检索 topK
      */
     private Integer topK;
-
-    /**
-     * 排序字段
-     */
-    private Integer sortOrder;
 
     /**
      * 是否启用：1 启用，0 停用

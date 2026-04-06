@@ -11,7 +11,7 @@ import lombok.Data;
 @Data
 @Component
 @ConfigurationProperties(prefix = "file.parsing")
-public class FIleParseProperties {
+public class FileParseProperties {
 
     /** 分块模式: fixed_size / structure_aware */
     private String chunkMode = "structure_aware";

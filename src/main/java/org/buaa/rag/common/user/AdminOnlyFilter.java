@@ -1,10 +1,10 @@
 package org.buaa.rag.common.user;
 
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.util.List;
 
 import org.buaa.rag.common.convention.result.Results;
+import org.buaa.rag.common.util.FilterResponseUtils;
 
 import com.alibaba.fastjson2.JSON;
 
@@ -46,18 +46,11 @@ public class AdminOnlyFilter implements Filter {
         String requestUri = request.getRequestURI();
 
         if (requireAdmin(requestUri) && !UserContext.isAdmin()) {
-            returnJson((HttpServletResponse) servletResponse, JSON.toJSONString(Results.failure(NO_ADMIN_CODE, NO_ADMIN_MSG)));
+            FilterResponseUtils.writeJsonResponse((HttpServletResponse) servletResponse, JSON.toJSONString(Results.failure(NO_ADMIN_CODE, NO_ADMIN_MSG)));
             return;
         }
 
         filterChain.doFilter(servletRequest, servletResponse);
     }
 
-    private void returnJson(HttpServletResponse response, String json) throws IOException {
-        response.setCharacterEncoding("UTF-8");
-        response.setContentType("application/json; charset=utf-8");
-        PrintWriter writer = response.getWriter();
-        writer.print(json);
-        writer.close();
-    }
 }

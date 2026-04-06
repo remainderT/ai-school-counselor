@@ -6,7 +6,7 @@ import org.buaa.rag.dto.req.IntentNodeCreateReqDTO;
 import org.buaa.rag.dto.req.IntentNodeUpdateReqDTO;
 import org.buaa.rag.dto.resp.IntentNodeTreeRespDTO;
 
-public interface IntentTreeManageService {
+public interface IntentTreeService {
 
     List<IntentNodeTreeRespDTO> tree();
 
@@ -21,8 +21,4 @@ public interface IntentTreeManageService {
     void batchDisable(List<Long> ids);
 
     void batchDelete(List<Long> ids);
-
-    void reloadCache();
-
-    int initializeFromRuntimeTree();
 }

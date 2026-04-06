@@ -7,6 +7,7 @@ import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.dao.entity.KnowledgeDO;
 import org.buaa.rag.dto.req.KnowledgeCreateReqDTO;
 import org.buaa.rag.dto.req.KnowledgeUpdateReqDTO;
+import org.buaa.rag.dto.resp.KnowledgeListRespDTO;
 import org.buaa.rag.service.KnowledgeService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -32,7 +33,7 @@ public class KnowledgeController {
     }
 
     @GetMapping("/list")
-    public Result<List<KnowledgeDO>> list() {
+    public Result<List<KnowledgeListRespDTO>> list() {
         return Results.success(knowledgeService.listMine());
     }
 

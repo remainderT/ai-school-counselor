@@ -1,12 +1,9 @@
 package org.buaa.rag.core.online.intent;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
-import java.util.stream.Collectors;
 
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.properties.IntentResolutionProperties;
@@ -14,17 +11,20 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
-import lombok.RequiredArgsConstructor;
-
 @Service
-@RequiredArgsConstructor
 public class IntentResolutionService {
 
     private final IntentRouterService intentRouterService;
     private final IntentResolutionProperties properties;
-
-    @Qualifier("intentResolutionExecutor")
     private final Executor intentResolutionExecutor;
+
+    public IntentResolutionService(IntentRouterService intentRouterService,
+                                   IntentResolutionProperties properties,
+                                   @Qualifier("intentResolutionExecutor") Executor intentResolutionExecutor) {
+        this.intentRouterService = intentRouterService;
+        this.properties = properties;
+        this.intentResolutionExecutor = intentResolutionExecutor;
+    }
 
     public List<SubQueryIntent> resolve(String userId, List<String> subQueries) {
         if (subQueries == null || subQueries.isEmpty()) {
@@ -73,64 +73,62 @@ public class IntentResolutionService {
         return new SubQueryIntent(subQuery, candidates);
     }
 
-    private List<SubQueryIntent> capTotalCandidates(List<SubQueryIntent> resolved, int maxTotal) {
-        int total = resolved.stream()
-            .map(SubQueryIntent::candidates)
-            .filter(list -> list != null)
-            .mapToInt(List::size)
+    /**
+     * 当所有子查询的候选意图总数超过 {@code budget} 时，按如下策略裁剪：
+     * <ol>
+     *   <li>每个子查询保留置信度最高的 1 个意图（保底配额）</li>
+     *   <li>剩余配额按全局置信度降序补充</li>
+     * </ol>
+     */
+    private List<SubQueryIntent> capTotalCandidates(List<SubQueryIntent> resolved, int budget) {
+        // 快速路径：总数未超限时直接返回
+        long totalCount = resolved.stream()
+            .mapToLong(sq -> sq.candidates() == null ? 0 : sq.candidates().size())
             .sum();
-        if (total <= maxTotal) {
+        if (totalCount <= budget) {
             return resolved;
         }
 
-        List<PickedCandidate> guaranteed = new ArrayList<>();
+        // ---- 第一轮：每个子查询保留 top-1 ----
+        List<List<IntentDecision>> retained = new ArrayList<>(resolved.size());
+        int usedSlots = 0;
+        for (SubQueryIntent sq : resolved) {
+            List<IntentDecision> c = sq.candidates();
+            if (c != null && !c.isEmpty()) {
+                retained.add(new ArrayList<>(List.of(c.get(0))));
+                usedSlots++;
+            } else {
+                retained.add(new ArrayList<>());
+            }
+        }
+
+        // ---- 第二轮：收集所有非 top-1 候选，按置信度降序排序 ----
+        record ScoredEntry(int queryIdx, IntentDecision decision, double score) {}
+        List<ScoredEntry> surplus = new ArrayList<>();
+        for (int qi = 0; qi < resolved.size(); qi++) {
+            List<IntentDecision> c = resolved.get(qi).candidates();
+            if (c == null) continue;
+            for (int ci = 1; ci < c.size(); ci++) {
+                IntentDecision d = c.get(ci);
+                double s = d.getConfidence() != null ? d.getConfidence() : 0.0;
+                surplus.add(new ScoredEntry(qi, d, s));
+            }
+        }
+        surplus.sort((a, b) -> Double.compare(b.score(), a.score()));
+
+        // ---- 第三轮：按配额填充 ----
+        int freeSlots = Math.max(0, budget - usedSlots);
+        for (ScoredEntry entry : surplus) {
+            if (freeSlots <= 0) break;
+            retained.get(entry.queryIdx()).add(entry.decision());
+            freeSlots--;
+        }
+
+        // ---- 重建结果列表 ----
+        List<SubQueryIntent> trimmed = new ArrayList<>(resolved.size());
         for (int i = 0; i < resolved.size(); i++) {
-            List<IntentDecision> candidates = resolved.get(i).candidates();
-            if (candidates == null || candidates.isEmpty()) {
-                continue;
-            }
-            guaranteed.add(new PickedCandidate(i, candidates.get(0)));
+            trimmed.add(new SubQueryIntent(resolved.get(i).subQuery(), List.copyOf(retained.get(i))));
         }
-        int remaining = Math.max(0, maxTotal - guaranteed.size());
-
-        List<PickedCandidate> optional = new ArrayList<>();
-        for (int i = 0; i < resolved.size(); i++) {
-            List<IntentDecision> candidates = resolved.get(i).candidates();
-            if (candidates == null || candidates.size() < 2) {
-                continue;
-            }
-            for (int j = 1; j < candidates.size(); j++) {
-                optional.add(new PickedCandidate(i, candidates.get(j)));
-            }
-        }
-        optional.sort(Comparator.comparingDouble(
-            c -> -(c.decision().getConfidence() == null ? 0.0 : c.decision().getConfidence())
-        ));
-
-        List<PickedCandidate> picked = new ArrayList<>(guaranteed);
-        for (PickedCandidate candidate : optional) {
-            if (remaining <= 0) {
-                break;
-            }
-            picked.add(candidate);
-            remaining--;
-        }
-
-        Map<Integer, List<IntentDecision>> grouped = picked.stream()
-            .collect(Collectors.groupingBy(
-                PickedCandidate::index,
-                Collectors.mapping(PickedCandidate::decision, Collectors.toList())
-            ));
-
-        List<SubQueryIntent> capped = new ArrayList<>(resolved.size());
-        for (int i = 0; i < resolved.size(); i++) {
-            SubQueryIntent origin = resolved.get(i);
-            List<IntentDecision> candidates = grouped.getOrDefault(i, List.of());
-            capped.add(new SubQueryIntent(origin.subQuery(), candidates));
-        }
-        return capped;
-    }
-
-    private record PickedCandidate(int index, IntentDecision decision) {
+        return trimmed;
     }
 }

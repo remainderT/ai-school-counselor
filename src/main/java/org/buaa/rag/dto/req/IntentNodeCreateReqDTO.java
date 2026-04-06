@@ -25,19 +25,13 @@ public class IntentNodeCreateReqDTO {
 
     private List<String> keywords;
 
-    private String knowledgeBaseId;
+    private Long knowledgeBaseId;
 
     private String actionService;
-
-    private String nodeLevel;
-
-    private String nodeKind;
 
     private String mcpToolId;
 
     private Integer topK;
-
-    private Integer sortOrder;
 
     private Integer enabled;
 }

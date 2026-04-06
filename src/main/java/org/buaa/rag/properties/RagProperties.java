@@ -1,5 +1,7 @@
 package org.buaa.rag.properties;
 
+import java.util.List;
+
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -13,28 +15,29 @@ import lombok.Data;
 @Data
 public class RagProperties {
 
-    private Rewrite rewrite = new Rewrite();
+    private QueryPreprocess queryPreprocess = new QueryPreprocess();
     private Hyde hyde = new Hyde();
     private Fusion fusion = new Fusion();
     private Rerank rerank = new Rerank();
     private Crag crag = new Crag();
     private Feedback feedback = new Feedback();
-    private Decomposition decomposition = new Decomposition();
     private SemanticCache semanticCache = new SemanticCache();
     private Memory memory = new Memory();
+    private Retrieval retrieval = new Retrieval();
+    private Prompt prompt = new Prompt();
 
     @Data
-    public static class Rewrite {
+    public static class QueryPreprocess {
+        /** 是否启用改写+拆分（关闭后直接透传原始问题） */
         private boolean enabled = true;
-        private int variants = 3;
-        private String prompt;
+        /** 最多拆分的子问题数 */
+        private int maxSubQuestions = 4;
     }
 
     @Data
     public static class Hyde {
         private boolean enabled = false;
         private int maxTokens = 256;
-        private String prompt;
     }
 
     @Data
@@ -49,7 +52,30 @@ public class RagProperties {
         private boolean enabled = true;
         private int maxCandidates = 8;
         private int snippetLength = 200;
-        private String prompt;
+
+        /**
+         * Rerank 提供商优先级列表，按顺序依次尝试，失败自动降级。
+         * 可选值：dashscope, llm, noop
+         * 默认：dashscope → llm → noop
+         */
+        private List<String> providerOrder;
+
+        /**
+         * 百炼 Rerank 模型配置
+         */
+        private RerankProvider dashscope = new RerankProvider();
+    }
+
+    @Data
+    public static class RerankProvider {
+        /** Rerank API 的 base URL */
+        private String baseUrl = "https://dashscope.aliyuncs.com";
+        /** API Key（留空时从 spring.ai.dashscope.api-key 继承） */
+        private String apiKey;
+        /** Rerank 模型名称 */
+        private String model = "gte-rerank";
+        /** HTTP 请求超时时间（秒） */
+        private int timeoutSeconds = 15;
     }
 
     @Data
@@ -59,21 +85,23 @@ public class RagProperties {
         private double minScore = 0.2;
         private int reviewTopK = 3;
         private int fallbackMultiplier = 2;
-        private String prompt;
-        private String clarifyPrompt;
+        // prompt 已迁移到 prompts/crag-evaluate.st
+        // clarifyPrompt 已迁移到 prompts/crag-clarify.st
+
+        /**
+         * 歧义指示词列表：用户消息包含这些词时判定为可能需要澄清
+         */
+        private List<String> ambiguityWords = List.of("这个", "那个", "之前", "上面", "怎么弄", "怎么办");
+        /**
+         * 歧义判定最小消息长度（短于此值视为模糊）
+         */
+        private int ambiguityMinLength = 6;
     }
 
     @Data
     public static class Feedback {
         private boolean enabled = true;
         private double maxBoost = 0.15;
-    }
-
-    @Data
-    public static class Decomposition {
-        private boolean enabled = true;
-        private int maxSubqueries = 3;
-        private String prompt;
     }
 
     @Data
@@ -110,5 +138,45 @@ public class RagProperties {
          * 两次摘要生成之间最小新增消息数
          */
         private int minDeltaMessages = 4;
+        /**
+         * loadContextParallel 的默认最大历史消息数
+         */
+        private int defaultMaxHistory = 60;
+    }
+
+    @Data
+    public static class Retrieval {
+        /**
+         * 子问题检索默认 topK
+         */
+        private int defaultTopK = 5;
+        /**
+         * 子问题检索最大 topK
+         */
+        private int maxTopK = 10;
+        /**
+         * 低质量判定阈值（top-1 分数低于此值视为低质量）
+         */
+        private double minAcceptableScore = 0.25;
+    }
+
+    @Data
+    public static class Prompt {
+        /**
+         * 参考上下文中每条片段最大字符数
+         */
+        private int maxReferenceLength = 300;
+        /**
+         * 最大来源引用条数
+         */
+        private int maxSourceReferenceCount = 5;
+        /**
+         * KB 纯检索场景温度
+         */
+        private double temperatureKb = 0.0;
+        /**
+         * Tool 结果混合场景温度
+         */
+        private double temperatureTool = 0.3;
     }
 }

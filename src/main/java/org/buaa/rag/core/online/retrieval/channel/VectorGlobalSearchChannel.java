@@ -6,15 +6,17 @@ import java.util.Map;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.properties.SearchChannelProperties;
-import org.buaa.rag.service.SmartRetrieverService;
+import org.buaa.rag.core.online.retrieval.SmartRetrieverService;
 import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 全局向量检索通道
- * 当意图置信度不足时承担兜底召回
+ * 全局向量检索通道。
+ * <p>
+ * 当意图置信度不足（或不存在有效意图）时承担兜底召回，
+ * 先尝试纯向量检索，无结果则降级为混合检索。
  */
 @Slf4j
 @Component
@@ -35,60 +37,57 @@ public class VectorGlobalSearchChannel implements SearchChannel {
     }
 
     @Override
-    public boolean isEnabled(SearchContext context) {
+    public boolean canActivate(SearchContext context) {
         if (!properties.getChannels().getVectorGlobal().isEnabled()) {
             return false;
         }
+        double threshold = properties.getChannels().getVectorGlobal().getConfidenceThreshold();
         if (context.getIntentDecisions() != null && !context.getIntentDecisions().isEmpty()) {
-            double maxConfidence = context.getIntentDecisions().stream()
-                .filter(decision -> decision != null && decision.getAction() == IntentDecision.Action.ROUTE_RAG)
+            double peak = context.getIntentDecisions().stream()
+                .filter(d -> d != null && d.getAction() == IntentDecision.Action.ROUTE_RAG)
                 .map(IntentDecision::getConfidence)
-                .filter(confidence -> confidence != null)
+                .filter(c -> c != null)
                 .mapToDouble(Double::doubleValue)
                 .max()
                 .orElse(0.0);
-            return maxConfidence < properties.getChannels().getVectorGlobal().getConfidenceThreshold();
+            return peak < threshold;
         }
-        IntentDecision decision = context.getIntentDecision();
-        if (decision == null || decision.getAction() != IntentDecision.Action.ROUTE_RAG) {
+        IntentDecision single = context.getIntentDecision();
+        if (single == null || single.getAction() != IntentDecision.Action.ROUTE_RAG) {
             return true;
         }
-        double confidence = decision.getConfidence() == null ? 0.0 : decision.getConfidence();
-        return confidence < properties.getChannels().getVectorGlobal().getConfidenceThreshold();
+        double conf = single.getConfidence() == null ? 0.0 : single.getConfidence();
+        return conf < threshold;
     }
 
     @Override
-    public SearchChannelResult search(SearchContext context) {
-        long start = System.currentTimeMillis();
+    public SearchChannelResult execute(SearchContext context) {
+        long t0 = System.currentTimeMillis();
         try {
             int multiplier = Math.max(1, properties.getChannels().getVectorGlobal().getTopKMultiplier());
-            int topK = Math.max(1, context.getTopK() * multiplier);
-            List<RetrievalMatch> matches = smartRetrieverService.retrieveVectorOnly(
-                context.getMainQuery(),
-                topK,
-                context.getUserId()
-            );
-            if (matches.isEmpty()) {
-                matches = smartRetrieverService.retrieve(context.getMainQuery(), topK, context.getUserId());
+            int effectiveTopK = Math.max(1, context.getTopK() * multiplier);
+            List<RetrievalMatch> hits = smartRetrieverService.retrieveVectorOnly(
+                context.effectiveQuery(), effectiveTopK, context.getUserId());
+            if (hits.isEmpty()) {
+                hits = smartRetrieverService.retrieve(context.effectiveQuery(), effectiveTopK, context.getUserId());
             }
-
-            double confidence = resolveChannelConfidence(context.getIntentDecision());
+            double conf = computeConfidence(context.getIntentDecision());
             return SearchChannelResult.builder()
                 .channelType(SearchChannelType.VECTOR_GLOBAL)
                 .channelName(getName())
-                .matches(matches)
-                .confidence(confidence)
-                .latencyMs(System.currentTimeMillis() - start)
-                .metadata(Map.of("topK", topK))
+                .matches(hits)
+                .confidence(conf)
+                .elapsedMs(System.currentTimeMillis() - t0)
+                .metadata(Map.of("topK", effectiveTopK))
                 .build();
-        } catch (Exception e) {
-            log.warn("全局向量检索失败", e);
+        } catch (Exception ex) {
+            log.warn("全局向量检索失败", ex);
             return SearchChannelResult.builder()
                 .channelType(SearchChannelType.VECTOR_GLOBAL)
                 .channelName(getName())
                 .matches(List.of())
                 .confidence(0.0)
-                .latencyMs(System.currentTimeMillis() - start)
+                .elapsedMs(System.currentTimeMillis() - t0)
                 .build();
         }
     }
@@ -98,9 +97,9 @@ public class VectorGlobalSearchChannel implements SearchChannel {
         return SearchChannelType.VECTOR_GLOBAL;
     }
 
-    private double resolveChannelConfidence(IntentDecision decision) {
+    private double computeConfidence(IntentDecision decision) {
         if (decision == null || decision.getConfidence() == null) {
-            return 0.7;
+            return properties.getChannels().getVectorGlobal().getDefaultConfidence();
         }
         return Math.max(0.2, 1.0 - decision.getConfidence());
     }

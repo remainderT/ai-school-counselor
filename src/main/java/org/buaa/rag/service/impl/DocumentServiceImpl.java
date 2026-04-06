@@ -15,17 +15,22 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.apache.commons.codec.digest.DigestUtils;
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.common.enums.UploadStatusEnum;
 import org.buaa.rag.common.user.UserContext;
+import org.buaa.rag.dao.entity.ChunkDO;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.KnowledgeDO;
+import org.buaa.rag.dao.mapper.ChunkMapper;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
 import org.buaa.rag.dto.req.DocumentUploadReqDTO;
+import org.buaa.rag.core.model.UploadPayload;
 import org.buaa.rag.core.offline.ingestion.DocumentArtifactService;
 import org.buaa.rag.core.offline.ingestion.DocumentLifecycleService;
 import org.buaa.rag.core.offline.ingestion.DocumentIngestionTask;
@@ -33,13 +38,13 @@ import org.buaa.rag.core.offline.schedule.CronScheduleHelper;
 import org.buaa.rag.tool.RemoteURLFetcher;
 import org.buaa.rag.tool.RemoteURLFetcher.FetchedRemoteDocument;
 import org.buaa.rag.core.mq.IngestionProducer;
-import org.buaa.rag.properties.FIleParseProperties;
+import org.buaa.rag.properties.FileParseProperties;
 import org.buaa.rag.service.DocumentService;
 import org.buaa.rag.core.offline.parser.FileTypeValidate;
 import org.buaa.rag.core.offline.parser.FileTypeValidate.InspectedFile;
 import org.buaa.rag.tool.RustfsStorage;
 import org.springframework.core.io.ByteArrayResource;
-import org.springframework.core.io.InputStreamSource;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -65,7 +70,8 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
 
     private final RustfsStorage rustfsStorage;
     private final KnowledgeMapper knowledgeMapper;
-    private final FIleParseProperties fileParseProperties;
+    private final ChunkMapper chunkMapper;
+    private final FileParseProperties fileParseProperties;
     private final IngestionProducer ingestionProducer;
     private final DocumentLifecycleService lifecycleService;
     private final DocumentArtifactService artifactService;
@@ -75,12 +81,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private long refreshMinIntervalSeconds;
 
 
-    public record UploadPayload(String originalFilename,
-                                 String mimeType,
-                                 long size,
-                                 String md5,
-                                 InputStreamSource source) {
-    }
+    // UploadPayload 已提取到 org.buaa.rag.core.model.UploadPayload
 
     @Override
     public void upload(DocumentUploadReqDTO request) {
@@ -104,14 +105,48 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     }
 
     @Override
-    public List<DocumentDO> list() {
-        List<DocumentDO> documents = baseMapper.selectList(
-            Wrappers.lambdaQuery(DocumentDO.class)
+    public List<DocumentDO> list(Long knowledgeId, String name) {
+        var query = Wrappers.lambdaQuery(DocumentDO.class)
                 .eq(DocumentDO::getUserId, UserContext.getUserId())
                 .eq(DocumentDO::getDelFlag, 0)
-        );
+                .eq(knowledgeId != null, DocumentDO::getKnowledgeId, knowledgeId)
+                .like(StringUtils.hasText(name), DocumentDO::getOriginalFileName, name)
+                .orderByDesc(DocumentDO::getCreateTime);
+        List<DocumentDO> documents = baseMapper.selectList(query);
         documents.forEach(doc -> doc.setProcessingStatusDesc(UploadStatusEnum.descOf(doc.getProcessingStatus())));
+
+        // 批量统计每个文档的 chunk 数量
+        if (!documents.isEmpty()) {
+            List<Long> docIds = documents.stream().map(DocumentDO::getId).collect(Collectors.toList());
+            List<ChunkDO> chunks = chunkMapper.selectList(
+                Wrappers.lambdaQuery(ChunkDO.class)
+                    .select(ChunkDO::getDocumentId)
+                    .in(ChunkDO::getDocumentId, docIds)
+                    .eq(ChunkDO::getDelFlag, 0)
+            );
+            Map<Long, Long> chunkCountMap = chunks.stream()
+                .collect(Collectors.groupingBy(ChunkDO::getDocumentId, Collectors.counting()));
+            documents.forEach(doc -> doc.setChunkCount(chunkCountMap.getOrDefault(doc.getId(), 0L).intValue()));
+        }
+
         return documents;
+    }
+
+    @Override
+    public List<ChunkDO> listChunks(Long documentId) {
+        DocumentDO document = baseMapper.selectById(documentId);
+        if (document == null || document.getDelFlag() != 0 && document.getDelFlag() != null) {
+            throw new ClientException(DOCUMENT_NOT_EXISTS);
+        }
+        if (!document.getUserId().equals(UserContext.getUserId())) {
+            throw new ClientException(DOCUMENT_ACCESS_CONTROL_ERROR);
+        }
+        return chunkMapper.selectList(
+            Wrappers.lambdaQuery(ChunkDO.class)
+                .eq(ChunkDO::getDocumentId, documentId)
+                .eq(ChunkDO::getDelFlag, 0)
+                .orderByAsc(ChunkDO::getFragmentIndex)
+        );
     }
 
     @Override
@@ -186,7 +221,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
                                       boolean scheduleEnabled,
                                       String scheduleCron,
                                       LocalDateTime nextRefreshAt) {
-        DocumentDO document = lifecycleService.findDocumentByMd5AndUserId(payload.md5, UserContext.getUserId());
+        DocumentDO document = lifecycleService.findDocumentByMd5AndUserId(payload.md5(), UserContext.getUserId());
         if (document != null) {
             throw new ClientException(DOCUMENT_EXISTS);
         }
@@ -206,7 +241,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         } catch (Exception e) {
             // 文档记录尚未落库时，尝试清理已上传的对象存储文件，避免孤儿文件。
             if (document == null) {
-                rustfsStorage.delete(payload.md5(), payload.originalFilename);
+                rustfsStorage.delete(payload.md5(), payload.originalFilename());
             }
             markUploadFailure(document, e);
             throw new ServiceException("文件上传失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
@@ -268,7 +303,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         }
         LocalDateTime now = LocalDateTime.now();
         try {
-            if (CronScheduleHelper.isIntervalLessThan(scheduleCron, now, refreshMinIntervalSeconds)) {
+            if (CronScheduleHelper.isIntervalTooShort(scheduleCron, now, refreshMinIntervalSeconds)) {
                 throw new ClientException("定时周期不能小于 " + refreshMinIntervalSeconds + " 秒");
             }
             LocalDateTime nextRunTime = CronScheduleHelper.nextRunTime(scheduleCron, now);

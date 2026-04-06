@@ -9,6 +9,9 @@ import org.buaa.rag.core.model.RetrievalMatch;
 import lombok.Builder;
 import lombok.Data;
 
+/**
+ * 单个检索通道的执行结果。
+ */
 @Data
 @Builder
 public class SearchChannelResult {
@@ -17,7 +20,7 @@ public class SearchChannelResult {
     private String channelName;
     private List<RetrievalMatch> matches;
     private double confidence;
-    private long latencyMs;
+    private long elapsedMs;
 
     @Builder.Default
     private Map<String, Object> metadata = new HashMap<>();
