@@ -15,7 +15,10 @@ function createId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function pushToast(message: string, tone: ToastTone = "info", durationMs = 3200) {
+export function pushToast(message: string, tone: ToastTone = "info", durationMs?: number) {
+  if (durationMs === undefined) {
+    durationMs = tone === "success" ? 1000 : 3200;
+  }
   const item: ToastItem = { id: createId(), message, tone, durationMs };
   listeners.forEach((listener) => listener(item));
 }

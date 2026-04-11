@@ -138,6 +138,7 @@ ai:
 rag:
   embedding:
     batch-size: 10
+    concurrency: 4
     max-retries: 2
     retry-backoff-ms: 400
   query-preprocess:
@@ -156,7 +157,7 @@ rag:
     snippet-length: 200
     # 提供商优先级：dashscope(独立Rerank模型) → llm(LLM文本打分降级) → noop(直接截断兜底)
     provider-order:
-      - dashscope
+      - dashscopec d
       - llm
       - noop
     dashscope:

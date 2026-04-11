@@ -1,8 +1,5 @@
 package org.buaa.rag.common.user;
 
-import static org.buaa.rag.common.consts.CacheConstants.USER_INFO_KEY;
-import static org.buaa.rag.common.consts.CacheConstants.USER_LOGIN_KEY;
-import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_TOKEN_ERROR;
 import static org.buaa.rag.common.enums.UserErrorCodeEnum.USER_TOKEN_NULL;
 
 import java.io.IOException;

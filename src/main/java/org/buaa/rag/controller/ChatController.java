@@ -28,16 +28,14 @@ public class ChatController {
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter handleChatStream(@RequestParam String message,
-                                       @RequestParam(required = false) Long userId) {
-        return chatService.handleChatStream(message, resolveUserId(userId));
+    public SseEmitter handleChatStream(@RequestParam String message) {
+        return chatService.handleChatStream(message, UserContext.resolvedUserId());
     }
 
     @GetMapping("/search")
     public Result<List<RetrievalMatch>> handleSearchRequest(@RequestParam String query,
-                                                            @RequestParam(defaultValue = "10") int topK,
-                                                            @RequestParam(required = false) Long userId) {
-        return chatService.handleSearchRequest(query, topK, resolveUserId(userId));
+                                                            @RequestParam(defaultValue = "10") int topK) {
+        return chatService.handleSearchRequest(query, topK, UserContext.resolvedUserId());
     }
 
     @PostMapping("/feedback")
@@ -47,19 +45,7 @@ public class ChatController {
 
     @GetMapping("/metrics/summary")
     public Result<Map<String, Object>> queryTraceMetricSummary(
-            @RequestParam(defaultValue = "7") int days,
-            @RequestParam(required = false) Long userId) {
-        return chatService.queryTraceMetricSummary(days, resolveUserId(userId));
-    }
-
-    /**
-     * 优先从 JWT 上下文获取用户 ID，回退到请求参数。
-     */
-    private Long resolveUserId(Long paramUserId) {
-        Long contextUserId = UserContext.getUserId();
-        if (contextUserId != null) {
-            return contextUserId;
-        }
-        return paramUserId;
+            @RequestParam(defaultValue = "7") int days) {
+        return chatService.queryTraceMetricSummary(days, UserContext.resolvedUserId());
     }
 }

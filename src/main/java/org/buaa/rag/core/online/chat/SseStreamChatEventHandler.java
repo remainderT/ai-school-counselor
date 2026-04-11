@@ -88,7 +88,8 @@ public class SseStreamChatEventHandler implements StreamChatCallback {
         }
         try {
             emitter.send(SseEmitter.event().name("done").data(""));
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.debug("发送 done 事件失败: {}", e.getMessage());
         } finally {
             emitter.complete();
         }
@@ -102,7 +103,8 @@ public class SseStreamChatEventHandler implements StreamChatCallback {
         try {
             String message = cause != null ? cause.getMessage() : "未知错误";
             emitter.send(SseEmitter.event().name("error").data("对话服务异常: " + message));
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.debug("发送 error 事件失败: {}", e.getMessage());
         } finally {
             emitter.completeWithError(cause != null ? cause : new RuntimeException("对话异常"));
         }

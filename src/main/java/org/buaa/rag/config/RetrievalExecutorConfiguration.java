@@ -12,59 +12,35 @@ public class RetrievalExecutorConfiguration {
 
     @Bean("retrievalChannelExecutor")
     public Executor retrievalChannelExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(8);
-        executor.setQueueCapacity(200);
-        executor.setThreadNamePrefix("retrieval-channel-");
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        executor.initialize();
-        return executor;
+        return buildExecutor(4, 8, 200, "retrieval-channel-");
     }
 
     @Bean("memorySummaryExecutor")
     public Executor memorySummaryExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(1);
-        executor.setMaxPoolSize(2);
-        executor.setQueueCapacity(100);
-        executor.setThreadNamePrefix("memory-summary-");
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        executor.initialize();
-        return executor;
+        return buildExecutor(1, 2, 100, "memory-summary-");
     }
 
     @Bean("intentResolutionExecutor")
     public Executor intentResolutionExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(8);
-        executor.setQueueCapacity(200);
-        executor.setThreadNamePrefix("intent-resolution-");
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        executor.initialize();
-        return executor;
+        return buildExecutor(4, 8, 200, "intent-resolution-");
     }
 
     @Bean("chatStreamExecutor")
     public Executor chatStreamExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(16);
-        executor.setQueueCapacity(500);
-        executor.setThreadNamePrefix("chat-stream-");
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        executor.initialize();
-        return executor;
+        return buildExecutor(4, 16, 500, "chat-stream-");
     }
 
     @Bean("subQueryContextExecutor")
     public Executor subQueryContextExecutor() {
+        return buildExecutor(4, 12, 300, "subquery-ctx-");
+    }
+
+    private Executor buildExecutor(int core, int max, int queueCapacity, String namePrefix) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(12);
-        executor.setQueueCapacity(300);
-        executor.setThreadNamePrefix("subquery-ctx-");
+        executor.setCorePoolSize(core);
+        executor.setMaxPoolSize(max);
+        executor.setQueueCapacity(queueCapacity);
+        executor.setThreadNamePrefix(namePrefix);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
         return executor;

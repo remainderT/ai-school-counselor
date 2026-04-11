@@ -2165,6 +2165,20 @@ button:disabled {
 .admin-table tbody tr:hover {
   background: var(--bg-secondary);
 }
+.admin-table-row-clickable {
+  cursor: pointer;
+}
+.admin-link-strong {
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: transparent;
+  transition: color var(--transition-fast), text-decoration-color var(--transition-fast);
+}
+.admin-table-row-clickable:hover .admin-link-strong {
+  color: var(--brand-hover);
+  text-decoration-color: currentColor;
+}
 .admin-table-num {
   color: var(--muted);
   font-size: 13px;
@@ -2238,6 +2252,10 @@ button:disabled {
 .admin-status {
   font-size: 12px;
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
 }
 .admin-status-success { color: var(--success); }
 .admin-status-pending { color: var(--warning); }

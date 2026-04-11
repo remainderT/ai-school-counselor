@@ -1,6 +1,6 @@
 package org.buaa.rag.common.convention.exception;
 
-import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
+import org.buaa.rag.common.enums.BaseErrorCode;
 import org.buaa.rag.common.convention.errorcode.IErrorCode;
 
 /**

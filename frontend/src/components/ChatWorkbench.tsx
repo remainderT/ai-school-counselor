@@ -129,19 +129,19 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
     container.scrollTo({ top: container.scrollHeight, behavior });
   };
 
-  const handleScroll = () => {
+  const handleScroll = useCallback(() => {
     const container = msgListRef.current;
     if (!container) return;
     const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
     setShowScrollBottom(distance > 120);
-  };
+  }, []);
 
   useEffect(() => {
     const container = msgListRef.current;
     if (!container) return;
     container.addEventListener("scroll", handleScroll);
     return () => container.removeEventListener("scroll", handleScroll);
-  }, []);
+  }, [handleScroll]);
 
   useEffect(() => {
     window.setTimeout(() => scrollToBottom("auto"), 0);
@@ -184,7 +184,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
       messages: [...item.messages, { role: "user", text: ask }, { role: "assistant", text: "" }]
     }));
 
-    const stream = createChatStream(ask, usingUserId, {
+    const stream = createChatStream(ask, {
       onText: (chunk) => {
         patchConversation(currentId, (item) => {
           const messages = [...item.messages];

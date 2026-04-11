@@ -3,6 +3,7 @@ package org.buaa.rag.core.online.retrieval.channel;
 import java.util.List;
 import java.util.Map;
 
+import org.buaa.rag.common.enums.SearchChannelType;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.properties.SearchChannelProperties;

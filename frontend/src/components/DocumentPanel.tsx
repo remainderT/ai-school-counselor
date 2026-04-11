@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { apiDelete, apiGet, apiPostForm } from "../lib/api";
+import { DocStatus } from "../types";
 import type { DocumentItem, KnowledgeItem } from "../types";
 import { useActionRequest } from "../hooks/useActionRequest";
 import { CustomSelect } from "./CustomSelect";
@@ -10,7 +11,11 @@ const POLL_INTERVAL = 3000;
 /** 轮询最大时长（毫秒），超过后自动停止 */
 const POLL_TIMEOUT = 5 * 60 * 1000;
 
-export function DocumentPanel() {
+interface DocumentPanelProps {
+  selectedKnowledgeId?: number | null;
+}
+
+export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
   const [items, setItems] = useState<DocumentItem[]>([]);
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
 
@@ -103,9 +108,9 @@ export function DocumentPanel() {
       try {
         const data = await apiGet<DocumentItem[]>(path);
         setItems(data || []);
-        // 如果所有文档都已处理完成（状态=2 或 -1），停止轮询
+        // 如果所有文档都已处理完成（状态=DONE 或 FAILED），停止轮询
         const hasProcessing = (data || []).some(
-          (doc) => doc.processingStatus === 0 || doc.processingStatus === 1
+          (doc) => doc.processingStatus === DocStatus.PENDING || doc.processingStatus === DocStatus.PROCESSING
         );
         if (!hasProcessing) {
           stopPolling();
@@ -127,10 +132,15 @@ export function DocumentPanel() {
 
   useEffect(() => {
     void (async () => {
-      const docs = await load();
+      const initialKId = selectedKnowledgeId ? String(selectedKnowledgeId) : "";
+      if (initialKId) {
+        setFilterKnowledgeId(initialKId);
+        setKnowledgeId(initialKId);
+      }
+      const docs = await load(initialKId, "");
       // 如果初始加载时存在处理中的文档，自动启动轮询
       const hasProcessing = docs.some(
-        (doc) => doc.processingStatus === 0 || doc.processingStatus === 1
+        (doc) => doc.processingStatus === DocStatus.PENDING || doc.processingStatus === DocStatus.PROCESSING
       );
       if (hasProcessing) {
         startPolling();
@@ -138,6 +148,14 @@ export function DocumentPanel() {
     })();
     void loadKnowledgeList();
   }, []);
+
+  useEffect(() => {
+    if (!selectedKnowledgeId) return;
+    const nextId = String(selectedKnowledgeId);
+    setFilterKnowledgeId(nextId);
+    setKnowledgeId(nextId);
+    void load(nextId, searchName);
+  }, [selectedKnowledgeId]);
 
   // Trigger load when filter changes
   const handleFilterChange = (kId: string) => {
@@ -225,10 +243,10 @@ export function DocumentPanel() {
   };
 
   const statusLabel = (status?: number, desc?: string) => {
-    if (status === 2) return <span className="admin-status admin-status-success">● 已完成</span>;
-    if (status === 1) return <span className="admin-status admin-status-pending"><SpinnerIcon /> 处理中</span>;
-    if (status === 0) return <span className="admin-status admin-status-pending">● 待处理</span>;
-    if (status === -1) return <span className="admin-status admin-status-error">● 失败</span>;
+    if (status === DocStatus.DONE) return <span className="admin-status admin-status-success">● 已完成</span>;
+    if (status === DocStatus.PROCESSING) return <span className="admin-status admin-status-pending"><SpinnerIcon /> 处理中</span>;
+    if (status === DocStatus.PENDING) return <span className="admin-status admin-status-pending">● 待处理</span>;
+    if (status === DocStatus.FAILED) return <span className="admin-status admin-status-error">● 失败</span>;
     if (desc) return <span className="admin-status">{desc}</span>;
     return <span className="admin-status admin-status-unknown">未知</span>;
   };
@@ -245,6 +263,18 @@ export function DocumentPanel() {
     } catch {
       return t;
     }
+  };
+
+  const formatFileSize = (sizeBytes?: number) => {
+    if (sizeBytes == null || sizeBytes < 0) return "-";
+    const mb = 1024 * 1024;
+    if (sizeBytes >= mb) {
+      const value = sizeBytes / mb;
+      return `${value.toFixed(2)} MB`;
+    }
+    const kbValue = sizeBytes / 1024;
+    if (kbValue <= 0) return "0 KB";
+    return `${Math.max(1, Math.round(kbValue))} KB`;
   };
 
   const knowledgeOptions: SelectOption[] = knowledgeItems.length === 0
@@ -442,10 +472,7 @@ export function DocumentPanel() {
         <div className="admin-card">
           <div className="admin-card-header">
             <h3 className="admin-card-title">文档列表</h3>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {polling && <span className="admin-status admin-status-pending" style={{ fontSize: 12 }}><SpinnerIcon /> 自动刷新中...</span>}
-              <span className="admin-badge">共 {items.length} 条</span>
-            </div>
+            <span className="admin-badge">共 {items.length} 条</span>
           </div>
           <div className="admin-card-body" style={{ padding: 0 }}>
             <table className="admin-table">
@@ -454,6 +481,7 @@ export function DocumentPanel() {
                   <th>文档</th>
                   <th style={{ width: 140 }}>知识库</th>
                   <th style={{ width: 80 }}>Chunks</th>
+                  <th style={{ width: 100 }}>文档大小</th>
                   <th style={{ width: 160 }}>上传时间</th>
                   <th style={{ width: 80 }}>状态</th>
                   <th style={{ width: 80 }}>操作</th>
@@ -478,6 +506,9 @@ export function DocumentPanel() {
                     </td>
                     <td>
                       <span className="admin-table-num">{item.chunkCount ?? 0}</span>
+                    </td>
+                    <td>
+                      <span className="admin-table-num">{formatFileSize(item.fileSizeBytes)}</span>
                     </td>
                     <td>
                       <span className="doc-time">{formatTime(item.createTime)}</span>

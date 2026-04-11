@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.buaa.rag.common.enums.SearchChannelType;
 import org.buaa.rag.core.model.RetrievalMatch;
 
 import lombok.Builder;

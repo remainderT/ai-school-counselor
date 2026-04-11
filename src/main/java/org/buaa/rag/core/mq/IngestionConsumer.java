@@ -80,35 +80,24 @@ public class IngestionConsumer {
 
     @Scheduled(fixedDelayString = "${stream.poll-interval-ms:500}")
     public void poll() {
-        drainPending();
-        drainNew();
+        // drainPending
+        StreamReadOptions pendingOpts = StreamReadOptions.empty().count(safeBatchSize());
+        List<MapRecord<String, Object, Object>> pendingRecords = redisTemplate.opsForStream().read(
+            consumer(), pendingOpts, StreamOffset.create(props.getKey(), ReadOffset.from("0"))
+        );
+        processAll(pendingRecords);
+
+        // drainNew
+        StreamReadOptions newOpts = StreamReadOptions.empty()
+            .count(safeBatchSize())
+            .block(Duration.ofMillis(Math.max(0, props.getBlockMs())));
+        List<MapRecord<String, Object, Object>> newRecords = redisTemplate.opsForStream().read(
+            consumer(), newOpts, StreamOffset.create(props.getKey(), ReadOffset.lastConsumed())
+        );
+        processAll(newRecords);
     }
 
     // ─────────────────── 生命周期 ───────────────────
-    /**
-     * 消费 pending 列表中上次未 ACK 的消息
-     */
-    private void drainPending() {
-        StreamReadOptions opts = StreamReadOptions.empty().count(safeBatchSize());
-        List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream().read(
-            consumer(), opts, StreamOffset.create(props.getKey(), ReadOffset.from("0"))
-        );
-        processAll(records);
-    }
-
-    /**
-     * 阻塞拉取新消息
-     */
-    private void drainNew() {
-        StreamReadOptions opts = StreamReadOptions.empty()
-            .count(safeBatchSize())
-            .block(Duration.ofMillis(Math.max(0, props.getBlockMs())));
-        List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream().read(
-            consumer(), opts, StreamOffset.create(props.getKey(), ReadOffset.lastConsumed())
-        );
-        processAll(records);
-    }
-
     private void processAll(List<MapRecord<String, Object, Object>> records) {
         if (CollectionUtils.isEmpty(records)) {
             return;
@@ -125,14 +114,13 @@ public class IngestionConsumer {
         }
     }
 
-    private boolean handleFailure(DocumentIngestionTask task, Exception ex) {
+    private void handleFailure(DocumentIngestionTask task, Exception ex) {
         boolean retryable = IngestionExceptionUtils.isRetryable(ex);
         if (retryable && task.retryCount() < props.getMaxRetries()) {
             DocumentIngestionTask retryTask = task.nextRetry();
             producer.enqueue(retryTask);
             log.warn("文档摄取失败，已重试入队: documentId={}, retry={}/{}", task.documentId(),
                 retryTask.retryCount(), props.getMaxRetries(), ex);
-            return true;
         } else {
             // 不可重试或达到上限时，标记最终失败并 ACK 当前消息，避免无限重放。
             ingestionWorkflow.markFailed(task.documentId(), IngestionExceptionUtils.summarizeFailureReason(ex));
@@ -143,7 +131,6 @@ public class IngestionConsumer {
                 log.error("文档摄取失败，不可重试: documentId={}, retries={}",
                     task.documentId(), task.retryCount(), ex);
             }
-            return true;
         }
     }
 

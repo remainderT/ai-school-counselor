@@ -2,7 +2,6 @@ package org.buaa.rag.tool;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Locale;
 
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -26,7 +25,7 @@ public class CounselorTools {
         log.info("Tool queryGrade called, studentId={}", studentId);
         // TODO: 对接真实教务系统
         return new GradeToolResult(
-            safeValue(studentId, "anonymous"),
+            orDefault(studentId, "anonymous"),
             3.42,
             96,
             1,
@@ -43,10 +42,10 @@ public class CounselorTools {
         log.info("Tool createLeaveDraft called, userId={}", userId);
         // TODO: 对接真实请假审批系统
         return new LeaveDraftToolResult(
-            safeValue(userId, "anonymous"),
-            safeValue(startTime, "待补充"),
-            safeValue(endTime, "待补充"),
-            safeValue(reason, "待补充"),
+            orDefault(userId, "anonymous"),
+            orDefault(startTime, "待补充"),
+            orDefault(endTime, "待补充"),
+            orDefault(reason, "待补充"),
             "DRAFT_CREATED",
             "请补充时间并提交学院审批",
             nowTs()
@@ -61,9 +60,9 @@ public class CounselorTools {
         log.info("Tool createRepairTicket called, userId={}", userId);
         // TODO: 对接真实后勤工单系统
         return new RepairDraftToolResult(
-            safeValue(userId, "anonymous"),
-            safeValue(dormitory, "待补充"),
-            safeValue(issue, "待补充"),
+            orDefault(userId, "anonymous"),
+            orDefault(dormitory, "待补充"),
+            orDefault(issue, "待补充"),
             "DRAFT_CREATED",
             "请补充宿舍号和故障详情后提交",
             nowTs()
@@ -81,8 +80,8 @@ public class CounselorTools {
         if (!StringUtils.hasText(resolvedCity)) {
             return new WeatherToolResult(
                 null,
-                normalizeQueryType(queryType),
-                normalizeDays(days),
+                queryType,
+                days == null ? 3 : days,
                 "NEED_CITY",
                 "请补充需要查询的城市名称，例如：北京、上海。",
                 "none",
@@ -92,16 +91,16 @@ public class CounselorTools {
 
         McpWeatherClient.WeatherResponse response = mcpWeatherClient.queryWeather(
             resolvedCity,
-            normalizeQueryType(queryType),
-            normalizeDays(days),
-            safeValue(userId, "anonymous"),
+            queryType,
+            days,
+            orDefault(userId, "anonymous"),
             rawQuery
         );
         if (response == null || !StringUtils.hasText(response.text())) {
             return new WeatherToolResult(
                 resolvedCity,
-                normalizeQueryType(queryType),
-                normalizeDays(days),
+                queryType,
+                days == null ? 3 : days,
                 "UNAVAILABLE",
                 "天气服务暂不可用，请稍后重试。",
                 "none",
@@ -111,8 +110,8 @@ public class CounselorTools {
 
         return new WeatherToolResult(
             resolvedCity,
-            normalizeQueryType(queryType),
-            normalizeDays(days),
+            queryType,
+            days == null ? 3 : days,
             "SUCCESS",
             response.text(),
             response.source(),
@@ -124,11 +123,8 @@ public class CounselorTools {
         return DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(LocalDateTime.now());
     }
 
-    private String safeValue(String value, String fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        return value.trim();
+    private static String orDefault(String value, String fallback) {
+        return StringUtils.hasText(value) ? value.trim() : fallback;
     }
 
     private String resolveCity(String city, String rawQuery) {
@@ -140,21 +136,6 @@ public class CounselorTools {
             return normalized;
         }
         return mcpWeatherClient.resolveCityFromText(rawQuery);
-    }
-
-    private String normalizeQueryType(String queryType) {
-        if (!StringUtils.hasText(queryType)) {
-            return "current";
-        }
-        String normalized = queryType.trim().toLowerCase(Locale.ROOT);
-        return "forecast".equals(normalized) ? "forecast" : "current";
-    }
-
-    private int normalizeDays(Integer days) {
-        if (days == null) {
-            return 3;
-        }
-        return Math.max(1, Math.min(7, days));
     }
 
     public record GradeToolResult(

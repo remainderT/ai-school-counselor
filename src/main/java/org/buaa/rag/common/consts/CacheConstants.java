@@ -11,25 +11,9 @@ public class CacheConstants {
     public static final String USER_REGISTER_CODE_KEY = "rag:user:register:code:";
 
     /**
-     * 用户注册验证码缓存过期时间
+     * 用户注册验证码缓存过期时间（分钟）
      */
     public static final long USER_REGISTER_CODE_EXPIRE_KEY = 5L;
-
-    /**
-     * 用户重置密码验证码缓存
-     */
-    public static final String USER_RESET_CODE_KEY = "rag:user:reset:code:";
-
-    /**
-     * 用户登录图片验证码
-     */
-    public static final String USER_LOGIN_KAPTCHA_KEY = "rag:user:login:kaptcha:";
-
-
-    /**
-     * 用户重置密码验证码缓存过期时间
-     */
-    public static final long USER_RESET_CODE_EXPIRE_KEY = 5L;
 
     /**
      * 用户登录缓存标识

@@ -29,8 +29,6 @@ import org.buaa.rag.dto.req.UserUpdateReqDTO;
 import org.buaa.rag.dto.resp.UserLoginRespDTO;
 import org.buaa.rag.dto.resp.UserRespDTO;
 import org.buaa.rag.service.UserService;
-import org.buaa.rag.tool.RandomGenerator;
-import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -83,32 +81,25 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
         if (userDO == null) {
             throw new ServiceException(UserErrorCodeEnum.USER_NULL);
         }
-        UserRespDTO result = new UserRespDTO();
-        BeanUtils.copyProperties(userDO, result);
+        UserRespDTO result = BeanUtil.toBean(userDO, UserRespDTO.class);
         cacheUserInfo(userDO);
         return result;
     }
 
     @Override
     public Boolean hasMail(String mail) {
-          LambdaQueryWrapper<UserDO> queryWrapper = Wrappers.lambdaQuery(UserDO.class)
-                .eq(UserDO::getMail, mail);
-         UserDO userDO = baseMapper.selectOne(queryWrapper);
-         return userDO != null;
+        return baseMapper.selectCount(Wrappers.lambdaQuery(UserDO.class).eq(UserDO::getMail, mail)) > 0;
     }
 
     @Override
     public Boolean hasUsername(String username) {
-        LambdaQueryWrapper<UserDO> queryWrapper = Wrappers.lambdaQuery(UserDO.class)
-                .eq(UserDO::getUsername, username);
-        UserDO userDO = baseMapper.selectOne(queryWrapper);
-        return userDO != null;
+        return baseMapper.selectCount(Wrappers.lambdaQuery(UserDO.class).eq(UserDO::getUsername, username)) > 0;
     }
 
     @Override
     public Boolean sendCode(String mail) {
+        String code = String.format("%06d", (int) (Math.random() * 1_000_000));
         SimpleMailMessage message = new SimpleMailMessage();
-        String code = RandomGenerator.generateSixDigitCode();
         message.setFrom(from);
         message.setText(String.format(SystemConstants.MAIL_TEXT, code));
         message.setTo(mail);
@@ -126,10 +117,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
 
     @Override
     public synchronized void register(UserRegisterReqDTO requestParam) {
-        String code = requestParam.getCode();
         String key = USER_REGISTER_CODE_KEY + requestParam.getMail().replace(MAIL_SUFFIX, "");
         String cacheCode = stringRedisTemplate.opsForValue().get(key);
-        if (!code.equals(cacheCode)) {
+        if (!requestParam.getCode().equals(cacheCode)) {
             throw new ClientException(USER_CODE_ERROR);
         }
         if (hasMail(requestParam.getMail())) {
@@ -144,8 +134,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
             userDO.setPassword(DigestUtils.md5DigestAsHex((userDO.getPassword() + userDO.getSalt()).getBytes()));
             userDO.setIsAdmin(0);
             baseMapper.insert(userDO);
-            userDO = baseMapper.selectOne(Wrappers.lambdaQuery(UserDO.class)
-                    .eq(UserDO::getUsername, requestParam.getUsername()));
+            // insert 后 userDO 已持有自增 id，直接缓存，无需二次查询
             cacheUserInfo(userDO);
         } catch (DuplicateKeyException ex) {
             throw new ClientException(USER_MAIL_EXIST);
@@ -166,21 +155,18 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
             throw new ClientException(USER_PASSWORD_ERROR);
         }
 
-        /**
-         * String
-         * Key：user:login:username
-         * Value: token标识
-         */
-        String hasLogin = stringRedisTemplate.opsForValue().get(USER_LOGIN_KEY + requestParam.getUsername());
-        if (StrUtil.isNotEmpty(hasLogin)) {
+        // 已登录则刷新过期时间并复用原 token
+        String loginKey = USER_LOGIN_KEY + requestParam.getUsername();
+        String existingToken = stringRedisTemplate.opsForValue().get(loginKey);
+        if (StrUtil.isNotEmpty(existingToken)) {
+            stringRedisTemplate.expire(loginKey, USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
             cacheUserInfo(userDO);
-            stringRedisTemplate.expire(USER_LOGIN_KEY + requestParam.getUsername(), USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
-            return new UserLoginRespDTO(hasLogin, userDO.getIsAdmin());
+            return new UserLoginRespDTO(existingToken, userDO.getIsAdmin());
         }
-        String uuid = UUID.randomUUID().toString();
-        stringRedisTemplate.opsForValue().set(USER_LOGIN_KEY + requestParam.getUsername(), uuid, USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
+        String token = UUID.randomUUID().toString();
+        stringRedisTemplate.opsForValue().set(loginKey, token, USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
         cacheUserInfo(userDO);
-        return new UserLoginRespDTO(uuid, userDO.getIsAdmin());
+        return new UserLoginRespDTO(token, userDO.getIsAdmin());
     }
 
     @Override

@@ -62,10 +62,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     restoring,
     async loginWithPassword(username: string, password: string) {
       const state = await login(username, password);
-      const profile = await getUserInfo(state.username, state.token);
-      const merged: AuthState = { ...state, isAdmin: profile.isAdmin };
-      saveAuth(merged);
-      setAuth(merged);
+      saveAuth(state);
+      setAuth(state);
     },
     async registerUser(payload) {
       await register(payload);

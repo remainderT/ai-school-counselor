@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import org.buaa.rag.common.enums.ParserType;
 import org.springframework.stereotype.Component;
 
 /**

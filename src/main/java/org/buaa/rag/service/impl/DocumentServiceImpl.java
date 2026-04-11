@@ -115,17 +115,15 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         List<DocumentDO> documents = baseMapper.selectList(query);
         documents.forEach(doc -> doc.setProcessingStatusDesc(UploadStatusEnum.descOf(doc.getProcessingStatus())));
 
-        // 批量统计每个文档的 chunk 数量
+        // 批量统计每个文档的 chunk 数量（只取 documentId 字段，避免加载完整 chunk 内容）
         if (!documents.isEmpty()) {
             List<Long> docIds = documents.stream().map(DocumentDO::getId).collect(Collectors.toList());
-            List<ChunkDO> chunks = chunkMapper.selectList(
+            Map<Long, Long> chunkCountMap = chunkMapper.selectList(
                 Wrappers.lambdaQuery(ChunkDO.class)
                     .select(ChunkDO::getDocumentId)
                     .in(ChunkDO::getDocumentId, docIds)
                     .eq(ChunkDO::getDelFlag, 0)
-            );
-            Map<Long, Long> chunkCountMap = chunks.stream()
-                .collect(Collectors.groupingBy(ChunkDO::getDocumentId, Collectors.counting()));
+            ).stream().collect(Collectors.groupingBy(ChunkDO::getDocumentId, Collectors.counting()));
             documents.forEach(doc -> doc.setChunkCount(chunkCountMap.getOrDefault(doc.getId(), 0L).intValue()));
         }
 
@@ -135,7 +133,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     @Override
     public List<ChunkDO> listChunks(Long documentId) {
         DocumentDO document = baseMapper.selectById(documentId);
-        if (document == null || document.getDelFlag() != 0 && document.getDelFlag() != null) {
+        if (document == null || document.getDelFlag() != 0) {
             throw new ClientException(DOCUMENT_NOT_EXISTS);
         }
         if (!document.getUserId().equals(UserContext.getUserId())) {
@@ -302,18 +300,19 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw new ClientException("定时表达式不能为空");
         }
         LocalDateTime now = LocalDateTime.now();
+        boolean intervalTooShort;
+        LocalDateTime nextRunTime;
         try {
-            if (CronScheduleHelper.isIntervalTooShort(scheduleCron, now, refreshMinIntervalSeconds)) {
-                throw new ClientException("定时周期不能小于 " + refreshMinIntervalSeconds + " 秒");
-            }
-            LocalDateTime nextRunTime = CronScheduleHelper.nextRunTime(scheduleCron, now);
-            if (nextRunTime == null) {
-                throw new ClientException("无法计算下一次执行时间");
-            }
-        } catch (ClientException e) {
-            throw e;
+            intervalTooShort = CronScheduleHelper.isIntervalTooShort(scheduleCron, now, refreshMinIntervalSeconds);
+            nextRunTime = CronScheduleHelper.nextRunTime(scheduleCron, now);
         } catch (Exception e) {
             throw new ClientException("定时表达式不合法");
+        }
+        if (intervalTooShort) {
+            throw new ClientException("定时周期不能小于 " + refreshMinIntervalSeconds + " 秒");
+        }
+        if (nextRunTime == null) {
+            throw new ClientException("无法计算下一次执行时间");
         }
     }
 

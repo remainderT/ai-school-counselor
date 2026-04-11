@@ -17,8 +17,6 @@ public interface ConversationService {
 
     ConversationSessionRespDTO renameSession(String sessionId, Long userId, String title);
 
-    List<Map<String, String>> loadConversationHistory(String sessionId);
-
     List<Map<String, String>> loadConversationContext(String sessionId);
 
     Long appendUserMessage(String sessionId,
@@ -30,11 +28,13 @@ public interface ConversationService {
 
     void completeAssistantMessage(String sessionId,
                                   Long assistantMessageId,
+                                  Long userId,
                                   String aiResponse,
                                   List<RetrievalMatch> sources);
 
     void failAssistantMessage(String sessionId,
                               Long assistantMessageId,
+                              Long userId,
                               String fallbackResponse);
 
     List<ConversationSessionRespDTO> listSessions(Long userId);

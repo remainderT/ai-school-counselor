@@ -190,8 +190,8 @@ export function useChatSessions(owner: string) {
             : item
         )
       );
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn("syncAfterSend: 同步会话列表失败", err);
     }
   };
 

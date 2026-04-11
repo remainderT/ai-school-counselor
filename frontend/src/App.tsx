@@ -37,6 +37,15 @@ function setHash(tab: TabKey, adminOpen: boolean) {
   }
 }
 
+/** 从 localStorage 读取管理侧边栏折叠状态（模块顶层避免组件内重复创建） */
+function loadAdminSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(ADMIN_SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /* ---- Inline SVG Icons ---- */
 const AdminIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -61,14 +70,6 @@ const LogoutIcon = () => (
 );
 
 export default function App() {
-  const loadAdminSidebarCollapsed = () => {
-    try {
-      return window.localStorage.getItem(ADMIN_SIDEBAR_COLLAPSED_KEY) === "1";
-    } catch {
-      return false;
-    }
-  };
-
   const initialRoute = parseHash();
   const [tab, setTabRaw] = useState<TabKey>(initialRoute.tab);
   const [username, setUsername] = useState("");
@@ -79,6 +80,7 @@ export default function App() {
   const [authMsg, setAuthMsg] = useState("");
   const [adminPanelOpen, setAdminPanelOpenRaw] = useState(initialRoute.adminOpen);
   const [adminSidebarCollapsed, setAdminSidebarCollapsed] = useState<boolean>(loadAdminSidebarCollapsed);
+  const [documentFilterKnowledgeId, setDocumentFilterKnowledgeId] = useState<number | null>(null);
 
   const authReq = useActionRequest();
   const { auth, isAdmin, restoring, loginWithPassword, logoutCurrent, registerUser, sendCode } = useAuthStore();
@@ -173,10 +175,9 @@ export default function App() {
       }
     );
     if (result.ok) {
-      setAuthMsg("注册成功，请登录");
       pushToast("注册成功，请登录", "success");
-      setAuthMode("login");
-      setCode("");
+      switchAuthMode("login");
+      setAuthMsg("注册成功，请登录");
     }
   };
 
@@ -189,9 +190,26 @@ export default function App() {
     }
   };
 
+  const switchAuthMode = (mode: "login" | "register") => {
+    setAuthMode(mode);
+    setPassword("");
+    setMail("");
+    setCode("");
+    setAuthMsg("");
+  };
+
   const handleAdminTabClick = (key: TabKey) => {
     setTabRaw(key);
+    if (key !== "document") {
+      setDocumentFilterKnowledgeId(null);
+    }
     setHash(key, true);
+  };
+
+  const handleOpenKnowledgeDocuments = (knowledgeId: number) => {
+    setDocumentFilterKnowledgeId(knowledgeId);
+    setTabRaw("document");
+    setHash("document", true);
   };
 
   const handleBackToChat = () => {
@@ -232,8 +250,8 @@ export default function App() {
               </div>
 
               <div className="auth-mode-switch" role="tablist" aria-label="登录与注册">
-                <button className={authMode === "login" ? "auth-mode-btn active" : "auth-mode-btn"} onClick={() => setAuthMode("login")}>登录</button>
-                <button className={authMode === "register" ? "auth-mode-btn active" : "auth-mode-btn"} onClick={() => setAuthMode("register")}>注册</button>
+                <button className={authMode === "login" ? "auth-mode-btn active" : "auth-mode-btn"} onClick={() => switchAuthMode("login")}>登录</button>
+                <button className={authMode === "register" ? "auth-mode-btn active" : "auth-mode-btn"} onClick={() => switchAuthMode("register")}>注册</button>
               </div>
 
               <div className="auth-fields">
@@ -331,8 +349,8 @@ export default function App() {
         <div className="workspace">
           <main className="panel-wrap">
             {tab === "search" && <SearchPanel />}
-            {tab === "knowledge" && <KnowledgePanel />}
-            {tab === "document" && <DocumentPanel />}
+            {tab === "knowledge" && <KnowledgePanel onOpenKnowledgeDocuments={handleOpenKnowledgeDocuments} />}
+            {tab === "document" && <DocumentPanel selectedKnowledgeId={documentFilterKnowledgeId} />}
             {tab === "intent-tree" && <IntentTreePanel />}
           </main>
         </div>

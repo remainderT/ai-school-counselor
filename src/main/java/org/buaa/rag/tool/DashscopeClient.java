@@ -59,51 +59,12 @@ public class DashscopeClient {
             return "";
         }
         try {
-            ObjectNode payload = objectMapper.createObjectNode();
-            payload.put("model", safeValue(chatModel, "qwen-plus"));
-
-            ObjectNode input = payload.putObject("input");
-            ArrayNode messages = input.putArray("messages");
-            if (StringUtils.hasText(systemPrompt)) {
-                ObjectNode system = messages.addObject();
-                system.put("role", "system");
-                system.put("content", systemPrompt);
-            }
-            if (StringUtils.hasText(userPrompt)) {
-                ObjectNode user = messages.addObject();
-                user.put("role", "user");
-                user.put("content", userPrompt);
-            }
-
-            ObjectNode parameters = payload.putObject("parameters");
-            if (temperature != null) {
-                parameters.put("temperature", temperature);
-            }
-            if (topP != null) {
-                parameters.put("top_p", topP);
-            }
-            if (maxTokens != null && maxTokens > 0) {
-                parameters.put("max_tokens", maxTokens);
-            }
-
+            ObjectNode payload = buildChatPayload(systemPrompt, userPrompt, temperature, topP, maxTokens);
             String responseBody = post("/api/v1/services/aigc/text-generation/generation", payload.toString());
             if (!StringUtils.hasText(responseBody)) {
                 return "";
             }
-            JsonNode root = objectMapper.readTree(responseBody);
-            JsonNode contentNode = root.path("output").path("text");
-            if (contentNode.isTextual()) {
-                return contentNode.asText("");
-            }
-
-            JsonNode choices = root.path("output").path("choices");
-            if (choices.isArray() && !choices.isEmpty()) {
-                JsonNode content = choices.get(0).path("message").path("content");
-                if (content.isTextual()) {
-                    return content.asText("");
-                }
-            }
-            return "";
+            return extractText(objectMapper.readTree(responseBody));
         } catch (Exception e) {
             log.warn("DashScope 聊天调用失败: {}", e.getMessage());
             return "";

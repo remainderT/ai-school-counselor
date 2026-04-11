@@ -45,6 +45,14 @@ public final class UserContext {
         return Integer.valueOf(1).equals(isAdmin);
     }
 
+    /**
+     * 获取当前用户 ID，若未登录则回退到默认用户 1L（游客/admin）。
+     */
+    public static Long resolvedUserId() {
+        Long id = getUserId();
+        return id != null ? id : 1L;
+    }
+
     public static void removeUser() {
         USER_THREAD_LOCAL.remove();
     }

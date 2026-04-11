@@ -13,7 +13,7 @@ import org.buaa.rag.dao.mapper.UserMapper;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import com.alibaba.fastjson2.JSON;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
 import cn.hutool.core.util.StrUtil;
 import jakarta.servlet.Filter;
@@ -52,7 +52,7 @@ public class RefreshTokenFilter implements Filter {
         }
         UserDO userDO = JSON.parseObject(stringRedisTemplate.opsForValue().get(USER_INFO_KEY + username), UserDO.class);
         if (userDO == null) {
-            userDO = userMapper.selectOne(new QueryWrapper<UserDO>().eq("username", username));
+            userDO = userMapper.selectOne(Wrappers.lambdaQuery(UserDO.class).eq(UserDO::getUsername, username));
             stringRedisTemplate.opsForValue().set(USER_INFO_KEY + username, JSON.toJSONString(userDO), USER_LOGIN_EXPIRE_KEY, TimeUnit.DAYS);
         }
         UserInfoDTO userInfoDTO = UserInfoDTO.builder()

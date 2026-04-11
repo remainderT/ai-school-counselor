@@ -4,7 +4,7 @@ import { loadAuth } from "./auth-storage";
 const BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 /** 拼接 API 基础路径与请求路径 */
-function resolveEndpoint(path: string): string {
+export function resolveEndpoint(path: string): string {
   return BASE ? `${BASE}${path}` : path;
 }
 
@@ -15,7 +15,7 @@ function authHeaders(): Record<string, string> | undefined {
 }
 
 /** 从 fetch Response 中解包统一结果并提取 data 字段 */
-async function unwrapResponse<T>(resp: Response): Promise<T> {
+export async function unwrapResponse<T>(resp: Response): Promise<T> {
   let envelope: ApiResult<T> | null = null;
   try {
     envelope = (await resp.json()) as ApiResult<T>;

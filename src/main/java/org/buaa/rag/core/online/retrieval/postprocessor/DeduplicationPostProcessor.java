@@ -8,7 +8,7 @@ import java.util.Map;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.properties.SearchChannelProperties;
 import org.buaa.rag.core.online.retrieval.channel.SearchChannelResult;
-import org.buaa.rag.core.online.retrieval.channel.SearchChannelType;
+import org.buaa.rag.common.enums.SearchChannelType;
 import org.buaa.rag.core.online.retrieval.channel.SearchContext;
 import org.springframework.stereotype.Component;
 

@@ -18,6 +18,7 @@ import java.util.regex.Pattern;
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
+import org.buaa.rag.common.user.UserContext;
 import org.buaa.rag.core.model.FeedbackRequest;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
@@ -40,6 +41,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -49,8 +52,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public class ChatServiceImpl implements ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
-
-    private static final Long DEFAULT_USER_ID = 1L;
     private static final Pattern CITATION_INDEX_PATTERN = Pattern.compile("\\[(\\d+)]");
 
     private final SmartRetrieverService retrieverService;
@@ -62,8 +63,9 @@ public class ChatServiceImpl implements ChatService {
     private final OnlineChatOrchestrator onlineChatOrchestrator;
     private final StreamTaskManager streamTaskManager;
     private final ObjectMapper objectMapper;
-    private final Executor chatStreamExecutor;
     private final RagProperties ragProperties;
+    @Qualifier("chatStreamExecutor")
+    private final Executor chatStreamExecutor;
 
     public ChatServiceImpl(SmartRetrieverService retrieverService,
                            MultiChannelRetrievalEngine multiChannelRetrievalEngine,
@@ -74,8 +76,8 @@ public class ChatServiceImpl implements ChatService {
                            OnlineChatOrchestrator onlineChatOrchestrator,
                            StreamTaskManager streamTaskManager,
                            ObjectMapper objectMapper,
-                           @Qualifier("chatStreamExecutor") Executor chatStreamExecutor,
-                           RagProperties ragProperties) {
+                           RagProperties ragProperties,
+                           @Qualifier("chatStreamExecutor") Executor chatStreamExecutor) {
         this.retrieverService = retrieverService;
         this.multiChannelRetrievalEngine = multiChannelRetrievalEngine;
         this.postProcessorService = postProcessorService;
@@ -85,8 +87,8 @@ public class ChatServiceImpl implements ChatService {
         this.onlineChatOrchestrator = onlineChatOrchestrator;
         this.streamTaskManager = streamTaskManager;
         this.objectMapper = objectMapper;
-        this.chatStreamExecutor = chatStreamExecutor;
         this.ragProperties = ragProperties;
+        this.chatStreamExecutor = chatStreamExecutor;
     }
 
     // ──────────────────────── handleChatStream ────────────────────────
@@ -105,7 +107,7 @@ public class ChatServiceImpl implements ChatService {
             return emitter;
         }
 
-        Long resolvedUserId = userId != null ? userId : DEFAULT_USER_ID;
+        Long resolvedUserId = resolveUserId(userId);
         String taskId = UUID.randomUUID().toString();
 
         // 创建 SSE 事件处理器（封装所有 SSE 事件细节）
@@ -137,7 +139,7 @@ public class ChatServiceImpl implements ChatService {
         Long assistantMessageId = null;
         ChatExecutionResult executionResult = null;
         // 在与下游 intent/retrieval 层交互时使用字符串形式的 userId
-        String userIdStr = String.valueOf(userId != null ? userId : DEFAULT_USER_ID);
+        String userIdStr = String.valueOf(resolveUserId(userId));
 
         try {
             // 1) 创建/复用会话
@@ -153,10 +155,11 @@ public class ChatServiceImpl implements ChatService {
             // 4) 绑定取消句柄（SSE 断连时可通过 taskId 清理）
             final String capturedSessionId = sessionId;
             final Long capturedMessageId = assistantMessageId;
+            final Long capturedUserId = userId;
             streamTaskManager.bindCancel(taskId, () -> {
                 try {
                     conversationService.failAssistantMessage(
-                        capturedSessionId, capturedMessageId, "（用户已取消请求）");
+                        capturedSessionId, capturedMessageId, capturedUserId, "（用户已取消请求）");
                 } catch (Exception ignored) {
                 }
             });
@@ -173,7 +176,7 @@ public class ChatServiceImpl implements ChatService {
             String guidanceQuestion = onlineChatOrchestrator.detectGuidanceQuestion(routingPlan);
             if (!isBlankString(guidanceQuestion)) {
                 callback.onContent(guidanceQuestion);
-                executionResult = ChatExecutionResult.ofGuidance(guidanceQuestion, routingPlan.rewriteLatencyMs());
+                executionResult = new ChatExecutionResult(guidanceQuestion, List.of(), true, 0, 0, routingPlan.rewriteLatencyMs());
             } else {
                 // 8) 检索 + Prompt 组装 + LLM 流式输出
                 executionResult = onlineChatOrchestrator.executeWithPlan(
@@ -193,6 +196,7 @@ public class ChatServiceImpl implements ChatService {
             conversationService.completeAssistantMessage(
                 sessionId,
                 assistantMessageId,
+                userId,
                 executionResult.response(),
                 executionResult.sources()
             );
@@ -211,7 +215,7 @@ public class ChatServiceImpl implements ChatService {
             // 回滚 assistant 占位符
             if (sessionId != null && assistantMessageId != null) {
                 try {
-                    conversationService.failAssistantMessage(sessionId, assistantMessageId, "对话服务异常，请稍后重试。");
+                    conversationService.failAssistantMessage(sessionId, assistantMessageId, userId, "对话服务异常，请稍后重试。");
                 } catch (Exception ignored) {
                 }
             }
@@ -225,7 +229,7 @@ public class ChatServiceImpl implements ChatService {
 
     @Override
     public Result<List<RetrievalMatch>> handleSearchRequest(String query, int topK, Long userId) {
-        String userIdStr = userId != null ? String.valueOf(userId) : String.valueOf(DEFAULT_USER_ID);
+        String userIdStr = String.valueOf(resolveUserId(userId));
         IntentDecision decision = null;
         try {
             IntentDecision raw = intentRouterService.decide(userIdStr, query);
@@ -257,7 +261,7 @@ public class ChatServiceImpl implements ChatService {
             throw new ClientException(SCORE_OUT_OF_RANGE);
         }
 
-        Long userId = request.getUserId() != null ? request.getUserId() : DEFAULT_USER_ID;
+        Long userId = resolveUserId(request.getUserId());
         String userIdStr = String.valueOf(userId);
 
         retrieverService.recordFeedback(request.getMessageId(), userIdStr, score, request.getComment());
@@ -297,47 +301,19 @@ public class ChatServiceImpl implements ChatService {
             ));
         }
 
-        double avgRewriteLatencyMs = rows.stream()
-            .map(ChatTraceMetricDO::getRewriteLatencyMs)
-            .filter(v -> v != null)
-            .mapToLong(Long::longValue)
-            .average()
-            .orElse(0.0);
-        double avgRetrievalHitRate = rows.stream()
-            .map(ChatTraceMetricDO::getRetrievalHitRate)
-            .filter(v -> v != null)
-            .mapToDouble(Double::doubleValue)
-            .average()
-            .orElse(0.0);
-        double avgCitationRate = rows.stream()
-            .map(ChatTraceMetricDO::getCitationRate)
-            .filter(v -> v != null)
-            .mapToDouble(Double::doubleValue)
-            .average()
-            .orElse(0.0);
-        double clarifyTriggerRate = rows.stream()
-            .map(ChatTraceMetricDO::getClarifyTriggered)
-            .filter(v -> v != null)
-            .mapToInt(Integer::intValue)
-            .average()
-            .orElse(0.0);
         List<Integer> feedbackScores = rows.stream()
             .map(ChatTraceMetricDO::getUserFeedbackScore)
-            .filter(v -> v != null)
+            .filter(java.util.Objects::nonNull)
             .toList();
-        double avgFeedbackScore = feedbackScores.stream()
-            .mapToInt(Integer::intValue)
-            .average()
-            .orElse(0.0);
 
         return Results.success(Map.of(
             "days", windowDays,
             "sampleSize", rows.size(),
-            "avgRewriteLatencyMs", round4(avgRewriteLatencyMs),
-            "avgRetrievalHitRate", round4(avgRetrievalHitRate),
-            "avgCitationRate", round4(avgCitationRate),
-            "clarifyTriggerRate", round4(clarifyTriggerRate),
-            "avgFeedbackScore", round4(avgFeedbackScore),
+            "avgRewriteLatencyMs", round4(avgField(rows, ChatTraceMetricDO::getRewriteLatencyMs)),
+            "avgRetrievalHitRate", round4(avgField(rows, ChatTraceMetricDO::getRetrievalHitRate)),
+            "avgCitationRate", round4(avgField(rows, ChatTraceMetricDO::getCitationRate)),
+            "clarifyTriggerRate", round4(avgField(rows, ChatTraceMetricDO::getClarifyTriggered)),
+            "avgFeedbackScore", round4(feedbackScores.stream().mapToInt(Integer::intValue).average().orElse(0.0)),
             "feedbackCoverage", round4(feedbackScores.size() * 1.0 / rows.size())
         ));
     }
@@ -356,10 +332,11 @@ public class ChatServiceImpl implements ChatService {
             ChatTraceMetricDO metric = ChatTraceMetricDO.builder()
                 .sessionId(sessionId)
                 .messageId(messageId)
-                .userId(userId != null ? userId : DEFAULT_USER_ID)
+                .userId(resolveUserId(userId))
                 .queryText(query)
                 .rewriteLatencyMs(Math.max(0, result.rewriteLatencyMs()))
-                .retrievalHitRate(computeRetrievalHitRate(result.retrievedCount(), result.retrievalTopK()))
+                .retrievalHitRate(result.retrievalTopK() <= 0 ? 0.0 :
+                    Math.max(0.0, Math.min(1.0, result.retrievedCount() * 1.0 / result.retrievalTopK())))
                 .citationRate(computeCitationRate(result.response(), result.sources()))
                 .clarifyTriggered(result.clarifyTriggered() ? 1 : 0)
                 .build();
@@ -367,13 +344,6 @@ public class ChatServiceImpl implements ChatService {
         } catch (Exception e) {
             log.debug("写入在线链路指标失败, messageId={}, error={}", messageId, e.getMessage());
         }
-    }
-
-    private double computeRetrievalHitRate(int retrievedCount, int retrievalTopK) {
-        if (retrievalTopK <= 0) {
-            return 0.0;
-        }
-        return Math.max(0.0, Math.min(1.0, retrievedCount * 1.0 / retrievalTopK));
     }
 
     private double computeCitationRate(String answer, List<RetrievalMatch> sources) {
@@ -393,6 +363,20 @@ public class ChatServiceImpl implements ChatService {
             }
         }
         return Math.max(0.0, Math.min(1.0, cited.size() * 1.0 / maxIndex));
+    }
+
+    private Long resolveUserId(Long userId) {
+        return userId != null ? userId : UserContext.resolvedUserId();
+    }
+
+    private <T extends Number> double avgField(List<ChatTraceMetricDO> rows,
+                                               java.util.function.Function<ChatTraceMetricDO, T> getter) {
+        return rows.stream()
+            .map(getter)
+            .filter(java.util.Objects::nonNull)
+            .mapToDouble(Number::doubleValue)
+            .average()
+            .orElse(0.0);
     }
 
     private double round4(double value) {

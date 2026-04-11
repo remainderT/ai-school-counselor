@@ -44,9 +44,9 @@ function routeEvent(name: string, payload: unknown, handlers: StreamHandlers): v
   }
 }
 
-export function createChatStream(message: string, userId: string, handlers: StreamHandlers) {
+export function createChatStream(message: string, handlers: StreamHandlers) {
   const abortCtl = new AbortController();
-  const query = new URLSearchParams({ message, userId }).toString();
+  const query = new URLSearchParams({ message }).toString();
   const endpoint = apiUrl(`/api/rag/chat/stream?${query}`);
 
   const attempt = async () => {

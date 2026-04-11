@@ -39,17 +39,19 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
 
     @Override
     public Long create(KnowledgeCreateReqDTO requestParam) {
-        String name = normalizeStr(requestParam == null ? null : requestParam.getName());
-        if (name == null) {
+        String rawName = requestParam == null ? null : requestParam.getName();
+        if (!StringUtils.hasText(rawName)) {
             throw new ClientException(KNOWLEDGE_NAME_EMPTY);
         }
+        String name = rawName.trim();
         Long userId = requireCurrentUserId();
 
         ensureNameNotDuplicate(userId, name, null);
+        String desc = requestParam.getDescription();
         KnowledgeDO knowledge = KnowledgeDO.builder()
             .userId(userId)
             .name(name)
-            .description(normalizeStr(requestParam == null ? null : requestParam.getDescription()))
+            .description(StringUtils.hasText(desc) ? desc.trim() : null)
             .build();
         try {
             baseMapper.insert(knowledge);
@@ -117,16 +119,17 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         KnowledgeDO existing = loadKnowledge(id);
         validateOwner(existing);
 
-        String nextName = normalizeStr(requestParam == null ? null : requestParam.getName());
-        if (nextName != null && !nextName.equals(existing.getName())) {
-            ensureNameNotDuplicate(existing.getUserId(), nextName, existing.getId());
-            existing.setName(nextName);
+        if (requestParam != null && StringUtils.hasText(requestParam.getName())) {
+            String nextName = requestParam.getName().trim();
+            if (!nextName.equals(existing.getName())) {
+                ensureNameNotDuplicate(existing.getUserId(), nextName, existing.getId());
+                existing.setName(nextName);
+            }
         }
 
-        if (requestParam != null) {
-            if (requestParam.getDescription() != null) {
-                existing.setDescription(normalizeStr(requestParam.getDescription()));
-            }
+        if (requestParam != null && requestParam.getDescription() != null) {
+            String desc = requestParam.getDescription();
+            existing.setDescription(StringUtils.hasText(desc) ? desc.trim() : null);
         }
         baseMapper.updateById(existing);
     }
@@ -189,12 +192,5 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
             throw new ClientException(KNOWLEDGE_ACCESS_DENIED);
         }
         return userId;
-    }
-
-    private String normalizeStr(String str) {
-        if (!StringUtils.hasText(str)) {
-            return null;
-        }
-        return str.trim();
     }
 }

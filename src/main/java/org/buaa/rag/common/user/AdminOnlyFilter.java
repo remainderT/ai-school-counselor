@@ -3,7 +3,9 @@ package org.buaa.rag.common.user;
 import java.io.IOException;
 import java.util.List;
 
+import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.result.Results;
+import org.buaa.rag.common.enums.UserErrorCodeEnum;
 import org.buaa.rag.common.util.FilterResponseUtils;
 
 import com.alibaba.fastjson2.JSON;
@@ -20,9 +22,6 @@ import jakarta.servlet.http.HttpServletResponse;
  * 管理员权限过滤器
  */
 public class AdminOnlyFilter implements Filter {
-
-    private static final String NO_ADMIN_CODE = "A000205";
-    private static final String NO_ADMIN_MSG = "无管理员权限";
 
     private static final List<String> ADMIN_ONLY_PREFIX = List.of(
             "/api/rag/knowledge",
@@ -46,7 +45,8 @@ public class AdminOnlyFilter implements Filter {
         String requestUri = request.getRequestURI();
 
         if (requireAdmin(requestUri) && !UserContext.isAdmin()) {
-            FilterResponseUtils.writeJsonResponse((HttpServletResponse) servletResponse, JSON.toJSONString(Results.failure(NO_ADMIN_CODE, NO_ADMIN_MSG)));
+            FilterResponseUtils.writeJsonResponse((HttpServletResponse) servletResponse,
+                JSON.toJSONString(Results.failure(new ClientException(UserErrorCodeEnum.USER_NO_ADMIN))));
             return;
         }
 

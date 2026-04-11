@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.buaa.rag.common.enums.ChunkingMode;
 import org.buaa.rag.properties.FileParseProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;

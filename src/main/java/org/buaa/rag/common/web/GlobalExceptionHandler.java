@@ -2,7 +2,7 @@ package org.buaa.rag.common.web;
 
 import java.util.List;
 
-import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
+import org.buaa.rag.common.enums.BaseErrorCode;
 import org.buaa.rag.common.convention.exception.AbstractException;
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;

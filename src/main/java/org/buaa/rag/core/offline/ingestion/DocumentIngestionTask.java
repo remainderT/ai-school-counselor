@@ -5,7 +5,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
-import org.buaa.rag.core.offline.chunk.ChunkingMode;
+import org.buaa.rag.common.enums.ChunkingMode;
 
 /**
  * 文档离线摄取任务

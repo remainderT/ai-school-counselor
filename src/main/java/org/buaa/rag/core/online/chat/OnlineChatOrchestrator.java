@@ -275,7 +275,8 @@ public class OnlineChatOrchestrator {
             return new StreamResult(response, cachedSources, false, 0, 0);
         }
 
-        String promptTemplate = ragPromptService.resolvePromptTemplate(resolved);
+        String promptTemplate = (resolved.getPromptTemplate() != null && !resolved.getPromptTemplate().isBlank())
+                ? resolved.getPromptTemplate() : resolved.getLevel2();
         int topK = subQueryRetrievalService.determineTopK(query);
         List<RetrievalMatch> retrievalResults = subQueryRetrievalService.retrieveByStrategy(
                 userId, query, topK, resolved, preResolvedCandidates);

@@ -45,7 +45,10 @@ public class SemanticCacheService {
             return Optional.empty();
         }
 
-        evictExpired();
+        long now = Instant.now().toEpochMilli();
+        RagProperties.SemanticCache cacheCfg = ragProperties.getSemanticCache();
+        long ttl = (cacheCfg == null) ? 120L * 60 * 1000 : Math.max(1, cacheCfg.getTtlMinutes()) * 60 * 1000;
+        cache.entrySet().removeIf(entry -> now - entry.getValue().createdAt() > ttl);
 
         CacheEntry best = null;
         double bestScore = 0.0;
@@ -57,7 +60,9 @@ public class SemanticCacheService {
             }
         }
 
-        if (best == null || bestScore < minSimilarity()) {
+        RagProperties.SemanticCache cfg = ragProperties.getSemanticCache();
+        double minSimilarity = (cfg == null) ? 0.92 : cfg.getMinSimilarity();
+        if (best == null || bestScore < minSimilarity) {
             return Optional.empty();
         }
 
@@ -92,38 +97,9 @@ public class SemanticCacheService {
         return cfg != null && cfg.isEnabled();
     }
 
-    private double minSimilarity() {
-        RagProperties.SemanticCache cfg = ragProperties.getSemanticCache();
-        if (cfg == null) {
-            return 0.92;
-        }
-        return cfg.getMinSimilarity();
-    }
-
-    private long ttlMillis() {
-        RagProperties.SemanticCache cfg = ragProperties.getSemanticCache();
-        if (cfg == null) {
-            return 120L * 60 * 1000;
-        }
-        return Math.max(1, cfg.getTtlMinutes()) * 60 * 1000;
-    }
-
-    private int maxEntries() {
-        RagProperties.SemanticCache cfg = ragProperties.getSemanticCache();
-        if (cfg == null) {
-            return 300;
-        }
-        return Math.max(10, cfg.getMaxEntries());
-    }
-
-    private void evictExpired() {
-        long now = Instant.now().toEpochMilli();
-        long ttl = ttlMillis();
-        cache.entrySet().removeIf(entry -> now - entry.getValue().createdAt() > ttl);
-    }
-
     private void trimIfNeeded() {
-        int max = maxEntries();
+        RagProperties.SemanticCache cfg = ragProperties.getSemanticCache();
+        int max = (cfg == null) ? 300 : Math.max(10, cfg.getMaxEntries());
         if (cache.size() <= max) {
             return;
         }

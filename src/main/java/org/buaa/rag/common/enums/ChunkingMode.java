@@ -1,4 +1,4 @@
-package org.buaa.rag.core.offline.chunk;
+package org.buaa.rag.common.enums;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;

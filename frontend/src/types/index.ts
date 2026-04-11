@@ -32,11 +32,20 @@ export interface KnowledgeItem {
   documentCount?: number;
 }
 
+/** 文档处理状态码常量 */
+export const DocStatus = {
+  PENDING: 0,
+  PROCESSING: 1,
+  DONE: 2,
+  FAILED: -1,
+} as const;
+
 export interface DocumentItem {
   id: number;
   knowledgeId?: number;
   originalFileName?: string;
   fileName?: string;
+  fileSizeBytes?: number;
   /** 后端 processingStatus: 0=待处理, 1=处理中, 2=已完成, -1=失败 */
   processingStatus?: number;
   processingStatusDesc?: string;
@@ -86,11 +95,10 @@ export interface IntentNodeItem {
   promptSnippet?: string;
   paramPromptTemplate?: string;
   keywords?: string[];
-  knowledgeBaseId?: string;
+  knowledgeBaseId?: number;  // 后端返回 Long 类型，前端使用 number
   actionService?: string;
   mcpToolId?: string;
   topK?: number;
-  sortOrder?: number;
   enabled?: number;
   children?: IntentNodeItem[];
 }

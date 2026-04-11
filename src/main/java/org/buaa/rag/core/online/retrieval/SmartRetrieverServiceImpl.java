@@ -192,10 +192,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         return Math.min(recall, MAX_RECALL_SIZE);
     }
 
-    private Operator resolveOperator(String query) {
-        return isShortQuery(query) ? Operator.Or : Operator.And;
-    }
-
     private boolean isShortQuery(String query) {
         if (query == null) {
             return true;
@@ -225,7 +221,7 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
                                             .match(matchBuilder -> matchBuilder
                                                     .field("text_data")
                                                     .query(query)
-                                                    .operator(resolveOperator(query))
+                                                    .operator(isShortQuery(query) ? Operator.Or : Operator.And)
                                             )
                                     )
                                     .size(topK),
@@ -298,8 +294,8 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             return Collections.emptyList();
         }
 
-        String normalizedUserId = normalizeUserId(userId);
-        Set<String> allowedMd5 = resolveAccessibleDocuments(normalizedUserId);
+        String normalizedUserId = (userId == null || userId.isBlank()) ? "anonymous" : userId;
+        Set<String> allowedMd5 = new HashSet<>(loadMd5ByOwnerId(normalizedUserId));
 
         List<RetrievalMatch> filtered = matches.stream()
                 .filter(match -> allowedMd5.contains(match.getFileMd5()))
@@ -342,28 +338,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
             return filtered.subList(0, topK);
         }
         return filtered;
-    }
-
-    /**
-     * 获取用户可访问的文档 MD5 列表。
-     *
-     * <p>仅允许用户本人上传的文档。</p>
-     *
-     * @param userId 用户标识
-     * @return 可访问文档的 MD5 集合
-     */
-    private Set<String> resolveAccessibleDocuments(String userId) {
-        Set<String> md5Set = new HashSet<>();
-        md5Set.addAll(loadMd5ByOwnerId(userId));
-
-        return md5Set;
-    }
-
-    private String normalizeUserId(String userId) {
-        if (userId == null || userId.isBlank()) {
-            return "anonymous";
-        }
-        return userId;
     }
 
     private Map<String, DocumentDO> loadDocumentRecords(List<RetrievalMatch> matches) {

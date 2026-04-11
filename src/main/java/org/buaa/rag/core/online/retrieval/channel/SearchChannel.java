@@ -1,5 +1,7 @@
 package org.buaa.rag.core.online.retrieval.channel;
 
+import org.buaa.rag.common.enums.SearchChannelType;
+
 /**
  * 检索通道抽象，每种通道代表一种独立的召回策略（如向量全局、意图定向等）。
  * <p>

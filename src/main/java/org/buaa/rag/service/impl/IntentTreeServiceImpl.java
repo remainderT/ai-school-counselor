@@ -169,9 +169,7 @@ public class IntentTreeServiceImpl implements IntentTreeService {
             .map(IntentNodeDO::getId)
             .collect(Collectors.toCollection(ArrayList::new));
         deleteIds.add(existing.getId());
-        if (!deleteIds.isEmpty()) {
-            intentNodeMapper.deleteBatchIds(deleteIds);
-        }
+        intentNodeMapper.deleteBatchIds(deleteIds);
         intentTreeService.refreshTreeSnapshot();
     }
 
@@ -206,14 +204,15 @@ public class IntentTreeServiceImpl implements IntentTreeService {
     }
 
     private void batchSetEnabled(List<Long> ids, int enabled) {
-        List<IntentNodeDO> targets = listActiveByIds(ids);
-        if (targets.isEmpty()) {
+        if (ids == null || ids.isEmpty()) {
             return;
         }
-        for (IntentNodeDO target : targets) {
-            target.setEnabled(enabled);
-            intentNodeMapper.updateById(target);
-        }
+        intentNodeMapper.update(null,
+            Wrappers.lambdaUpdate(IntentNodeDO.class)
+                .in(IntentNodeDO::getId, ids)
+                .eq(IntentNodeDO::getDelFlag, 0)
+                .set(IntentNodeDO::getEnabled, enabled)
+        );
         intentTreeService.refreshTreeSnapshot();
     }
 

@@ -4,26 +4,32 @@ import static org.buaa.rag.common.enums.ServiceErrorCodeEnum.EMBEDDING_SERVICE_E
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.core.model.ContentFragment;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import lombok.RequiredArgsConstructor;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * 文档向量化服务
  * <p>
- * 负责离线文档分片的批量向量化与重试控制。
+ * 负责离线文档分片的批量向量化，支持多批并行调用以降低整体耗时。
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class EmbeddingService {
 
     private final VectorEncoding encodingService;
+    private final ExecutorService embeddingPool;
+    private final int concurrency;
 
     @Value("${rag.embedding.batch-size:10}")
     private int batchSize;
@@ -33,6 +39,23 @@ public class EmbeddingService {
 
     @Value("${rag.embedding.retry-backoff-ms:400}")
     private long retryBackoffMs;
+
+    public EmbeddingService(VectorEncoding encodingService,
+                            @Value("${rag.embedding.concurrency:4}") int concurrency) {
+        this.encodingService = encodingService;
+        this.concurrency = Math.max(1, concurrency);
+        AtomicInteger counter = new AtomicInteger(0);
+        this.embeddingPool = Executors.newFixedThreadPool(this.concurrency, r -> {
+            Thread t = new Thread(r, "embed-worker-" + counter.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    @PreDestroy
+    void shutdown() {
+        embeddingPool.shutdownNow();
+    }
 
     public List<float[]> encodeFragments(List<ContentFragment> fragments) {
         if (fragments == null || fragments.isEmpty()) {
@@ -53,19 +76,41 @@ public class EmbeddingService {
     private List<float[]> encodeTexts(List<String> texts) {
         int resolvedBatchSize = Math.max(1, batchSize);
         int totalBatches = (int) Math.ceil((double) texts.size() / resolvedBatchSize);
-        List<float[]> allVectors = new ArrayList<>(texts.size());
 
-        log.info("开始向量编码，共 {} 个文本，分 {} 批处理（每批 {}）", texts.size(), totalBatches, resolvedBatchSize);
+        log.info("开始向量编码，共 {} 个文本，分 {} 批处理（每批 {}），并行度: {}",
+            texts.size(), totalBatches, resolvedBatchSize, concurrency);
 
-        // 按批次调用 embedding，降低单次请求体积与超时风险。
+        // 构建所有批次
+        List<List<String>> batches = new ArrayList<>(totalBatches);
         for (int start = 0; start < texts.size(); start += resolvedBatchSize) {
-            List<String> batch = texts.subList(start, Math.min(start + resolvedBatchSize, texts.size()));
-            int batchNo = start / resolvedBatchSize + 1;
-            allVectors.addAll(encodeBatch(batch, batchNo));
+            batches.add(texts.subList(start, Math.min(start + resolvedBatchSize, texts.size())));
+        }
 
-            // 每5批或最后一批打印一次进度
-            if (batchNo % 5 == 0 || batchNo == totalBatches) {
-                log.info("向量编码进度: {}/{}批完成，已生成 {} 个向量", batchNo, totalBatches, allVectors.size());
+        // 并行提交所有批次，由线程池的固定线程数控制实际并发度
+        List<CompletableFuture<List<float[]>>> futures = new ArrayList<>(totalBatches);
+        for (int i = 0; i < batches.size(); i++) {
+            final int batchNo = i + 1;
+            final List<String> batch = batches.get(i);
+            futures.add(CompletableFuture.supplyAsync(
+                () -> encodeBatch(batch, batchNo), embeddingPool));
+        }
+
+        // 按原始顺序收集结果，保证向量与文本片段一一对应
+        List<float[]> allVectors = new ArrayList<>(texts.size());
+        for (int i = 0; i < futures.size(); i++) {
+            try {
+                allVectors.addAll(futures.get(i).join());
+            } catch (CompletionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof ServiceException se) {
+                    throw se;
+                }
+                throw new ServiceException("向量编码失败", cause, EMBEDDING_SERVICE_ERROR);
+            }
+            int batchNo = i + 1;
+            if (batchNo % 3 == 0 || batchNo == totalBatches) {
+                log.info("向量编码进度: {}/{}批完成，已生成 {} 个向量",
+                    batchNo, totalBatches, allVectors.size());
             }
         }
 

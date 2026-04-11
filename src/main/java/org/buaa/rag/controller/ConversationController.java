@@ -32,18 +32,18 @@ public class ConversationController {
 
     @GetMapping("/sessions")
     public Result<List<ConversationSessionRespDTO>> listSessions() {
-        return Results.success(conversationService.listSessions(resolveUserId()));
+        return Results.success(conversationService.listSessions(UserContext.resolvedUserId()));
     }
 
     @PostMapping("/sessions")
     public Result<ConversationSessionRespDTO> createSession(
             @RequestBody ConversationSessionCreateReqDTO request) {
-        return Results.success(conversationService.createSession(resolveUserId(), request.getTitle()));
+        return Results.success(conversationService.createSession(UserContext.resolvedUserId(), request.getTitle()));
     }
 
     @DeleteMapping("/sessions/{sessionId}")
     public Result<Void> deleteSession(@PathVariable String sessionId) {
-        conversationService.deleteSession(sessionId, resolveUserId());
+        conversationService.deleteSession(sessionId, UserContext.resolvedUserId());
         return Results.success();
     }
 
@@ -51,7 +51,7 @@ public class ConversationController {
     public Result<ConversationSessionRespDTO> renameSession(
             @PathVariable String sessionId,
             @RequestBody ConversationSessionRenameReqDTO request) {
-        return Results.success(conversationService.renameSession(sessionId, resolveUserId(), request.getTitle()));
+        return Results.success(conversationService.renameSession(sessionId, UserContext.resolvedUserId(), request.getTitle()));
     }
 
     @GetMapping("/history")
@@ -59,13 +59,5 @@ public class ConversationController {
             @RequestParam String sessionId,
             @RequestParam(defaultValue = "120") int limit) {
         return Results.success(conversationService.listMessages(sessionId, limit));
-    }
-
-    /**
-     * 从 JWT 上下文获取当前用户 ID。
-     */
-    private Long resolveUserId() {
-        Long userId = UserContext.getUserId();
-        return userId != null ? userId : 1L;
     }
 }

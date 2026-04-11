@@ -1,4 +1,4 @@
-package org.buaa.rag.core.online.retrieval.channel;
+package org.buaa.rag.common.enums;
 
 /**
  * 检索通道类别，用于后处理阶段区分结果来源。

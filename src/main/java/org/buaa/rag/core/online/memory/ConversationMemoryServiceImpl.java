@@ -179,8 +179,14 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
         if (memoryConfig == null || !memoryConfig.isSummaryEnabled()) {
             return;
         }
-        int summaryStartTurns = resolveSummaryStartTurns(memoryConfig);
-        long userTurns = countUserTurns(sessionId);
+        int summaryStartTurns = (memoryConfig == null || memoryConfig.getSummaryStartTurns() <= 0)
+                ? 8 : Math.max(memoryConfig.getSummaryStartTurns(), resolveHistoryKeepTurns(memoryConfig) + 1);
+        Long count = messageMapper.selectCount(
+            Wrappers.lambdaQuery(MessageDO.class)
+                .eq(MessageDO::getSessionId, sessionId)
+                .eq(MessageDO::getRole, "user")
+        );
+        long userTurns = count == null ? 0 : count;
         if (userTurns < summaryStartTurns) {
             return;
         }
@@ -207,13 +213,20 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
         }
         String previousSummary = latestSummary == null ? null : latestSummary.getContent();
         int summaryMaxChars = resolveSummaryMaxChars(memoryConfig);
-        int summaryMaxTokens = resolveSummaryMaxTokens(memoryConfig);
+        int summaryMaxTokens = (memoryConfig == null || memoryConfig.getSummaryMaxTokens() <= 0)
+                ? 180 : Math.max(64, memoryConfig.getSummaryMaxTokens());
 
         memorySummaryExecutor.execute(() -> {
             try {
                 String updated = generateSummary(previousSummary, snapshot, summaryMaxChars, summaryMaxTokens);
                 if (StringUtils.hasText(updated)) {
-                    persistSummary(sessionId, userId, updated, resolveLastMessageId(snapshot, afterId));
+                    MessageSummaryDO summaryDO = MessageSummaryDO.builder()
+                        .sessionId(sessionId)
+                        .userId(userId)
+                        .content(updated)
+                        .lastMessageId(resolveLastMessageId(snapshot, afterId))
+                        .build();
+                    messageSummaryMapper.insert(summaryDO);
                 }
             } catch (Exception e) {
                 log.debug("异步摘要生成失败, sessionId={}, error={}", sessionId, e.getMessage());
@@ -333,25 +346,11 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
         return memoryConfig.getHistoryKeepTurns();
     }
 
-    private int resolveSummaryStartTurns(RagProperties.Memory memoryConfig) {
-        if (memoryConfig == null || memoryConfig.getSummaryStartTurns() <= 0) {
-            return 8;
-        }
-        return Math.max(memoryConfig.getSummaryStartTurns(), resolveHistoryKeepTurns(memoryConfig) + 1);
-    }
-
     private int resolveSummaryMaxChars(RagProperties.Memory memoryConfig) {
         if (memoryConfig == null || memoryConfig.getSummaryMaxChars() <= 0) {
             return 320;
         }
         return Math.max(120, memoryConfig.getSummaryMaxChars());
-    }
-
-    private int resolveSummaryMaxTokens(RagProperties.Memory memoryConfig) {
-        if (memoryConfig == null || memoryConfig.getSummaryMaxTokens() <= 0) {
-            return 180;
-        }
-        return Math.max(64, memoryConfig.getSummaryMaxTokens());
     }
 
     private Long resolveSessionUserId(String sessionId) {
@@ -365,15 +364,6 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
                 .last("limit 1")
         );
         return latest == null ? null : latest.getUserId();
-    }
-
-    private long countUserTurns(String sessionId) {
-        Long count = messageMapper.selectCount(
-            Wrappers.lambdaQuery(MessageDO.class)
-                .eq(MessageDO::getSessionId, sessionId)
-                .eq(MessageDO::getRole, "user")
-        );
-        return count == null ? 0 : count;
     }
 
     private Long resolveSummaryCutoffMessageId(String sessionId, int keepTurns) {
@@ -457,16 +447,6 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
             query.eq(MessageSummaryDO::getUserId, userId);
         }
         return messageSummaryMapper.selectOne(query);
-    }
-
-    private void persistSummary(String sessionId, Long userId, String content, Long lastMessageId) {
-        MessageSummaryDO summaryDO = MessageSummaryDO.builder()
-            .sessionId(sessionId)
-            .userId(userId)
-            .content(content)
-            .lastMessageId(lastMessageId)
-            .build();
-        messageSummaryMapper.insert(summaryDO);
     }
 
     private boolean tryAcquireSummaryLock(String lockKey) {

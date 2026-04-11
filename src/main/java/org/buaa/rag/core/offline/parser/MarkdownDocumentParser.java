@@ -8,6 +8,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.buaa.rag.common.enums.ParserType;
 import org.springframework.stereotype.Component;
 
 /**

@@ -75,7 +75,7 @@ public class QueryRewriteAndSplitService {
         }
 
         long start = System.nanoTime();
-        String systemPrompt = resolvePrompt(cfg);
+        String systemPrompt = DEFAULT_PROMPT;
         // 构建携带历史上下文的 userPrompt（最近 2 轮对话作为前缀）
         String userPrompt = buildUserPromptWithHistory(userQuery, conversationHistory);
         String rawOutput = llmChat.generateCompletion(systemPrompt, userPrompt, 512);
@@ -86,7 +86,7 @@ public class QueryRewriteAndSplitService {
             return fallback(userQuery, latencyMs);
         }
 
-        ParsedOutput parsed = parse(rawOutput, resolveMaxSubQuestions(cfg));
+        ParsedOutput parsed = parse(rawOutput, Math.max(1, cfg.getMaxSubQuestions()));
         if (parsed == null || !StringUtils.hasText(parsed.rewrite())) {
             log.debug("改写+拆分 JSON 解析失败，降级透传原始问题");
             return fallback(userQuery, latencyMs);
@@ -172,14 +172,6 @@ public class QueryRewriteAndSplitService {
             log.debug("改写+拆分 JSON 解析异常: {}", e.getMessage());
             return null;
         }
-    }
-
-    private String resolvePrompt(RagProperties.QueryPreprocess cfg) {
-        return DEFAULT_PROMPT;
-    }
-
-    private int resolveMaxSubQuestions(RagProperties.QueryPreprocess cfg) {
-        return Math.max(1, cfg.getMaxSubQuestions());
     }
 
     private QueryRewriteResult fallback(String userQuery, long latencyMs) {

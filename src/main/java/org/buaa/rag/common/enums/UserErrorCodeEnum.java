@@ -17,13 +17,9 @@ public enum UserErrorCodeEnum implements IErrorCode {
 
     USER_PASSWORD_ERROR("A000201", "密码错误"),
 
-    USER_REPEATED_LOGIN("A000202", "重复登录"),
-
     USER_TOKEN_NULL("A000203", "用户未登录"),
 
-    USER_TOKEN_ERROR("A000204", "登陆token错误"),
-
-    USER_UPDATE_ERROR("A000302", "用户信息更新失败");
+    USER_NO_ADMIN("A000205", "无管理员权限");
 
     private final String code;
 

@@ -10,7 +10,7 @@ import java.util.List;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.exception.ServiceException;
-import org.buaa.rag.common.convention.errorcode.BaseErrorCode;
+import org.buaa.rag.common.enums.BaseErrorCode;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.core.offline.ingestion.DocumentIngestionTask;

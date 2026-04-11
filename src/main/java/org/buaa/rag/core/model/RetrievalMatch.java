@@ -44,24 +44,4 @@ public class RetrievalMatch {
         String chunk = chunkId == null ? "null" : String.valueOf(chunkId);
         return md5 + ":" + chunk;
     }
-
-    /**
-     * 判断是否为高相关度结果
-     */
-    public boolean isHighlyRelevant() {
-        return relevanceScore != null && relevanceScore > 0.8;
-    }
-
-    /**
-     * 获取简短预览
-     */
-    public String getPreview(int maxLength) {
-        if (textContent == null) {
-            return "";
-        }
-        if (textContent.length() <= maxLength) {
-            return textContent;
-        }
-        return textContent.substring(0, maxLength) + "...";
-    }
 }

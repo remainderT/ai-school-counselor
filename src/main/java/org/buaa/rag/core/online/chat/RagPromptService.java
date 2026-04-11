@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import org.buaa.rag.core.model.IntentDecision;
@@ -48,29 +49,6 @@ public class RagPromptService {
             contextBuilder.append(String.format("[%d] (%s) %s\n", i + 1, sourceLabel, textSnippet));
         }
         return contextBuilder.toString();
-    }
-
-    /**
-     * 解析意图对应的 Prompt 模板。
-     */
-    public String resolvePromptTemplate(IntentDecision intent) {
-        if (intent == null) {
-            return null;
-        }
-        if (intent.getPromptTemplate() != null && !intent.getPromptTemplate().isBlank()) {
-            return intent.getPromptTemplate();
-        }
-        return intent.getLevel2();
-    }
-
-    /**
-     * 将意图 Prompt 模板与参考上下文拼接。
-     */
-    public String applyPromptTemplate(String template, String context) {
-        if (template == null || template.isBlank()) {
-            return context;
-        }
-        return template + "\n" + context;
     }
 
     /**
@@ -139,10 +117,12 @@ public class RagPromptService {
         double temperature = hasToolContext ? promptConfig.getTemperatureTool() : promptConfig.getTemperatureKb();
 
         StringBuilder responseBuilder = new StringBuilder();
-        Throwable[] streamError = new Throwable[1];
+        AtomicReference<Throwable> streamError = new AtomicReference<>();
+        String appliedPrompt = (promptTemplate == null || promptTemplate.isBlank())
+                ? referenceContext : promptTemplate + "\n" + referenceContext;
         llmService.streamResponse(
                 query,
-                applyPromptTemplate(promptTemplate, referenceContext),
+                appliedPrompt,
                 conversationHistory,
                 temperature,
                 null,   // topP 使用配置默认值
@@ -152,12 +132,13 @@ public class RagPromptService {
                         chunkHandler.accept(chunk);
                     }
                 },
-                error -> streamError[0] = error,
+                streamError::set,
                 () -> {
                 }
         );
-        if (streamError[0] != null) {
-            throw new RuntimeException("AI服务异常: " + streamError[0].getMessage(), streamError[0]);
+        Throwable err = streamError.get();
+        if (err != null) {
+            throw new RuntimeException("AI服务异常: " + err.getMessage(), err);
         }
         String rawResponse = responseBuilder.toString();
         String finalResponse = appendSourceReferences(rawResponse, retrievalResults);
@@ -180,7 +161,9 @@ public class RagPromptService {
             if (source == null) {
                 continue;
             }
-            String key = buildDisplayKey(source);
+            String md5 = source.getFileMd5() != null ? source.getFileMd5() : "unknown";
+            String chunk = source.getChunkId() != null ? source.getChunkId().toString() : "0";
+            String key = md5 + ":" + chunk;
             map.putIfAbsent(key, source);
         }
         List<RetrievalMatch> deduplicated = new ArrayList<>(map.values());
@@ -189,12 +172,6 @@ public class RagPromptService {
                 a.getRelevanceScore() != null ? a.getRelevanceScore() : 0.0
         ));
         return deduplicated;
-    }
-
-    private String buildDisplayKey(RetrievalMatch match) {
-        String md5 = match.getFileMd5() != null ? match.getFileMd5() : "unknown";
-        String chunk = match.getChunkId() != null ? match.getChunkId().toString() : "0";
-        return md5 + ":" + chunk;
     }
 
     private String truncateText(String text, int maxLength) {

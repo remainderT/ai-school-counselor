@@ -2,6 +2,8 @@ package org.buaa.rag.core.offline.ingestion;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import org.apache.commons.codec.digest.DigestUtils;
 import org.buaa.rag.dao.entity.ChunkDO;
@@ -21,7 +23,8 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * 文档产物处理器
  * <p>
- * 负责 chunk、ES 稀疏索引与 Milvus 向量的统一写入与清理
+ * 负责 chunk、ES 稀疏索引与 Milvus 向量的统一写入与清理。
+ * ES 索引与向量编码并行执行以降低整体耗时。
  */
 @Slf4j
 @Component
@@ -37,10 +40,28 @@ public class DocumentArtifactService {
         if (document == null || fragments == null || fragments.isEmpty()) {
             return;
         }
-        // 写入顺序：chunk -> ES -> embedding/Milvus。失败由上游工作流统一 cleanup。
+        // 1. 先写 chunk（ES 和 Milvus 都可能依赖 documentId 存在）
         replaceChunks(document.getId(), fragments);
-        esIndexService.index(document, fragments);
-        List<float[]> vectors = documentEmbeddingService.encodeFragments(fragments);
+
+        // 2. ES 索引和向量编码并行执行：两者之间没有数据依赖
+        CompletableFuture<Void> esFuture = CompletableFuture.runAsync(
+            () -> esIndexService.index(document, fragments));
+        CompletableFuture<List<float[]>> embeddingFuture = CompletableFuture.supplyAsync(
+            () -> documentEmbeddingService.encodeFragments(fragments));
+
+        try {
+            CompletableFuture.allOf(esFuture, embeddingFuture).join();
+        } catch (CompletionException e) {
+            // 解包 CompletionException，让上游获得原始异常以正确判断是否可重试
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException("产物写入异常", cause);
+        }
+
+        // 3. 向量写入 Milvus（依赖 embedding 结果）
+        List<float[]> vectors = embeddingFuture.join();
         milvusVectorStoreService.upsertDocument(document, fragments, vectors);
     }
 

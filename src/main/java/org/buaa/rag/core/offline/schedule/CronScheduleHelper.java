@@ -26,8 +26,6 @@ public final class CronScheduleHelper {
 
     /**
      * 判断 cron 表达式两次触发之间的间隔是否小于给定秒数。
-     * <p>
-     * 主要用于校验用户提交的定时表达式是否过于频繁。
      */
     public static boolean isIntervalTooShort(String cron, LocalDateTime from, long minSeconds) {
         if (!StringUtils.hasText(cron) || from == null) {

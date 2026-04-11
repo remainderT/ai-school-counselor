@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -54,7 +55,8 @@ public class ConversationServiceImpl implements ConversationService {
     private final ConversationMemoryService conversationMemoryService;
 
     private final Map<Long, String> userSessionMap = new ConcurrentHashMap<>();
-    private final Map<String, List<Map<String, String>>> sessionHistoryMap = new ConcurrentHashMap<>();
+    /** 反向索引：sessionId → userId，避免 loadConversationContext 中 O(N) 线性扫 */
+    private final Map<String, Long> sessionUserMap = new ConcurrentHashMap<>();
 
     public ConversationServiceImpl(MessageMapper messageMapper,
                                    MessageSourceMapper sourceRepository,
@@ -77,10 +79,12 @@ public class ConversationServiceImpl implements ConversationService {
             String existingSession = loadLatestSessionId(resolvedUserId);
             if (existingSession != null) {
                 log.info("复用历史会话 - 用户: {}, 会话ID: {}", resolvedUserId, existingSession);
+                sessionUserMap.put(existingSession, resolvedUserId);
                 return existingSession;
             }
             String newSessionId = UUID.randomUUID().toString();
             log.info("创建新会话 - 用户: {}, 会话ID: {}", resolvedUserId, newSessionId);
+            sessionUserMap.put(newSessionId, resolvedUserId);
             return newSessionId;
         });
     }
@@ -92,6 +96,7 @@ public class ConversationServiceImpl implements ConversationService {
         String normalizedTitle = normalizeSessionTitle(title);
         persistMessage(sessionId, resolvedUserId, "system", buildSessionMetaContent(normalizedTitle));
         userSessionMap.put(resolvedUserId, sessionId);
+        sessionUserMap.put(sessionId, resolvedUserId);
 
         ConversationSessionRespDTO dto = new ConversationSessionRespDTO();
         dto.setSessionId(sessionId);
@@ -150,7 +155,9 @@ public class ConversationServiceImpl implements ConversationService {
         dto.setUserId(resolvedUserId);
         dto.setTitle(normalizedTitle);
         dto.setUpdatedAt(getCurrentTimestamp());
-        dto.setMessageCount(listMessages(normalizedSessionId, 500).size());
+        long count = messageMapper.selectCount(Wrappers.lambdaQuery(MessageDO.class)
+            .eq(MessageDO::getSessionId, normalizedSessionId));
+        dto.setMessageCount((int) count);
         return dto;
     }
 
@@ -187,65 +194,53 @@ public class ConversationServiceImpl implements ConversationService {
             .eq(ChatTraceMetricDO::getSessionId, normalizedSessionId));
         messageMapper.delete(messageQuery);
 
-        sessionHistoryMap.remove(normalizedSessionId);
+        sessionUserMap.remove(normalizedSessionId);
         userSessionMap.entrySet().removeIf(entry -> normalizedSessionId.equals(entry.getValue()));
     }
 
     @Override
-    public List<Map<String, String>> loadConversationHistory(String sessionId) {
-        List<Map<String, String>> history = loadHistoryFromDatabase(sessionId);
-        if (history != null) {
-            List<Map<String, String>> copied = cloneHistoryList(history);
-            sessionHistoryMap.put(sessionId, copied);
-            return copied;
-        }
-        return cloneHistoryList(sessionHistoryMap.getOrDefault(sessionId, new ArrayList<>()));
-    }
-
-    @Override
     public List<Map<String, String>> loadConversationContext(String sessionId) {
-        // 使用并行加载：历史消息 + 摘要同时从 DB 获取，减少一次串行网络往返
-        Long userId = resolveSessionUserIdFromCache(sessionId);
-        List<Map<String, String>> context = conversationMemoryService.loadContextParallel(
-            sessionId, userId, MAX_HISTORY_SIZE);
-        // 同步更新内存缓存（保持 sessionHistoryMap 一致）
-        if (!context.isEmpty()) {
-            sessionHistoryMap.put(sessionId, cloneHistoryList(context));
-        }
-        return context;
+        // O(1) 通过反向索引获取 userId（避免遍历 userSessionMap）
+        Long userId = sessionUserMap.get(sessionId);
+        // 并行加载：历史消息 + 摘要同时从 DB 获取
+        return conversationMemoryService.loadContextParallel(sessionId, userId, MAX_HISTORY_SIZE);
     }
 
     @Override
     public Long appendUserMessage(String sessionId, Long userId, String userMessage) {
-        String timestamp = getCurrentTimestamp();
-        appendHistoryEntry(sessionId, "user", userMessage, timestamp);
         return persistMessage(sessionId, resolveUserId(userId), "user", userMessage);
     }
 
     @Override
     public Long createAssistantPlaceholder(String sessionId, Long userId) {
-        String timestamp = getCurrentTimestamp();
-        appendHistoryEntry(sessionId, "assistant", STREAM_PLACEHOLDER, timestamp);
         return persistMessage(sessionId, resolveUserId(userId), "assistant", STREAM_PLACEHOLDER);
     }
 
     @Override
     public void completeAssistantMessage(String sessionId,
-                                         Long assistantMessageId,
-                                         String aiResponse,
-                                         List<RetrievalMatch> sources) {
+                                          Long assistantMessageId,
+                                          Long userId,
+                                          String aiResponse,
+                                          List<RetrievalMatch> sources) {
         String response = StringUtils.hasText(aiResponse) ? aiResponse : "（本次回答为空）";
-        updateMessageContent(assistantMessageId, response);
+        if (assistantMessageId != null) {
+            MessageDO update = new MessageDO();
+            update.setId(assistantMessageId);
+            update.setContent(response);
+            messageMapper.updateById(update);
+        }
         persistSources(assistantMessageId, sources);
-        replaceLatestAssistantPlaceholder(sessionId, response);
-        Long userId = loadUserIdByMessageId(assistantMessageId);
-        conversationMemoryService.scheduleSummary(sessionId, userId);
+        conversationMemoryService.scheduleSummary(sessionId, resolveUserId(userId));
     }
 
+
     @Override
-    public void failAssistantMessage(String sessionId, Long assistantMessageId, String fallbackResponse) {
-        completeAssistantMessage(sessionId, assistantMessageId, fallbackResponse, List.of());
+    public void failAssistantMessage(String sessionId, Long assistantMessageId, Long userId, String fallbackResponse) {
+        completeAssistantMessage(sessionId, assistantMessageId, userId, fallbackResponse, List.of());
     }
+
+    // 最多加载最近 N 条消息用于构建会话列表，避免全表扫描
+    private static final int LIST_SESSIONS_MSG_LIMIT = 2000;
 
     @Override
     public List<ConversationSessionRespDTO> listSessions(Long userId) {
@@ -253,7 +248,8 @@ public class ConversationServiceImpl implements ConversationService {
         try {
             LambdaQueryWrapper<MessageDO> queryWrapper = Wrappers.lambdaQuery(MessageDO.class)
                 .eq(MessageDO::getUserId, resolvedUserId)
-                .orderByDesc(MessageDO::getCreatedAt);
+                .orderByDesc(MessageDO::getCreatedAt)
+                .last("limit " + LIST_SESSIONS_MSG_LIMIT);
             List<MessageDO> rows = messageMapper.selectList(queryWrapper);
             if (rows == null || rows.isEmpty()) {
                 return List.of();
@@ -271,7 +267,7 @@ public class ConversationServiceImpl implements ConversationService {
                 }
                 MessageDO latest = messages.stream()
                     .filter(item -> item.getCreatedAt() != null)
-                    .max((left, right) -> left.getCreatedAt().compareTo(right.getCreatedAt()))
+                    .max(Comparator.comparing(MessageDO::getCreatedAt))
                     .orElse(messages.get(0));
                 String title = messages.stream()
                     .map(MessageDO::getContent)
@@ -297,18 +293,13 @@ public class ConversationServiceImpl implements ConversationService {
                 dto.setUpdatedAt(formatTimestamp(latest == null ? null : latest.getCreatedAt()));
                 result.add(dto);
             }
-            result.sort((left, right) -> {
-                if (left.getUpdatedAt() == null) {
-                    return 1;
-                }
-                if (right.getUpdatedAt() == null) {
-                    return -1;
-                }
-                return right.getUpdatedAt().compareTo(left.getUpdatedAt());
-            });
+            result.sort(Comparator.comparing(
+                ConversationSessionRespDTO::getUpdatedAt,
+                Comparator.nullsLast(Comparator.reverseOrder())
+            ));
             return result;
         } catch (Exception e) {
-            log.debug("查询会话列表失败: {}", e.getMessage());
+            log.warn("查询会话列表失败: userId={}", resolvedUserId, e);
             return List.of();
         }
     }
@@ -351,52 +342,8 @@ public class ConversationServiceImpl implements ConversationService {
             }
             return result;
         } catch (Exception e) {
-            log.debug("查询会话消息失败: {}", e.getMessage());
+            log.warn("查询会话消息失败: sessionId={}", sessionId, e);
             return List.of();
-        }
-    }
-
-    private void appendHistoryEntry(String sessionId,
-                                    String role,
-                                    String content,
-                                    String timestamp) {
-        List<Map<String, String>> history = sessionHistoryMap.computeIfAbsent(sessionId, key -> new ArrayList<>());
-        Map<String, String> entry = new HashMap<>();
-        entry.put("role", role);
-        entry.put("content", content);
-        entry.put("timestamp", timestamp);
-        history.add(entry);
-        trimHistory(sessionId);
-    }
-
-    private void trimHistory(String sessionId) {
-        List<Map<String, String>> history = sessionHistoryMap.get(sessionId);
-        if (history == null || history.size() <= MAX_HISTORY_SIZE) {
-            return;
-        }
-        List<Map<String, String>> trimmedHistory = new ArrayList<>(
-            history.subList(history.size() - MAX_HISTORY_SIZE, history.size())
-        );
-        sessionHistoryMap.put(sessionId, trimmedHistory);
-    }
-
-    private void replaceLatestAssistantPlaceholder(String sessionId, String finalContent) {
-        List<Map<String, String>> history = sessionHistoryMap.get(sessionId);
-        if (history == null || history.isEmpty()) {
-            return;
-        }
-        for (int i = history.size() - 1; i >= 0; i--) {
-            Map<String, String> entry = history.get(i);
-            if (entry == null) {
-                continue;
-            }
-            String role = entry.get("role");
-            String content = entry.get("content");
-            if ("assistant".equalsIgnoreCase(role) && STREAM_PLACEHOLDER.equals(content)) {
-                entry.put("content", finalContent);
-                entry.put("timestamp", getCurrentTimestamp());
-                return;
-            }
         }
     }
 
@@ -413,39 +360,7 @@ public class ConversationServiceImpl implements ConversationService {
             MessageDO latest = messageMapper.selectOne(queryWrapper);
             return latest != null ? latest.getSessionId() : null;
         } catch (Exception e) {
-            log.debug("读取历史会话失败: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    private List<Map<String, String>> loadHistoryFromDatabase(String sessionId) {
-        try {
-            LambdaQueryWrapper<MessageDO> queryWrapper = Wrappers.lambdaQuery(MessageDO.class)
-                .eq(MessageDO::getSessionId, sessionId)
-                .orderByAsc(MessageDO::getCreatedAt)
-                .last("limit " + MAX_HISTORY_SIZE);
-            List<MessageDO> messageDOS = messageMapper.selectList(queryWrapper);
-            if (messageDOS == null || messageDOS.isEmpty()) {
-                return null;
-            }
-            List<Map<String, String>> history = new ArrayList<>();
-            for (MessageDO messageDO : messageDOS) {
-                if (messageDO == null) {
-                    continue;
-                }
-                String content = messageDO.getContent();
-                if (isIgnoredContent(content) || !StringUtils.hasText(content)) {
-                    continue;
-                }
-                Map<String, String> entry = new HashMap<>();
-                entry.put("role", messageDO.getRole());
-                entry.put("content", content);
-                entry.put("timestamp", formatTimestamp(messageDO.getCreatedAt()));
-                history.add(entry);
-            }
-            return history;
-        } catch (Exception e) {
-            log.debug("加载对话历史失败: {}", e.getMessage());
+            log.warn("读取历史会话失败: userId={}, reason={}", userId, e.getMessage());
             return null;
         }
     }
@@ -511,19 +426,9 @@ public class ConversationServiceImpl implements ConversationService {
             }
             return userId.equals(any.getUserId());
         } catch (Exception e) {
-            log.debug("校验会话归属失败: {}", e.getMessage());
-            return false;
+            log.error("校验会话归属时发生异常（拒绝访问）: sessionId={}, userId={}", sessionId, userId, e);
+            return false; // fail-safe：异常时拒绝访问
         }
-    }
-
-    private void updateMessageContent(Long messageId, String content) {
-        if (messageId == null) {
-            return;
-        }
-        MessageDO update = new MessageDO();
-        update.setId(messageId);
-        update.setContent(content);
-        messageMapper.updateById(update);
     }
 
     private void persistSources(Long messageId, List<RetrievalMatch> sources) {
@@ -531,17 +436,18 @@ public class ConversationServiceImpl implements ConversationService {
             return;
         }
         try {
-            for (RetrievalMatch match : sources) {
-                MessageSourceDO source = new MessageSourceDO();
-                source.setMessageId(messageId);
-                source.setDocumentMd5(match.getFileMd5());
-                source.setChunkId(match.getChunkId());
-                source.setRelevanceScore(match.getRelevanceScore());
-                source.setSourceFileName(match.getSourceFileName());
-                sourceRepository.insert(source);
-            }
+            List<MessageSourceDO> rows = sources.stream()
+                .map(match -> MessageSourceDO.builder()
+                    .messageId(messageId)
+                    .documentMd5(match.getFileMd5())
+                    .chunkId(match.getChunkId())
+                    .relevanceScore(match.getRelevanceScore())
+                    .sourceFileName(match.getSourceFileName())
+                    .build())
+                .collect(Collectors.toList());
+            com.baomidou.mybatisplus.extension.toolkit.Db.saveBatch(rows);
         } catch (Exception e) {
-            log.debug("持久化来源失败: {}", e.getMessage());
+            log.warn("持久化消息来源失败: messageId={}", messageId, e);
         }
     }
 
@@ -552,46 +458,8 @@ public class ConversationServiceImpl implements ConversationService {
         return timestamp.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
     }
 
-    private List<Map<String, String>> cloneHistoryList(List<Map<String, String>> source) {
-        List<Map<String, String>> copied = new ArrayList<>();
-        if (source == null || source.isEmpty()) {
-            return copied;
-        }
-        for (Map<String, String> item : source) {
-            if (item == null) {
-                continue;
-            }
-            copied.add(new HashMap<>(item));
-        }
-        return copied;
-    }
-
-    /**
-     * 将 null userId 解析为默认值 1L（admin 用户）。
-     */
     private Long resolveUserId(Long userId) {
         return userId != null ? userId : 1L;
-    }
-
-    private Long loadUserIdByMessageId(Long messageId) {
-        if (messageId == null) {
-            return null;
-        }
-        MessageDO messageDO = messageMapper.selectById(messageId);
-        return messageDO == null ? null : messageDO.getUserId();
-    }
-
-    /**
-     * 从内存缓存 userSessionMap 反推 userId（避免额外 DB 查询）。
-     * 用于 loadContextParallel 传入 userId 过滤摘要。
-     */
-    private Long resolveSessionUserIdFromCache(String sessionId) {
-        for (Map.Entry<Long, String> entry : userSessionMap.entrySet()) {
-            if (sessionId.equals(entry.getValue())) {
-                return entry.getKey();
-            }
-        }
-        return null;
     }
 
     private Map<Long, List<RetrievalMatch>> loadSourcesByMessageIds(Set<Long> messageIds) {

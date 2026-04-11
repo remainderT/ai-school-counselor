@@ -16,7 +16,6 @@ type FormState = {
   actionService: string;
   mcpToolId: string;
   topK: string;
-  sortOrder: string;
   enabled: string;
 };
 
@@ -32,7 +31,6 @@ const defaultForm: FormState = {
   actionService: "",
   mcpToolId: "",
   topK: "",
-  sortOrder: "",
   enabled: "1"
 };
 
@@ -61,11 +59,10 @@ function toForm(item?: IntentNodeItem): FormState {
     description: item.description || "",
     promptSnippet: item.promptSnippet || "",
     keywords: (item.keywords || []).join(","),
-    knowledgeBaseId: item.knowledgeBaseId || "",
+    knowledgeBaseId: item.knowledgeBaseId == null ? "" : String(item.knowledgeBaseId),
     actionService: item.actionService || "",
     mcpToolId: item.mcpToolId || "",
     topK: item.topK == null ? "" : String(item.topK),
-    sortOrder: item.sortOrder == null ? "" : String(item.sortOrder),
     enabled: item.enabled == null ? "1" : String(item.enabled)
   };
 }
@@ -81,11 +78,10 @@ function buildPayload(form: FormState, withNodeId: boolean) {
       .split(",")
       .map((it) => it.trim())
       .filter(Boolean),
-    knowledgeBaseId: form.knowledgeBaseId.trim() || undefined,
-    actionService: form.actionService.trim() || undefined,
-    mcpToolId: form.mcpToolId.trim() || undefined,
+    knowledgeBaseId: form.knowledgeBaseId ? Number(form.knowledgeBaseId) : undefined,
+    actionService: form.actionService ? form.actionService.trim() || undefined : undefined,
+    mcpToolId: form.mcpToolId ? form.mcpToolId.trim() || undefined : undefined,
     topK: form.topK ? Number(form.topK) : undefined,
-    sortOrder: form.sortOrder ? Number(form.sortOrder) : undefined,
     enabled: Number(form.enabled || "1")
   };
   if (withNodeId) {
@@ -416,16 +412,13 @@ export function IntentTreePanel() {
                 </div>
                 <div className="intent-detail-id">{activeNode.nodeId}</div>
                 <div className="intent-detail-actions">
-                  <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => { setCreating(true); setForm({ ...defaultForm, parentId: activeNode.nodeId }); }}>
-                    + 新建子节点
-                  </button>
-                  <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => setCreating(false)}>
-                    编辑节点
-                  </button>
-                  <button className="admin-btn admin-btn-danger-ghost admin-btn-sm" onClick={() => void deleteOne()} disabled={actionReq.loading}>
-                    删除节点
-                  </button>
-                </div>
+                   <button className="admin-btn admin-btn-primary admin-btn-sm" onClick={() => { setCreating(true); setForm({ ...defaultForm, parentId: activeNode.nodeId }); }}>
+                     + 新建子节点
+                   </button>
+                   <button className="admin-btn admin-btn-danger-ghost admin-btn-sm" onClick={() => void deleteOne()} disabled={actionReq.loading}>
+                     删除节点
+                   </button>
+                 </div>
               </div>
             )}
 
@@ -433,7 +426,6 @@ export function IntentTreePanel() {
             {!creating && activeNode && (
               <div className="intent-detail-info">
                 <div className="intent-info-row"><span className="intent-info-label">父节点</span><span className="intent-info-value">{activeNode.parentId || "ROOT"}</span></div>
-                <div className="intent-info-row"><span className="intent-info-label">排序</span><span className="intent-info-value">{activeNode.sortOrder ?? 0}</span></div>
                 <div className="intent-info-row"><span className="intent-info-label">知识库</span><span className="intent-info-value">{activeNode.knowledgeBaseId || "无"}</span></div>
                 <div className="intent-info-row"><span className="intent-info-label">节点 TopK</span><span className="intent-info-value">{activeNode.topK ?? "默认（全局）"}</span></div>
                 {activeNode.keywords && activeNode.keywords.length > 0 && (
@@ -531,10 +523,6 @@ export function IntentTreePanel() {
                         <label className="admin-label">topK</label>
                         <input className="admin-input" type="number" value={form.topK} onChange={(e) => setForm((prev) => ({ ...prev, topK: e.target.value }))} />
                       </div>
-                      <div className="admin-form-group">
-                        <label className="admin-label">sortOrder</label>
-                        <input className="admin-input" type="number" value={form.sortOrder} onChange={(e) => setForm((prev) => ({ ...prev, sortOrder: e.target.value }))} />
-                      </div>
                     </div>
                     <div className="admin-form-group">
                       <label className="admin-label">description</label>
@@ -620,10 +608,6 @@ export function IntentTreePanel() {
                     <div className="admin-form-group">
                       <label className="admin-label">topK</label>
                       <input className="admin-input" type="number" value={form.topK} onChange={(e) => setForm((prev) => ({ ...prev, topK: e.target.value }))} />
-                    </div>
-                    <div className="admin-form-group">
-                      <label className="admin-label">sortOrder</label>
-                      <input className="admin-input" type="number" value={form.sortOrder} onChange={(e) => setForm((prev) => ({ ...prev, sortOrder: e.target.value }))} />
                     </div>
                   </div>
                   <div className="admin-form-group">
