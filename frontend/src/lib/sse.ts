@@ -29,6 +29,13 @@ function routeEvent(name: string, payload: unknown, handlers: StreamHandlers): v
     case "message":
       handlers.onText?.(String(payload));
       break;
+    case "meta": {
+      const messageId = extractMessageId(payload);
+      if (messageId !== null) {
+        handlers.onMessageId?.(messageId);
+      }
+      break;
+    }
     case "sources":
       handlers.onSources?.(payload);
       break;
@@ -42,6 +49,28 @@ function routeEvent(name: string, payload: unknown, handlers: StreamHandlers): v
       handlers.onError?.(new Error(String(payload)));
       break;
   }
+}
+
+function extractMessageId(payload: unknown): number | null {
+  if (typeof payload === "number" && Number.isFinite(payload)) {
+    return payload;
+  }
+  if (typeof payload === "string") {
+    const value = Number(payload);
+    return Number.isFinite(value) ? value : null;
+  }
+  if (payload && typeof payload === "object" && "messageId" in payload) {
+    const value = Number((payload as { messageId?: unknown }).messageId);
+    return Number.isFinite(value) ? value : null;
+  }
+  return null;
+}
+
+function hasReceivedEventFlag(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("receivedAnyEvent" in error)) {
+    return false;
+  }
+  return Boolean((error as { receivedAnyEvent?: unknown }).receivedAnyEvent);
 }
 
 export function createChatStream(message: string, handlers: StreamHandlers) {
@@ -68,40 +97,48 @@ export function createChatStream(message: string, handlers: StreamHandlers) {
     let pending = "";
     let currentEvent = "message";
     let dataChunks: string[] = [];
+    let receivedAnyEvent = false;
 
     const dispatchBuffered = () => {
       if (dataChunks.length === 0) {
         currentEvent = "message";
         return;
       }
+      receivedAnyEvent = true;
       const merged = dataChunks.join("\n");
       routeEvent(currentEvent, tryParseJson(merged), handlers);
       currentEvent = "message";
       dataChunks = [];
     };
 
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) {
-        dispatchBuffered();
-        return;
-      }
-      pending += utf8.decode(value, { stream: true });
-
-      const segments = pending.split(/\r?\n/);
-      pending = segments.pop() ?? "";
-
-      for (const seg of segments) {
-        if (seg === "") {
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
           dispatchBuffered();
-        } else if (seg[0] === ":") {
-          // SSE 注释行，忽略
-        } else if (seg.startsWith("event:")) {
-          currentEvent = seg.substring(6).trim();
-        } else if (seg.startsWith("data:")) {
-          dataChunks.push(seg.substring(5).trim());
+          return;
+        }
+        pending += utf8.decode(value, { stream: true });
+
+        const segments = pending.split(/\r?\n/);
+        pending = segments.pop() ?? "";
+
+        for (const seg of segments) {
+          if (seg === "") {
+            dispatchBuffered();
+          } else if (seg[0] === ":") {
+            // SSE 注释行，忽略
+          } else if (seg.startsWith("event:")) {
+            currentEvent = seg.substring(6).trim();
+          } else if (seg.startsWith("data:")) {
+            dataChunks.push(seg.substring(5).trim());
+          }
         }
       }
+    } catch (error) {
+      const wrapped = error instanceof Error ? error : new Error(String(error));
+      (wrapped as Error & { receivedAnyEvent?: boolean }).receivedAnyEvent = receivedAnyEvent;
+      throw wrapped;
     }
   };
 
@@ -112,7 +149,9 @@ export function createChatStream(message: string, handlers: StreamHandlers) {
         await attempt();
         return;
       } catch (err) {
-        if (abortCtl.signal.aborted || tries >= MAX_RETRIES) throw err;
+        const receivedAnyEvent = hasReceivedEventFlag(err);
+        // 已收到任何事件后断流：不自动重试，避免将同一答案从头再拼接一遍。
+        if (abortCtl.signal.aborted || tries >= MAX_RETRIES || receivedAnyEvent) throw err;
         // 指数退避：500ms → 1s → 2s
         await new Promise<void>((ok) => setTimeout(ok, 500 * (1 << tries)));
       }

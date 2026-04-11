@@ -11,9 +11,14 @@ import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_ACCESS_DE
 import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_ID_REQUIRED;
 import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_NOT_EXISTS;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -31,6 +36,8 @@ import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
 import org.buaa.rag.dto.req.DocumentUploadReqDTO;
 import org.buaa.rag.core.model.UploadPayload;
+import org.buaa.rag.common.convention.result.Result;
+import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.core.offline.ingestion.DocumentArtifactService;
 import org.buaa.rag.core.offline.ingestion.DocumentLifecycleService;
 import org.buaa.rag.core.offline.ingestion.DocumentIngestionTask;
@@ -53,6 +60,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 
+import lombok.AllArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -76,6 +84,19 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final DocumentLifecycleService lifecycleService;
     private final DocumentArtifactService artifactService;
     private final RemoteURLFetcher remoteURLFetcher;
+
+    private static final String BASE_PATH = "/Users/yushuhao/Graduation/doc/Classification";
+    private static final Map<String, String> DIR_TO_KB_NAME = new HashMap<>() {{
+        put("教务教学", "academic_kb");
+        put("学生事务与奖助", "affairs_kb");
+        put("财务资产", "finance_kb");
+        put("校园生活服务", "campus_life_kb");
+        put("就业与职业发展", "career_kb");
+        put("科创科研", "research_kb");
+        put("心理与安全", "psy_safety_kb");
+        put("综合", "integrated_kb");
+        put("外事交流", "external_kb");
+    }};
 
     @Value("${document.refresh.min-interval-seconds:60}")
     private long refreshMinIntervalSeconds;
@@ -184,6 +205,92 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
 
         InspectedFile inspectedFile = FileTypeValidate.inspectLocal(file);
         return new UploadPayload(inspectedFile.fileName(), inspectedFile.mimeType(), file.getSize(), md5, file);
+    }
+
+    @Override
+    public String fullImport() {
+        File baseDir = new File(BASE_PATH);
+        if (!baseDir.exists() || !baseDir.isDirectory()) {
+            return "目录不存在: " + BASE_PATH;
+        }
+
+        int success = 0;
+        int failed = 0;
+        int total = 0;
+
+        File[] subDirs = baseDir.listFiles(File::isDirectory);
+        if (subDirs == null) return "无子目录";
+
+        for (File dir : subDirs) {
+            String dirName = dir.getName();
+            String kbName = DIR_TO_KB_NAME.get(dirName);
+            if (kbName == null) {
+                log.warn("跳过未知目录: {}", dirName);
+                continue;
+            }
+
+            KnowledgeDO knowledge = knowledgeMapper.selectOne(
+                Wrappers.lambdaQuery(KnowledgeDO.class)
+                    .eq(KnowledgeDO::getName, kbName)
+                    .eq(KnowledgeDO::getDelFlag, 0)
+            );
+
+            if (knowledge == null) {
+                log.error("知识库未找到: {}", kbName);
+                continue;
+            }
+
+            File[] files = dir.listFiles(f -> !f.isDirectory() && !f.getName().startsWith("."));
+            if (files == null) continue;
+
+            for (File f : files) {
+                total++;
+                try {
+                    String contentType = Files.probeContentType(f.toPath());
+                    if (contentType == null) contentType = "application/octet-stream";
+
+                    MultipartFile multipartFile = LocalFileMultipartFile.fromFile(f, contentType);
+
+                    DocumentUploadReqDTO req = new DocumentUploadReqDTO();
+                    req.setKnowledgeId(knowledge.getId());
+                    req.setFile(multipartFile);
+
+                    this.upload(req);
+                    success++;
+                } catch (Exception e) {
+                    log.error("上传文件失败: {}, 错误: {}", f.getName(), e.getMessage());
+                    failed++;
+                }
+            }
+        }
+
+        return String.format("全量导入完成: 总计 %d, 成功 %d, 失败 %d", total, success, failed);
+    }
+
+    @AllArgsConstructor
+    private static class LocalFileMultipartFile implements MultipartFile {
+        private final String name;
+        private final String originalFilename;
+        private final String contentType;
+        private final byte[] content;
+
+        public static LocalFileMultipartFile fromFile(File file, String contentType) throws IOException {
+            return new LocalFileMultipartFile(
+                "file",
+                file.getName(),
+                contentType,
+                Files.readAllBytes(file.toPath())
+            );
+        }
+
+        @Override public String getName() { return name; }
+        @Override public String getOriginalFilename() { return originalFilename; }
+        @Override public String getContentType() { return contentType; }
+        @Override public boolean isEmpty() { return content == null || content.length == 0; }
+        @Override public long getSize() { return content.length; }
+        @Override public byte[] getBytes() throws IOException { return content; }
+        @Override public InputStream getInputStream() throws IOException { return new ByteArrayInputStream(content); }
+        @Override public void transferTo(File dest) throws IOException, IllegalStateException { Files.write(dest.toPath(), content); }
     }
 
     private UploadPayload buildUrlUploadPayload(String sourceUrl) {

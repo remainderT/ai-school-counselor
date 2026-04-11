@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
+import org.buaa.rag.common.prompt.PromptTemplateLoader;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.properties.RagProperties;
@@ -30,6 +31,9 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @RequiredArgsConstructor
 public class RagPromptService {
+
+    private static final String MULTI_INTENT_SYNTHESIS_PROMPT =
+        PromptTemplateLoader.load("chat-multi-intent-synthesis.st");
 
     private final LlmChat llmService;
     private final RagProperties ragProperties;
@@ -111,36 +115,8 @@ public class RagPromptService {
                                     List<RetrievalMatch> retrievalResults,
                                     Consumer<String> chunkHandler,
                                     boolean hasToolContext) {
-        String referenceContext = constructReferenceContext(retrievalResults);
-        // 根据场景选择温度：Tool 场景放宽、KB 场景收紧
-        RagProperties.Prompt promptConfig = ragProperties.getPrompt();
-        double temperature = hasToolContext ? promptConfig.getTemperatureTool() : promptConfig.getTemperatureKb();
-
-        StringBuilder responseBuilder = new StringBuilder();
-        AtomicReference<Throwable> streamError = new AtomicReference<>();
-        String appliedPrompt = (promptTemplate == null || promptTemplate.isBlank())
-                ? referenceContext : promptTemplate + "\n" + referenceContext;
-        llmService.streamResponse(
-                query,
-                appliedPrompt,
-                conversationHistory,
-                temperature,
-                null,   // topP 使用配置默认值
-                chunk -> {
-                    responseBuilder.append(chunk);
-                    if (chunkHandler != null) {
-                        chunkHandler.accept(chunk);
-                    }
-                },
-                streamError::set,
-                () -> {
-                }
-        );
-        Throwable err = streamError.get();
-        if (err != null) {
-            throw new RuntimeException("AI服务异常: " + err.getMessage(), err);
-        }
-        String rawResponse = responseBuilder.toString();
+        String rawResponse = generateRagAnswerWithoutReferences(
+            query, promptTemplate, conversationHistory, retrievalResults, hasToolContext);
         String finalResponse = appendSourceReferences(rawResponse, retrievalResults);
         if (!finalResponse.equals(rawResponse)
                 && finalResponse.startsWith(rawResponse)
@@ -148,6 +124,70 @@ public class RagPromptService {
             chunkHandler.accept(finalResponse.substring(rawResponse.length()));
         }
         return finalResponse;
+    }
+
+    /**
+     * 仅生成正文，不自动追加「参考来源」区块。
+     * 适用于多意图场景先产出子答案，再统一做最终合成。
+     */
+    public String generateRagAnswerWithoutReferences(String query,
+                                                     String promptTemplate,
+                                                     List<Map<String, String>> conversationHistory,
+                                                     List<RetrievalMatch> retrievalResults,
+                                                     boolean hasToolContext) {
+        String referenceContext = constructReferenceContext(retrievalResults);
+        RagProperties.Prompt promptConfig = ragProperties.getPrompt();
+        double temperature = hasToolContext ? promptConfig.getTemperatureTool() : promptConfig.getTemperatureKb();
+
+        StringBuilder responseBuilder = new StringBuilder();
+        AtomicReference<Throwable> streamError = new AtomicReference<>();
+        String appliedPrompt = (promptTemplate == null || promptTemplate.isBlank())
+            ? referenceContext : promptTemplate + "\n" + referenceContext;
+        llmService.streamResponse(
+            query,
+            appliedPrompt,
+            conversationHistory,
+            temperature,
+            null,
+            responseBuilder::append,
+            streamError::set,
+            () -> {
+            }
+        );
+        Throwable err = streamError.get();
+        if (err != null) {
+            throw new RuntimeException("AI服务异常: " + err.getMessage(), err);
+        }
+        return responseBuilder.toString();
+    }
+
+    /**
+     * 多意图最终合成：基于子问题独立结论，生成一段结构化总答复。
+     */
+    public String synthesizeMultiIntentAnswer(String originalQuery, List<String> subResults) {
+        if (subResults == null || subResults.isEmpty()) {
+            return "";
+        }
+        String systemPrompt = StringUtils.hasText(MULTI_INTENT_SYNTHESIS_PROMPT)
+            ? MULTI_INTENT_SYNTHESIS_PROMPT
+            : "请根据子问题结果给出综合回答，先结论后步骤。";
+
+        StringBuilder userPrompt = new StringBuilder();
+        userPrompt.append("原始用户问题：\n")
+            .append(originalQuery == null ? "" : originalQuery)
+            .append("\n\n子问题处理结果：\n");
+        for (int i = 0; i < subResults.size(); i++) {
+            userPrompt.append("【结果").append(i + 1).append("】\n")
+                .append(subResults.get(i))
+                .append("\n\n");
+        }
+
+        String synthesized = llmService.generateCompletion(systemPrompt, userPrompt.toString(), 1200);
+        if (StringUtils.hasText(synthesized)) {
+            return synthesized.trim();
+        }
+        // 同步 LLM 异常/空输出时回退到可读拼接文本，避免前端空白
+        return String.join("\n\n", subResults);
     }
 
     // ──────────────────────── private ────────────────────────

@@ -29,10 +29,8 @@ public class ScoreToolExecutor implements ToolExecutor {
     @Override
     public String execute(String userId, String userQuery, IntentDecision decision) {
         log.info("触发成绩查询工具, userId={}", userId);
-        CounselorTools.GradeToolResult result = counselorTools.queryGrade(safeValue(userId));
-        return "成绩查询结果：当前绩点 " + result.gpa()
-            + "，已修学分 " + result.creditCompleted()
-            + "，风险课程 " + result.riskCourses() + " 门。";
+        counselorTools.queryGrade(safeValue(userId));
+        return "成绩查询结果：90分。";
     }
 
 }

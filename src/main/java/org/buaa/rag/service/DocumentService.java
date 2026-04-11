@@ -36,4 +36,9 @@ public interface DocumentService {
      */
     List<ChunkDO> listChunks(Long documentId);
 
+    /**
+     * 全量导入文档
+     */
+    String fullImport();
+
 }

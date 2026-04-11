@@ -190,6 +190,8 @@ export function useChatSessions(owner: string) {
             : item
         )
       );
+      // 发送完成后以服务端历史为准回填，避免前端流式临时态出现重复拼接残留。
+      await loadHistory(localConversationId, target.sessionId);
     } catch (err) {
       console.warn("syncAfterSend: 同步会话列表失败", err);
     }

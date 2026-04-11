@@ -88,6 +88,8 @@ public class OnlineChatOrchestrator {
                 userMessage, conversationHistory);
         String rewrittenQuery = rewriteResult.rewrittenQuery();
         List<String> subQueries = rewriteResult.effectiveSubQuestions();
+        log.info("多意图预处理完成 | 原问题='{}' | 改写='{}' | 子问题数={} | 子问题={}",
+            compact(userMessage), compact(rewrittenQuery), subQueries == null ? 0 : subQueries.size(), subQueries);
 
         List<SubQueryIntent> resolvedSubQueries = intentResolutionService.resolve(userId, subQueries);
         if (resolvedSubQueries == null || resolvedSubQueries.isEmpty()) {
@@ -152,7 +154,7 @@ public class OnlineChatOrchestrator {
 
     /**
      * 多子问题并行路由：每个子问题并行执行（RAG检索 or Tool调用），
-     * 收集结果后聚合 rerank，统一生成最终回复（分段格式）。
+     * 收集结果后先得到子结论，再统一生成最终综合回复。
      */
     private StreamResult streamMultiIntentRoute(String userId,
                                                 String originalQuery,
@@ -189,52 +191,48 @@ public class OnlineChatOrchestrator {
                 .filter(r -> r != null)
                 .toList();
 
-        // 分段输出：每个子问题一段
+        // 汇总子问题处理结果，之后统一交给综合回答模型
         List<RetrievalMatch> mergedSources = new ArrayList<>();
-        StringBuilder mergedResponse = new StringBuilder();
+        List<String> subResults = new ArrayList<>();
         boolean clarifyTriggered = false;
         int retrievedCount = 0;
         int retrievalTopK = 0;
-        int validCount = 0;
 
-        for (int i = 0; i < results.size(); i++) {
-            SubQueryRetrievalResult r = results.get(i);
-            validCount++;
-            String header = (mergedResponse.length() == 0 ? "" : "\n\n")
-                    + "【子问题" + validCount + "】" + r.query() + "\n";
-            mergedResponse.append(header);
-            if (chunkHandler != null) {
-                chunkHandler.accept(header);
-            }
-
+        for (SubQueryRetrievalResult r : results) {
             retrievedCount += r.retrievedCount();
             retrievalTopK += r.retrievalTopK();
             clarifyTriggered = clarifyTriggered || r.clarifyTriggered();
+            log.info("子问题执行完成 | query='{}' | intent={} | mode={} | sources={}",
+                compact(r.query()), describeIntent(r.intent()),
+                isBlank(r.directResponse()) ? "RAG" : "DIRECT",
+                r.sources() == null ? 0 : r.sources().size());
 
             if (!isBlank(r.directResponse())) {
-                // Tool / Clarify 直接回复
-                mergedResponse.append(r.directResponse());
-                if (chunkHandler != null) {
-                    chunkHandler.accept(r.directResponse());
-                }
+                subResults.add("子问题：" + r.query() + "\n结论：" + r.directResponse());
             } else {
-                // RAG 路径：在子问题 sources 上生成回答
-                mergedSources.addAll(r.sources());
+                List<RetrievalMatch> sources = r.sources() == null ? List.of() : r.sources();
+                mergedSources.addAll(sources);
+                String promptTemplate = (r.intent() != null && !isBlank(r.intent().getPromptTemplate()))
+                    ? r.intent().getPromptTemplate()
+                    : (r.intent() != null && !isBlank(r.intent().getLevel2()) ? r.intent().getLevel2() : r.query());
+                String subAnswer = ragPromptService.generateRagAnswerWithoutReferences(
+                    r.query(), promptTemplate, conversationHistory, sources, false);
+                if (!isBlank(subAnswer)) {
+                    subResults.add("子问题：" + r.query() + "\n结论：" + subAnswer);
+                }
             }
         }
 
-        if (validCount == 0) {
+        if (subResults.isEmpty()) {
             return streamIntentRoute(userId, originalQuery, subQueryRetrievalService.defaultHybridIntent(),
                     List.of(), conversationHistory, chunkHandler);
         }
 
-        // 对所有 RAG 子问题的 sources 聚合 rerank，追加来源引用
+        // 对所有 RAG 子问题的 sources 聚合去重排序；最终只附加一次来源引用
         List<RetrievalMatch> deduplicated = subQueryRetrievalService.deduplicateAndSort(mergedSources);
-        String rawMerged = mergedResponse.toString();
-        String finalResponse = ragPromptService.appendSourceReferences(rawMerged, deduplicated);
-        if (!finalResponse.equals(rawMerged) && finalResponse.startsWith(rawMerged) && chunkHandler != null) {
-            chunkHandler.accept(finalResponse.substring(rawMerged.length()));
-        }
+        String synthesized = ragPromptService.synthesizeMultiIntentAnswer(originalQuery, subResults);
+        String finalResponse = ragPromptService.appendSourceReferences(synthesized, deduplicated);
+        emit(chunkHandler, finalResponse);
         semanticCacheService.put(originalQuery, finalResponse, deduplicated);
         return new StreamResult(finalResponse, deduplicated, clarifyTriggered, retrievedCount, retrievalTopK);
     }
@@ -354,6 +352,26 @@ public class OnlineChatOrchestrator {
         if (chunkHandler != null && text != null) {
             chunkHandler.accept(text);
         }
+    }
+
+    private String compact(String text) {
+        if (text == null) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ").trim();
+        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
+    }
+
+    private String describeIntent(IntentDecision intent) {
+        if (intent == null) {
+            return "null";
+        }
+        return "{action=" + intent.getAction()
+            + ",level1=" + intent.getLevel1()
+            + ",level2=" + intent.getLevel2()
+            + ",tool=" + intent.getToolName()
+            + ",score=" + intent.getConfidence()
+            + "}";
     }
 
     private boolean isBlank(String str) {

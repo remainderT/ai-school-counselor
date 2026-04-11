@@ -1,19 +1,17 @@
 package org.buaa.rag.core.online.intent;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.common.util.VectorMathUtils;
 import org.buaa.rag.core.model.IntentClassifyResult;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.IntentNode;
 import org.buaa.rag.tool.LlmChat;
-import org.buaa.rag.core.offline.index.VectorEncoding;
 import org.buaa.rag.properties.IntentGuidanceProperties;
 import org.buaa.rag.properties.IntentRoutingProperties;
 import org.springframework.stereotype.Service;
@@ -31,28 +29,20 @@ public class IntentRouterService {
     private static final String INTENT_PROMPT = PromptTemplateLoader.load("intent-router.st");
     private static final String TREE_CLASSIFIER_PROMPT = PromptTemplateLoader.load("intent-tree-classifier.st");
     private static final String GUIDANCE_PROMPT_FILE = "guidance-prompt.st";
-    private static final float[] EMPTY_VECTOR = new float[0];
 
     private final LlmChat llmChat;
-    private final IntentPatternService intentPatternService;
     private final IntentTreeService intentTreeService;
-    private final VectorEncoding vectorEncoding;
     private final IntentGuidanceProperties intentGuidanceProperties;
     private final IntentRoutingProperties intentRoutingProperties;
     private final ObjectMapper objectMapper;
-    private final Map<String, float[]> nodeEmbeddingCache = new ConcurrentHashMap<>();
 
     public IntentRouterService(LlmChat llmChat,
-                               IntentPatternService intentPatternService,
                                IntentTreeService intentTreeService,
-                               VectorEncoding vectorEncoding,
                                IntentGuidanceProperties intentGuidanceProperties,
                                IntentRoutingProperties intentRoutingProperties,
                                ObjectMapper objectMapper) {
         this.llmChat = llmChat;
-        this.intentPatternService = intentPatternService;
         this.intentTreeService = intentTreeService;
-        this.vectorEncoding = vectorEncoding;
         this.intentGuidanceProperties = intentGuidanceProperties;
         this.intentRoutingProperties = intentRoutingProperties;
         this.objectMapper = objectMapper;
@@ -67,17 +57,9 @@ public class IntentRouterService {
         }
 
         // 1) 关键词轻量工具路由
-        for (Map.Entry<String, String> entry : intentRoutingProperties.getToolKeywords().entrySet()) {
-            if (query.contains(entry.getKey())) {
-                return IntentDecision.builder()
-                    .action(IntentDecision.Action.ROUTE_TOOL)
-                    .toolName(entry.getValue())
-                    .level1("办事指南")
-                    .level2(entry.getValue())
-                    .confidence(0.92)
-                    .strategy(IntentDecision.Strategy.PRECISION)
-                    .build();
-            }
+        IntentDecision keywordDecision = buildKeywordToolDecision(query);
+        if (keywordDecision != null) {
+            return keywordDecision;
         }
 
         // 2) 意图树候选打分 + 歧义引导
@@ -88,25 +70,14 @@ public class IntentRouterService {
             return treeDecision;
         }
 
-        // 3) 语义路由（ES + 向量）
-        var semantic = intentPatternService.semanticRoute(query);
-        if (semantic.isPresent()) {
-            IntentDecision hit = semantic.get();
-            if (hit.getConfidence() != null && hit.getConfidence() >= intentRoutingProperties.getSemanticDirectThreshold()) {
-                hit.setStrategy(pickStrategy(hit.getLevel2(), hit.getToolName()));
-                return hit;
-            }
-            // 0.7~0.9 走 LLM 兜底复核
-        }
-
-        // 4) 语义/LLM 分类兜底
+        // 3) LLM 分类兜底
         IntentDecision llmDecision = classifyWithLlm(query);
         if (llmDecision.getAction() == IntentDecision.Action.ROUTE_TOOL
             || (llmDecision.getConfidence() != null && llmDecision.getConfidence() >= intentRoutingProperties.getLlmRagThreshold())) {
             return llmDecision;
         }
 
-        // 5) 低置信度 -> 澄清
+        // 4) 低置信度 -> 澄清
         return IntentDecision.builder()
             .action(IntentDecision.Action.CLARIFY)
             .clarifyQuestion(llmDecision.getClarifyQuestion() != null
@@ -122,6 +93,10 @@ public class IntentRouterService {
         if (!StringUtils.hasText(query)) {
             return List.of();
         }
+        IntentDecision keywordDecision = buildKeywordToolDecision(query);
+        if (keywordDecision != null) {
+            return List.of(keywordDecision);
+        }
         intentTreeService.loadTree();
         List<IntentNode> leaves = intentTreeService.leaves();
         if (leaves.isEmpty()) {
@@ -129,9 +104,6 @@ public class IntentRouterService {
         }
 
         List<IntentCandidate> candidates = classifyByLlm(query, leaves);
-        if (candidates.isEmpty()) {
-            candidates = collectLeafCandidatesBySimilarity(leaves, query);
-        }
         if (candidates.isEmpty()) {
             return List.of();
         }
@@ -143,7 +115,7 @@ public class IntentRouterService {
             if (candidate.score() < scoreFloor) {
                 continue;
             }
-            IntentDecision decision = toDecision(candidate, query);
+            IntentDecision decision = toDecision(candidate);
             if (decision == null || decision.getAction() == IntentDecision.Action.CLARIFY) {
                 continue;
             }
@@ -166,7 +138,7 @@ public class IntentRouterService {
 
         try {
             IntentClassifyResult result = objectMapper.readValue(output.trim(), IntentClassifyResult.class);
-            return toDecision(result, query);
+            return toDecision(result);
         } catch (Exception e) {
             log.debug("LLM意图解析失败: {}", e.getMessage());
             return IntentDecision.builder()
@@ -203,9 +175,6 @@ public class IntentRouterService {
 
         List<IntentCandidate> candidates = classifyByLlm(query, leaves);
         if (candidates.isEmpty()) {
-            candidates = collectLeafCandidatesBySimilarity(leaves, query);
-        }
-        if (candidates.isEmpty()) {
             return null;
         }
 
@@ -215,7 +184,7 @@ public class IntentRouterService {
                 return guidance;
             }
         }
-        return toDecision(candidates.get(0), query);
+        return toDecision(candidates.get(0));
     }
 
     private List<IntentCandidate> classifyByLlm(String query, List<IntentNode> leaves) {
@@ -260,25 +229,6 @@ public class IntentRouterService {
             return candidates.subList(0, maxCandidates);
         }
         return candidates;
-    }
-
-    private List<IntentCandidate> collectLeafCandidatesBySimilarity(List<IntentNode> leaves, String query) {
-        if (leaves == null || leaves.isEmpty()) {
-            return List.of();
-        }
-        float[] queryVector = encodeSingle(query);
-        List<IntentCandidate> candidates = new ArrayList<>(leaves.size());
-        for (IntentNode leaf : leaves) {
-            double score = similarity(query, queryVector, leaf);
-            candidates.add(new IntentCandidate(leaf, score));
-        }
-        candidates.sort((left, right) -> Double.compare(right.score(), left.score()));
-        int maxCandidates = Math.max(1, intentGuidanceProperties.getMaxCandidates());
-        double hitThreshold = intentGuidanceProperties.getHitThreshold();
-        return candidates.stream()
-            .filter(candidate -> candidate.score() >= hitThreshold)
-            .limit(maxCandidates)
-            .toList();
     }
 
     private boolean needsGuidance(List<IntentCandidate> candidates) {
@@ -452,72 +402,7 @@ public class IntentRouterService {
         return StringUtils.hasText(rendered) ? rendered : "你想咨询哪个方向？\n" + optionsText;
     }
 
-    private double similarity(String query, float[] queryVector, IntentNode node) {
-        double keywordScore = keywordScore(query, node);
-        double semanticScore = semanticScore(queryVector, node);
-
-        // 关键词优先，语义补充，最终压到 [0,1]
-        double blended = keywordScore + semanticScore * 0.7;
-        return Math.max(0.0, Math.min(1.0, blended));
-    }
-
-    private double keywordScore(String query, IntentNode node) {
-        if (query == null || node == null || node.getKeywords() == null || node.getKeywords().isEmpty()) {
-            return 0.0;
-        }
-        double score = 0.0;
-        for (String keyword : node.getKeywords()) {
-            if (keyword != null && !keyword.isBlank() && query.contains(keyword)) {
-                score += 0.25;
-            }
-        }
-        return Math.min(0.6, score);
-    }
-
-    private double semanticScore(float[] queryVector, IntentNode node) {
-        if (queryVector == null || queryVector.length == 0 || node == null) {
-            return 0.0;
-        }
-
-        String description = node.getDescription();
-        if (description == null || description.isBlank()) {
-            return 0.0;
-        }
-
-        float[] nodeVector = nodeEmbeddingCache.computeIfAbsent(node.getNodeId(), key -> {
-            try {
-                List<float[]> vectors = vectorEncoding.encode(List.of(description));
-                if (vectors == null || vectors.isEmpty() || vectors.get(0) == null) {
-                    return EMPTY_VECTOR;
-                }
-                return vectors.get(0);
-            } catch (Exception e) {
-                log.debug("节点向量计算失败, nodeId={}, error={}", node.getNodeId(), e.getMessage());
-                return EMPTY_VECTOR;
-            }
-        });
-
-        if (nodeVector.length == 0) {
-            return 0.0;
-        }
-
-        return VectorMathUtils.cosine(queryVector, nodeVector);
-    }
-
-    private float[] encodeSingle(String text) {
-        try {
-            List<float[]> vectors = vectorEncoding.encode(List.of(text));
-            if (vectors == null || vectors.isEmpty()) {
-                return null;
-            }
-            return vectors.get(0);
-        } catch (Exception e) {
-            log.debug("查询向量计算失败，回退关键词路由: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    private IntentDecision toDecision(IntentCandidate cand, String query) {
+    private IntentDecision toDecision(IntentCandidate cand) {
         IntentNode node = cand.node();
         List<IntentNode> children = intentTreeService.children(node.getNodeId());
         if (node.getType() == IntentNode.NodeType.GROUP && children != null && !children.isEmpty()) {
@@ -553,6 +438,35 @@ public class IntentRouterService {
             .confidence(cand.score())
             .strategy(pickStrategy(node.getNodeName(), tool))
             .clarifyQuestion(null)
+            .build();
+    }
+
+    private String matchToolByKeyword(String query) {
+        if (!StringUtils.hasText(query) || intentRoutingProperties.getToolKeywords() == null
+            || intentRoutingProperties.getToolKeywords().isEmpty()) {
+            return null;
+        }
+        return intentRoutingProperties.getToolKeywords().entrySet().stream()
+            .filter(entry -> StringUtils.hasText(entry.getKey()) && query.contains(entry.getKey()))
+            .sorted(Comparator.comparingInt((Map.Entry<String, String> entry) -> entry.getKey().length()).reversed())
+            .map(Map.Entry::getValue)
+            .filter(StringUtils::hasText)
+            .findFirst()
+            .orElse(null);
+    }
+
+    private IntentDecision buildKeywordToolDecision(String query) {
+        String toolName = matchToolByKeyword(query);
+        if (!StringUtils.hasText(toolName)) {
+            return null;
+        }
+        return IntentDecision.builder()
+            .action(IntentDecision.Action.ROUTE_TOOL)
+            .toolName(toolName)
+            .level1("办事指南")
+            .level2(toolName)
+            .confidence(0.92)
+            .strategy(IntentDecision.Strategy.PRECISION)
             .build();
     }
 
@@ -651,7 +565,7 @@ public class IntentRouterService {
         return normalized;
     }
 
-    private IntentDecision toDecision(IntentClassifyResult result, String query) {
+    private IntentDecision toDecision(IntentClassifyResult result) {
         String level1 = normalizeText(result.getLevel1());
         String level2 = normalizeText(result.getLevel2());
         double confidence = result.getConfidence() == null ? 0.0 : result.getConfidence();

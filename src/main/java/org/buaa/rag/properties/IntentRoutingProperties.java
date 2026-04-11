@@ -1,6 +1,6 @@
 package org.buaa.rag.properties;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -34,15 +34,19 @@ public class IntentRoutingProperties {
     /**
      * 关键词 → 工具名映射，用于轻量工具路由
      */
-    private Map<String, String> toolKeywords = new HashMap<>(Map.of(
-        "请假", "leave",
-        "销假", "leave",
-        "报修", "repair",
-        "成绩", "score",
-        "绩点", "score",
-        "天气", "weather",
-        "气温", "weather",
-        "降雨", "weather",
-        "下雨", "weather"
-    ));
+    private Map<String, String> toolKeywords = defaultToolKeywords();
+
+    private static Map<String, String> defaultToolKeywords() {
+        Map<String, String> defaults = new LinkedHashMap<>();
+        defaults.put("请假", "leave");
+        defaults.put("销假", "leave");
+        defaults.put("报修", "repair");
+        defaults.put("成绩", "score");
+        defaults.put("绩点", "score");
+        defaults.put("天气", "weather");
+        defaults.put("气温", "weather");
+        defaults.put("降雨", "weather");
+        defaults.put("下雨", "weather");
+        return defaults;
+    }
 }

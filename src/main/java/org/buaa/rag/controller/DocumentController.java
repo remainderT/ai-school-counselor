@@ -32,6 +32,11 @@ public class DocumentController {
         return Results.success();
     }
 
+    @PostMapping("/full-import")
+    public Result<String> fullImport() {
+        return Results.success(documentService.fullImport());
+    }
+
     @GetMapping("/list")
     public Result<List<DocumentDO>> list(
             @RequestParam(required = false) Long knowledgeId,

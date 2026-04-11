@@ -30,6 +30,9 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class MilvusRetrieverService {
 
+    private static final int MIN_EF = 8;
+    private static final int MAX_EF = 32768;
+
     private final MilvusClientV2 milvusClient;
     private final MilvusCollectionManager collectionManager;
     private final MilvusProperties milvusProperties;
@@ -41,18 +44,29 @@ public class MilvusRetrieverService {
         collectionManager.ensureReady();
 
         try {
+            int requestTopK = Math.max(1, topK);
+            int baseEf = Math.max(MIN_EF, milvusProperties.getSearchEf());
+            int desiredEf = Math.max(baseEf, requestTopK + 1);
+            int effectiveEf = Math.min(MAX_EF, desiredEf);
+            int effectiveTopK = requestTopK;
+            if (effectiveTopK >= effectiveEf) {
+                effectiveTopK = Math.max(1, effectiveEf - 1);
+                log.warn("Milvus 检索参数已自动修正: requestedTopK={}, searchEf={}, effectiveTopK={}, effectiveEf={}",
+                    requestTopK, milvusProperties.getSearchEf(), effectiveTopK, effectiveEf);
+            }
+
             float[] vector = l2Normalize(toFloatArray(queryVector));
             List<BaseVector> vectors = List.of(new FloatVec(vector));
             Map<String, Object> searchParams = Map.of(
                 "metric_type", milvusProperties.getMetricType(),
-                "ef", Math.max(8, milvusProperties.getSearchEf())
+                "ef", effectiveEf
             );
 
             SearchReq request = SearchReq.builder()
                 .collectionName(milvusProperties.getCollectionName())
                 .annsField("embedding")
                 .data(vectors)
-                .topK(topK)
+                .topK(effectiveTopK)
                 .searchParams(searchParams)
                 .outputFields(List.of("source_md5", "segment_number", "text_payload"))
                 .build();

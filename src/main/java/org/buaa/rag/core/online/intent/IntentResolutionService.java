@@ -10,9 +10,13 @@ import org.buaa.rag.properties.IntentResolutionProperties;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class IntentResolutionService {
+
+    private static final Logger log = LoggerFactory.getLogger(IntentResolutionService.class);
 
     private final IntentRouterService intentRouterService;
     private final IntentResolutionProperties properties;
@@ -70,6 +74,8 @@ public class IntentResolutionService {
 
     private SubQueryIntent classifySingle(String userId, String subQuery) {
         List<IntentDecision> candidates = resolveForQuery(userId, subQuery);
+        log.info("子问题意图命中 | query='{}' | candidates={}",
+            compact(subQuery), summarizeCandidates(candidates));
         return new SubQueryIntent(subQuery, candidates);
     }
 
@@ -130,5 +136,35 @@ public class IntentResolutionService {
             trimmed.add(new SubQueryIntent(resolved.get(i).subQuery(), List.copyOf(retained.get(i))));
         }
         return trimmed;
+    }
+
+    private String summarizeCandidates(List<IntentDecision> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return "[]";
+        }
+        List<String> list = candidates.stream()
+            .map(this::describeDecision)
+            .toList();
+        return list.toString();
+    }
+
+    private String describeDecision(IntentDecision d) {
+        if (d == null) {
+            return "null";
+        }
+        return "{action=" + d.getAction()
+            + ",level1=" + d.getLevel1()
+            + ",level2=" + d.getLevel2()
+            + ",tool=" + d.getToolName()
+            + ",score=" + d.getConfidence()
+            + "}";
+    }
+
+    private String compact(String text) {
+        if (text == null) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ").trim();
+        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
     }
 }

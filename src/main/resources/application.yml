@@ -143,7 +143,7 @@ rag:
     retry-backoff-ms: 400
   query-preprocess:
     enabled: true
-    max-sub-questions: 4
+    max-sub-questions: 6
   hyde:
     enabled: true
     max-tokens: 256
