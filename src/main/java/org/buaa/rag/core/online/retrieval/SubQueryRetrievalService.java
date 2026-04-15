@@ -11,8 +11,6 @@ import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.online.intent.IntentResolutionService;
 import org.buaa.rag.core.online.intent.SubQueryIntent;
 import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorService;
-import org.buaa.rag.core.online.rewrite.QueryRewriteAndSplitService;
-import org.buaa.rag.core.online.rewrite.QueryRewriteResult;
 import org.buaa.rag.properties.RagProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -35,7 +33,6 @@ public class SubQueryRetrievalService {
     private final SmartRetrieverService smartRetrieverService;
     private final RetrievalPostProcessorService postProcessorService;
     private final IntentResolutionService intentResolutionService;
-    private final QueryRewriteAndSplitService queryRewriteAndSplitService;
     private final RagProperties ragProperties;
 
     /**
@@ -207,9 +204,7 @@ public class SubQueryRetrievalService {
     // ──────────────────────── private ────────────────────────
 
     /**
-     * 多检索路径 + RRF 融合：
-     * 1. 主路径（意图定向/全局向量）
-     * 2. HyDE 扩展路径（配置启用时）
+     * 多检索路径 + RRF 融合（当前仅保留主检索路径）。
      */
     private List<RetrievalMatch> retrieveWithFusion(String userId,
                                                     String query,
@@ -218,14 +213,6 @@ public class SubQueryRetrievalService {
                                                     List<IntentDecision> intentCandidates) {
         List<List<RetrievalMatch>> resultSets = new ArrayList<>();
         resultSets.add(retrieveWithFallbackIfNeeded(userId, query, topK, intent, intentCandidates));
-
-        if (ragProperties.getHyde().isEnabled()) {
-            QueryRewriteResult hydeResult = queryRewriteAndSplitService.rewriteAndSplit(query);
-            String hydeQuery = hydeResult.rewrittenQuery();
-            if (StringUtils.hasText(hydeQuery) && !hydeQuery.equals(query)) {
-                resultSets.add(multiChannelRetrievalEngine.retrieve(userId, hydeQuery, topK, null));
-            }
-        }
 
         if (!ragProperties.getFusion().isEnabled() || resultSets.size() == 1) {
             // 单路径已在 MultiChannelRetrievalEngine 的 RerankPostProcessor 中完成 rerank，无需重复

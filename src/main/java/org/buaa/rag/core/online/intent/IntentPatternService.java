@@ -41,6 +41,8 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class IntentPatternService {
 
+    private static final String CHITCHAT_CLARIFY_QUESTION = "你好，我在。你可以告诉我想咨询的具体事项吗？";
+
     private final ElasticsearchClient esClient;
     private final VectorEncoding vectorEncoding;
     private final IntentNodeMapper intentNodeMapper;
@@ -105,13 +107,18 @@ public class IntentPatternService {
             String toolName = normalizeText(stringVal(source.get("actionService")));
 
             IntentDecision.Action action = resolveAction(intentCode, level2, nodeType, toolName);
+            IntentDecision.Strategy strategy = action == IntentDecision.Action.CLARIFY
+                ? IntentDecision.Strategy.CLARIFY_ONLY
+                : IntentDecision.Strategy.HYBRID;
 
             IntentDecision.IntentDecisionBuilder builder = IntentDecision.builder()
                     .level1(level1)
                     .level2(level2)
                     .confidence(score)
                     .toolName(StringUtils.hasText(toolName) ? toolName : null)
-                    .action(action);
+                    .action(action)
+                    .strategy(strategy)
+                    .clarifyQuestion(action == IntentDecision.Action.CLARIFY ? CHITCHAT_CLARIFY_QUESTION : null);
 
             return Optional.of(builder.build());
         } catch (Exception e) {
@@ -351,6 +358,12 @@ public class IntentPatternService {
     private IntentDecision.Action resolveAction(String intentCode, String level2, String nodeType, String toolName) {
         if ("API_ACTION".equalsIgnoreCase(normalizeText(nodeType)) && StringUtils.hasText(toolName)) {
             return IntentDecision.Action.ROUTE_TOOL;
+        }
+        if ("CHITCHAT".equalsIgnoreCase(normalizeText(nodeType))
+            || "日常闲聊".equals(normalizeText(level2))
+            || "闲聊".equals(normalizeText(level2))
+            || "问候语".equals(normalizeText(level2))) {
+            return IntentDecision.Action.ROUTE_CHAT;
         }
         return IntentDecision.Action.ROUTE_RAG;
     }

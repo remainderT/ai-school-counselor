@@ -1376,6 +1376,8 @@ body {
   font-size: 14px;
   line-height: 1.7;
   word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
 }
 .msg.user .msg-bubble {
   background: var(--brand);
@@ -1388,6 +1390,13 @@ body {
   background: transparent;
   color: var(--ink);
   padding: 4px 0;
+}
+
+.msg-plain-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* Waiting dots */

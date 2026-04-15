@@ -262,10 +262,10 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
     await submitStreamInternal(lastUser);
   };
 
-  const copyAnswer = async (text: string) => {
+  const copyAnswer = async (text: string, kind: "问题" | "回答" = "回答") => {
     try {
       await navigator.clipboard.writeText(text || "");
-      pushToast("已复制回答", "success");
+      pushToast(`已复制${kind}`, "success");
     } catch {
       pushToast("复制失败", "error");
     }
@@ -515,6 +515,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
                 const isAssistant = msg.role === "assistant";
                 const isWaiting = isAssistant && !msg.text;
                 const isLast = idx === (activeConversation?.messages.length || 0) - 1;
+                const canCopy = Boolean(msg.text);
 
                 return (
                   <article key={`${msg.role}-${idx}`} className={`msg ${msg.role}`}>
@@ -532,7 +533,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
                         ) : isAssistant ? (
                           <MarkdownMessage content={msg.text || "..."} />
                         ) : (
-                          <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{msg.text || "..."}</div>
+                          <div className="msg-plain-text">{msg.text || "..."}</div>
                         )}
                       </div>
 
@@ -548,12 +549,18 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
                       ) : null}
 
                       {/* Actions */}
-                      {isAssistant && msg.text ? (
+                      {(canCopy || (isAssistant && msg.messageId)) ? (
                         <div className={`msg-actions${isLast ? " visible" : ""}`}>
-                          <button className="msg-action-btn" onClick={() => void copyAnswer(msg.text)} title="复制">
-                            <CopyIcon />
-                          </button>
-                          {msg.messageId && (
+                          {canCopy ? (
+                            <button
+                              className="msg-action-btn"
+                              onClick={() => void copyAnswer(msg.text, isUser ? "问题" : "回答")}
+                              title={isUser ? "复制问题" : "复制回答"}
+                            >
+                              <CopyIcon />
+                            </button>
+                          ) : null}
+                          {isAssistant && msg.messageId && (
                             <>
                               <button
                                 className="msg-action-btn"

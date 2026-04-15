@@ -144,13 +144,9 @@ rag:
   query-preprocess:
     enabled: true
     max-sub-questions: 6
-  hyde:
-    enabled: true
-    max-tokens: 256
   fusion:
     enabled: true
     rrf-k: 60
-    max-queries: 4
   rerank:
     enabled: true
     max-candidates: 8
@@ -162,7 +158,6 @@ rag:
       - noop
     dashscope:
       base-url: https://dashscope.aliyuncs.com
-      # api-key 留空时自动继承 spring.ai.dashscope.api-key
       api-key:
       model: gte-rerank
       timeout-seconds: 15

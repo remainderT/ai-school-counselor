@@ -14,6 +14,7 @@ public class IntentDecision {
     public enum Action {
         ROUTE_RAG,
         ROUTE_TOOL,
+        ROUTE_CHAT,
         CLARIFY
     }
 

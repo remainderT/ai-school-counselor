@@ -16,7 +16,6 @@ import lombok.Data;
 public class RagProperties {
 
     private QueryPreprocess queryPreprocess = new QueryPreprocess();
-    private Hyde hyde = new Hyde();
     private Fusion fusion = new Fusion();
     private Rerank rerank = new Rerank();
     private Crag crag = new Crag();
@@ -35,16 +34,9 @@ public class RagProperties {
     }
 
     @Data
-    public static class Hyde {
-        private boolean enabled = false;
-        private int maxTokens = 256;
-    }
-
-    @Data
     public static class Fusion {
         private boolean enabled = true;
         private int rrfK = 60;
-        private int maxQueries = 4;
     }
 
     @Data

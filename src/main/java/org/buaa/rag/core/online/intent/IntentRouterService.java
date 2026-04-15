@@ -29,7 +29,6 @@ public class IntentRouterService {
     private static final String INTENT_PROMPT = PromptTemplateLoader.load("intent-router.st");
     private static final String TREE_CLASSIFIER_PROMPT = PromptTemplateLoader.load("intent-tree-classifier.st");
     private static final String GUIDANCE_PROMPT_FILE = "guidance-prompt.st";
-
     private final LlmChat llmChat;
     private final IntentTreeService intentTreeService;
     private final IntentGuidanceProperties intentGuidanceProperties;
@@ -73,6 +72,7 @@ public class IntentRouterService {
         // 3) LLM 分类兜底
         IntentDecision llmDecision = classifyWithLlm(query);
         if (llmDecision.getAction() == IntentDecision.Action.ROUTE_TOOL
+            || llmDecision.getAction() == IntentDecision.Action.ROUTE_CHAT
             || (llmDecision.getConfidence() != null && llmDecision.getConfidence() >= intentRoutingProperties.getLlmRagThreshold())) {
             return llmDecision;
         }
@@ -420,7 +420,7 @@ public class IntentRouterService {
 
         IntentDecision.Action action = switch (node.getType()) {
             case API_ACTION -> IntentDecision.Action.ROUTE_TOOL;
-            case CHITCHAT -> IntentDecision.Action.ROUTE_RAG;
+            case CHITCHAT -> IntentDecision.Action.ROUTE_CHAT;
             default -> IntentDecision.Action.ROUTE_RAG;
         };
         String tool = node.getType() == IntentNode.NodeType.API_ACTION
@@ -428,6 +428,12 @@ public class IntentRouterService {
             : null;
         String level1 = resolveDomainName(node);
         String level2 = node.getNodeName();
+        if (action != IntentDecision.Action.ROUTE_TOOL && isChitchatIntent(level1, level2)) {
+            action = IntentDecision.Action.ROUTE_CHAT;
+        }
+        IntentDecision.Strategy strategy = action == IntentDecision.Action.CLARIFY
+            ? IntentDecision.Strategy.CLARIFY_ONLY
+            : pickStrategy(node.getNodeName(), tool);
         return IntentDecision.builder()
             .level1(level1)
             .level2(level2)
@@ -436,7 +442,7 @@ public class IntentRouterService {
             .toolName(tool)
             .action(action)
             .confidence(cand.score())
-            .strategy(pickStrategy(node.getNodeName(), tool))
+            .strategy(strategy)
             .clarifyQuestion(null)
             .build();
     }
@@ -575,23 +581,38 @@ public class IntentRouterService {
         IntentDecision.Action action;
         if (toolName != null) {
             action = IntentDecision.Action.ROUTE_TOOL;
+        } else if (isChitchatIntent(level1, level2)) {
+            action = IntentDecision.Action.ROUTE_CHAT;
         } else if (confidence >= intentRoutingProperties.getLlmRagThreshold()) {
             action = IntentDecision.Action.ROUTE_RAG;
         } else {
             action = IntentDecision.Action.CLARIFY;
         }
+        IntentDecision.Strategy strategy = action == IntentDecision.Action.CLARIFY
+            ? IntentDecision.Strategy.CLARIFY_ONLY
+            : pickStrategy(level2, toolName);
+        String clarifyQuestion = action == IntentDecision.Action.CLARIFY
+            ? (StringUtils.hasText(clarify) ? clarify : "你想咨询哪一类具体事项？")
+            : null;
 
         return IntentDecision.builder()
             .level1(level1)
             .level2(level2)
             .confidence(confidence)
             .toolName(toolName)
-            .clarifyQuestion(action == IntentDecision.Action.CLARIFY
-                ? (clarify != null ? clarify : "你想咨询哪一类具体事项？")
-                : null)
+            .clarifyQuestion(clarifyQuestion)
             .action(action)
-            .strategy(pickStrategy(level2, toolName))
+            .strategy(strategy)
             .build();
+    }
+
+    private boolean isChitchatIntent(String level1, String level2) {
+        String l1 = normalizeText(level1);
+        String l2 = normalizeText(level2);
+        return "日常闲聊".equals(l1)
+            || "日常闲聊".equals(l2)
+            || "闲聊".equals(l2)
+            || "问候语".equals(l2);
     }
 
     private String resolveDomainName(IntentNode node) {

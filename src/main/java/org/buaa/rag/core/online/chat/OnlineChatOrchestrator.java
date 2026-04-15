@@ -32,6 +32,8 @@ import org.springframework.stereotype.Component;
 public class OnlineChatOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(OnlineChatOrchestrator.class);
+    private static final String CHAT_FALLBACK_PROMPT =
+        "你是高校智能助手。对于问候或闲聊请简短友好回应；若用户尚未给出具体诉求，礼貌引导其说明想咨询的事项。";
 
     private final QueryRewriteAndSplitService queryRewriteAndSplitService;
     private final IntentResolutionService intentResolutionService;
@@ -174,7 +176,7 @@ public class OnlineChatOrchestrator {
         // 并行执行每个子问题（RAG or Tool）
         List<CompletableFuture<SubQueryRetrievalResult>> futures = validSubQueries.stream()
                 .map(subQueryIntent -> CompletableFuture.supplyAsync(
-                        () -> executeSubQueryTask(userId, subQueryIntent),
+                        () -> executeSubQueryTask(userId, subQueryIntent, conversationHistory),
                         subQueryContextExecutor
                 ))
                 .toList();
@@ -238,7 +240,7 @@ public class OnlineChatOrchestrator {
     }
 
     /**
-     * 单子问题路由：SemanticCache → Tool → RAG。
+     * 单子问题路由：SemanticCache → Tool/Chat → RAG。
      */
     private StreamResult streamIntentRoute(String userId,
                                            String query,
@@ -261,6 +263,11 @@ public class OnlineChatOrchestrator {
         if (resolved.getAction() == IntentDecision.Action.ROUTE_TOOL) {
             String response = toolService.execute(userId, query, resolved);
             emit(chunkHandler, response);
+            return new StreamResult(response, List.of(), false, 0, 0);
+        }
+
+        if (resolved.getAction() == IntentDecision.Action.ROUTE_CHAT) {
+            String response = generateChatDirectResponse(query, resolved, conversationHistory, chunkHandler);
             return new StreamResult(response, List.of(), false, 0, 0);
         }
 
@@ -309,9 +316,11 @@ public class OnlineChatOrchestrator {
     }
 
     /**
-     * 单个子问题任务：ROUTE_TOOL 直接调用工具，否则走 RAG 检索。
+     * 单个子问题任务：ROUTE_TOOL/ROUTE_CHAT 直接回复，否则走 RAG 检索。
      */
-    private SubQueryRetrievalResult executeSubQueryTask(String userId, SubQueryIntent subQueryIntent) {
+    private SubQueryRetrievalResult executeSubQueryTask(String userId,
+                                                        SubQueryIntent subQueryIntent,
+                                                        List<Map<String, String>> conversationHistory) {
         IntentDecision primary = subQueryRetrievalService.selectPrimaryIntent(subQueryIntent);
         recordHighConfidencePattern(primary, subQueryIntent.subQuery());
 
@@ -330,6 +339,15 @@ public class OnlineChatOrchestrator {
             return new SubQueryRetrievalResult(
                     subQueryIntent.subQuery(), primary, List.of(),
                     true, clarifyMsg, clarifyMsg, 0, 0
+            );
+        }
+
+        if (primary != null && primary.getAction() == IntentDecision.Action.ROUTE_CHAT) {
+            String chatResponse = generateChatDirectResponse(
+                subQueryIntent.subQuery(), primary, conversationHistory, null);
+            return new SubQueryRetrievalResult(
+                subQueryIntent.subQuery(), primary, List.of(),
+                false, null, chatResponse, 0, 0
             );
         }
 
@@ -352,6 +370,27 @@ public class OnlineChatOrchestrator {
         if (chunkHandler != null && text != null) {
             chunkHandler.accept(text);
         }
+    }
+
+    private String generateChatDirectResponse(String query,
+                                              IntentDecision intent,
+                                              List<Map<String, String>> conversationHistory,
+                                              Consumer<String> chunkHandler) {
+        String promptTemplate = buildChatPromptTemplate(intent);
+        String response = ragPromptService.generateRagAnswerWithoutReferences(
+            query, promptTemplate, conversationHistory, List.of(), true);
+        emit(chunkHandler, response);
+        return response;
+    }
+
+    private String buildChatPromptTemplate(IntentDecision intent) {
+        if (intent != null && !isBlank(intent.getPromptTemplate())) {
+            return intent.getPromptTemplate();
+        }
+        if (intent != null && !isBlank(intent.getLevel2())) {
+            return intent.getLevel2();
+        }
+        return CHAT_FALLBACK_PROMPT;
     }
 
     private String compact(String text) {
