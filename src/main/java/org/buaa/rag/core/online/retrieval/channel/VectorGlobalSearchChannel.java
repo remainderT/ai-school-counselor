@@ -7,7 +7,7 @@ import org.buaa.rag.common.enums.SearchChannelType;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.properties.SearchChannelProperties;
-import org.buaa.rag.core.online.retrieval.SmartRetrieverService;
+import org.buaa.rag.core.online.retrieval.SmartRetrieverServiceImpl;
 import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
@@ -24,7 +24,7 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class VectorGlobalSearchChannel implements SearchChannel {
 
-    private final SmartRetrieverService smartRetrieverService;
+    private final SmartRetrieverServiceImpl smartRetrieverService;
     private final SearchChannelProperties properties;
 
     @Override

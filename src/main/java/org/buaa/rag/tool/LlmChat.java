@@ -2,11 +2,13 @@ package org.buaa.rag.tool;
 
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
+import org.buaa.rag.core.online.chat.StreamCancellationHandle;
 import org.buaa.rag.properties.LlmProperties;
 import org.springframework.stereotype.Service;
 
@@ -38,13 +40,6 @@ public class LlmChat {
             null, null, chunkHandler, errorHandler, completionHandler);
     }
 
-    /**
-     * 支持自定义温度和 topP 的流式调用重载。
-     *
-     * @param temperatureOverride 动态温度（null 时使用配置默认值）；
-     *                            KB 精确问答建议 0.0，Tool 结果混合建议 0.3
-     * @param topPOverride        动态 topP（null 时使用配置默认值）
-     */
     public void streamResponse(String userQuery,
                                String referenceContext,
                                List<Map<String, String>> conversationHistory,
@@ -83,18 +78,115 @@ public class LlmChat {
     public String generateCompletion(String systemPrompt,
                                      String userPrompt,
                                      Integer maxTokens) {
+        return generateCompletion(systemPrompt, userPrompt, maxTokens, null, null);
+    }
+
+    public String generateCompletion(String systemPrompt,
+                                     String userPrompt,
+                                     Integer maxTokens,
+                                     Double temperatureOverride,
+                                     Double topPOverride) {
         try {
             String content = dashscopeClient.chatCompletion(
                 systemPrompt,
                 userPrompt,
-                temperature(),
-                topP(),
+                temperatureOverride != null ? temperatureOverride : temperature(),
+                topPOverride != null ? topPOverride : topP(),
                 maxTokens(maxTokens)
             );
             return content == null ? "" : content;
         } catch (Exception e) {
             log.warn("LLM 同步调用失败: {}", e.getMessage());
             return "";
+        }
+    }
+
+    public void streamResponse(List<Map<String, String>> messages,
+                               Double temperatureOverride,
+                               Double topPOverride,
+                               Integer maxTokensOverride,
+                               Consumer<String> chunkHandler,
+                               Consumer<Throwable> errorHandler,
+                               Runnable completionHandler) {
+        AtomicBoolean completionFlag = new AtomicBoolean(false);
+        Double temperature = temperatureOverride != null ? temperatureOverride : temperature();
+        Double topP = topPOverride != null ? topPOverride : topP();
+        try {
+            dashscopeClient.streamChatCompletion(
+                messages,
+                temperature,
+                topP,
+                maxTokens(maxTokensOverride),
+                chunk -> {
+                    if (chunkHandler == null) {
+                        return;
+                    }
+                    String cleaned = sanitizeChunk(chunk);
+                    if (hasMeaningfulText(cleaned)) {
+                        chunkHandler.accept(cleaned);
+                    }
+                }
+            );
+        } catch (Exception e) {
+            notifyError(errorHandler, e);
+        } finally {
+            notifyCompletion(completionFlag, completionHandler);
+        }
+    }
+
+    public void streamResponse(List<Map<String, String>> messages,
+                               Double temperatureOverride,
+                               Double topPOverride,
+                               Consumer<String> chunkHandler,
+                               Consumer<Throwable> errorHandler,
+                               Runnable completionHandler) {
+        streamResponse(
+            messages,
+            temperatureOverride,
+            topPOverride,
+            null,
+            chunkHandler,
+            errorHandler,
+            completionHandler
+        );
+    }
+
+    /**
+     * 支持取消句柄的流式调用（对齐 ragent StreamCancellationHandle）。
+     * cancelHandle 持有后，外部可随时调用 {@code cancelHandle.cancel()} 中断 LLM 读取。
+     */
+    public void streamResponseWithHandle(List<Map<String, String>> messages,
+                                         Double temperatureOverride,
+                                         Double topPOverride,
+                                         Integer maxTokensOverride,
+                                         Consumer<String> chunkHandler,
+                                         Consumer<Throwable> errorHandler,
+                                         Runnable completionHandler,
+                                         StreamCancellationHandle cancelHandle) {
+        AtomicBoolean completionFlag = new AtomicBoolean(false);
+        Double temperature = temperatureOverride != null ? temperatureOverride : temperature();
+        Double topP = topPOverride != null ? topPOverride : topP();
+        try {
+            dashscopeClient.streamChatCompletion(
+                messages,
+                temperature,
+                topP,
+                maxTokens(maxTokensOverride),
+                chunk -> {
+                    if (chunkHandler == null) {
+                        return;
+                    }
+                    String cleaned = sanitizeChunk(chunk);
+                    if (hasMeaningfulText(cleaned)) {
+                        chunkHandler.accept(cleaned);
+                    }
+                },
+                cancelHandle
+            );
+        } catch (Exception e) {
+            notifyError(errorHandler, e);
+        } finally {
+            notifyCompletion(completionFlag, completionHandler);
         }
     }
 
@@ -145,6 +237,36 @@ public class LlmChat {
 
         systemMessageBuilder.append(refEnd);
         return systemMessageBuilder.toString();
+    }
+
+    public String systemRulesPrompt() {
+        String rules = PromptTemplateLoader.load("system-rules.st");
+        return rules == null ? "" : rules;
+    }
+
+    public List<Map<String, String>> toStructuredHistory(List<Map<String, String>> conversationHistory) {
+        List<Map<String, String>> messages = new ArrayList<>();
+        if (conversationHistory == null || conversationHistory.isEmpty()) {
+            return messages;
+        }
+        for (Map<String, String> entry : conversationHistory) {
+            if (entry == null) {
+                continue;
+            }
+            String content = entry.get("content");
+            if (content == null || content.isBlank()) {
+                continue;
+            }
+            String role = entry.get("role");
+            if (!"user".equalsIgnoreCase(role) && !"assistant".equalsIgnoreCase(role)) {
+                continue;
+            }
+            messages.add(Map.of(
+                "role", role.toLowerCase(),
+                "content", content
+            ));
+        }
+        return messages;
     }
 
     private Double temperature() {

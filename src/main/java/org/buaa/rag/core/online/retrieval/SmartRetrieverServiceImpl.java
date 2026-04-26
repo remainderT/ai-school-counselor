@@ -42,7 +42,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class SmartRetrieverServiceImpl implements SmartRetrieverService {
+public class SmartRetrieverServiceImpl {
 
     private static final int MAX_RECALL_SIZE = 300;
 
@@ -55,7 +55,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
     private final EsProperties esProperties;
     private final MilvusRetrieverService milvusRetrieverService;
 
-    @Override
     public List<RetrievalMatch> retrieve(String queryText, int topK, String userId) {
         try {
             log.debug("执行混合检索 - 查询: {}, K值: {}", queryText, topK);
@@ -82,7 +81,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         }
     }
 
-    @Override
     public List<RetrievalMatch> retrieveVectorOnly(String queryText, int topK, String userId) {
         try {
             List<Float> vector = generateQueryVector(queryText);
@@ -98,7 +96,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         }
     }
 
-    @Override
     public List<RetrievalMatch> retrieveTextOnly(String queryText,
                                                  int topK,
                                                  String userId) {
@@ -114,7 +111,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         }
     }
 
-    @Override
     public List<RetrievalMatch> retrieveScoped(String queryText,
                                                int topK,
                                                String userId,
@@ -156,7 +152,6 @@ public class SmartRetrieverServiceImpl implements SmartRetrieverService {
         return scoped;
     }
 
-    @Override
     public void recordFeedback(Long messageId, String userId, int score, String comment) {
         MessageFeedbackDO feedback = new MessageFeedbackDO();
         feedback.setMessageId(messageId);

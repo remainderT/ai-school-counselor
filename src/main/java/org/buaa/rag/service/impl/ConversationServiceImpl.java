@@ -15,17 +15,21 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import org.buaa.rag.core.model.RetrievalMatch;
+import org.buaa.rag.dao.entity.ChunkDO;
+import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.MessageDO;
 import org.buaa.rag.dao.entity.ChatTraceMetricDO;
 import org.buaa.rag.dao.entity.MessageSourceDO;
 import org.buaa.rag.dao.entity.MessageFeedbackDO;
 import org.buaa.rag.dao.entity.MessageSummaryDO;
+import org.buaa.rag.dao.mapper.ChunkMapper;
+import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.MessageMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
 import org.buaa.rag.dao.mapper.MessageFeedbackMapper;
 import org.buaa.rag.dao.mapper.ChatTraceMetricMapper;
 import org.buaa.rag.dao.mapper.MessageSummaryMapper;
-import org.buaa.rag.core.online.memory.ConversationMemoryService;
+import org.buaa.rag.core.online.memory.ConversationMemoryServiceImpl;
 import org.buaa.rag.dto.resp.ConversationMessageRespDTO;
 import org.buaa.rag.dto.resp.ConversationSessionRespDTO;
 import org.buaa.rag.service.ConversationService;
@@ -37,9 +41,13 @@ import org.springframework.util.StringUtils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+
+import lombok.RequiredArgsConstructor;
 
 @Service
-public class ConversationServiceImpl implements ConversationService {
+@RequiredArgsConstructor
+public class ConversationServiceImpl extends ServiceImpl<MessageMapper, MessageDO> implements ConversationService {
 
     private static final Logger log = LoggerFactory.getLogger(ConversationServiceImpl.class);
     private static final int MAX_HISTORY_SIZE = 60;
@@ -48,29 +56,17 @@ public class ConversationServiceImpl implements ConversationService {
     private static final String SESSION_META_PREFIX = "__SESSION_META__:";
 
     private final MessageMapper messageMapper;
+    private final ChunkMapper chunkMapper;
+    private final DocumentMapper documentMapper;
     private final MessageSourceMapper sourceRepository;
     private final MessageFeedbackMapper messageFeedbackMapper;
     private final ChatTraceMetricMapper chatTraceMetricMapper;
     private final MessageSummaryMapper messageSummaryMapper;
-    private final ConversationMemoryService conversationMemoryService;
+    private final ConversationMemoryServiceImpl conversationMemoryService;
 
     private final Map<Long, String> userSessionMap = new ConcurrentHashMap<>();
     /** 反向索引：sessionId → userId，避免 loadConversationContext 中 O(N) 线性扫 */
     private final Map<String, Long> sessionUserMap = new ConcurrentHashMap<>();
-
-    public ConversationServiceImpl(MessageMapper messageMapper,
-                                   MessageSourceMapper sourceRepository,
-                                   MessageFeedbackMapper messageFeedbackMapper,
-                                   ChatTraceMetricMapper chatTraceMetricMapper,
-                                   MessageSummaryMapper messageSummaryMapper,
-                                   ConversationMemoryService conversationMemoryService) {
-        this.messageMapper = messageMapper;
-        this.sourceRepository = sourceRepository;
-        this.messageFeedbackMapper = messageFeedbackMapper;
-        this.chatTraceMetricMapper = chatTraceMetricMapper;
-        this.messageSummaryMapper = messageSummaryMapper;
-        this.conversationMemoryService = conversationMemoryService;
-    }
 
     @Override
     public String obtainOrCreateSession(Long userId) {
@@ -473,6 +469,8 @@ public class ConversationServiceImpl implements ConversationService {
         if (sourceRows == null || sourceRows.isEmpty()) {
             return Map.of();
         }
+        Map<String, String> chunkTextMap = loadChunkTextMap(sourceRows);
+        Map<String, String> sourceNameMap = loadDocumentNameMap(sourceRows);
         Map<Long, List<RetrievalMatch>> grouped = new HashMap<>();
         for (MessageSourceDO source : sourceRows) {
             if (source == null || source.getMessageId() == null) {
@@ -481,10 +479,85 @@ public class ConversationServiceImpl implements ConversationService {
             RetrievalMatch match = new RetrievalMatch();
             match.setFileMd5(source.getDocumentMd5());
             match.setChunkId(source.getChunkId());
+            match.setTextContent(chunkTextMap.get(buildChunkKey(source.getDocumentMd5(), source.getChunkId())));
             match.setRelevanceScore(source.getRelevanceScore());
-            match.setSourceFileName(source.getSourceFileName());
+            String sourceName = source.getSourceFileName();
+            if (!StringUtils.hasText(sourceName)) {
+                sourceName = sourceNameMap.get(source.getDocumentMd5());
+            }
+            match.setSourceFileName(sourceName);
             grouped.computeIfAbsent(source.getMessageId(), key -> new ArrayList<>()).add(match);
         }
         return grouped;
+    }
+
+    private Map<String, String> loadChunkTextMap(List<MessageSourceDO> sourceRows) {
+        Set<String> md5Set = sourceRows.stream()
+            .map(MessageSourceDO::getDocumentMd5)
+            .filter(StringUtils::hasText)
+            .collect(Collectors.toSet());
+        if (md5Set.isEmpty()) {
+            return Map.of();
+        }
+
+        List<DocumentDO> documents = documentMapper.selectList(Wrappers.lambdaQuery(DocumentDO.class)
+            .in(DocumentDO::getMd5Hash, md5Set)
+            .select(DocumentDO::getId, DocumentDO::getMd5Hash, DocumentDO::getOriginalFileName));
+        if (documents == null || documents.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, String> md5ByDocumentId = documents.stream()
+            .filter(document -> document.getId() != null && StringUtils.hasText(document.getMd5Hash()))
+            .collect(Collectors.toMap(DocumentDO::getId, DocumentDO::getMd5Hash, (left, right) -> left));
+        if (md5ByDocumentId.isEmpty()) {
+            return Map.of();
+        }
+
+        Set<Long> documentIds = md5ByDocumentId.keySet();
+        List<ChunkDO> chunks = chunkMapper.selectList(Wrappers.lambdaQuery(ChunkDO.class)
+            .in(ChunkDO::getDocumentId, documentIds)
+            .select(ChunkDO::getDocumentId, ChunkDO::getFragmentIndex, ChunkDO::getTextData));
+        if (chunks == null || chunks.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<String, String> chunkTextMap = new HashMap<>();
+        for (ChunkDO chunk : chunks) {
+            if (chunk == null || chunk.getDocumentId() == null || chunk.getFragmentIndex() == null) {
+                continue;
+            }
+            String md5 = md5ByDocumentId.get(chunk.getDocumentId());
+            if (!StringUtils.hasText(md5) || !StringUtils.hasText(chunk.getTextData())) {
+                continue;
+            }
+            chunkTextMap.put(buildChunkKey(md5, chunk.getFragmentIndex()), chunk.getTextData());
+        }
+        return chunkTextMap;
+    }
+
+    private Map<String, String> loadDocumentNameMap(List<MessageSourceDO> sourceRows) {
+        Set<String> md5Set = sourceRows.stream()
+            .map(MessageSourceDO::getDocumentMd5)
+            .filter(StringUtils::hasText)
+            .collect(Collectors.toSet());
+        if (md5Set.isEmpty()) {
+            return Map.of();
+        }
+
+        List<DocumentDO> documents = documentMapper.selectList(Wrappers.lambdaQuery(DocumentDO.class)
+            .in(DocumentDO::getMd5Hash, md5Set)
+            .select(DocumentDO::getMd5Hash, DocumentDO::getOriginalFileName));
+        if (documents == null || documents.isEmpty()) {
+            return Map.of();
+        }
+
+        return documents.stream()
+            .filter(document -> StringUtils.hasText(document.getMd5Hash()) && StringUtils.hasText(document.getOriginalFileName()))
+            .collect(Collectors.toMap(DocumentDO::getMd5Hash, DocumentDO::getOriginalFileName, (left, right) -> left));
+    }
+
+    private String buildChunkKey(String documentMd5, Integer chunkId) {
+        return (documentMd5 == null ? "" : documentMd5) + "#" + (chunkId == null ? "null" : chunkId);
     }
 }

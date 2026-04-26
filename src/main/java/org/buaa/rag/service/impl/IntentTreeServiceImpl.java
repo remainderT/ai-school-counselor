@@ -27,15 +27,16 @@ import org.springframework.util.StringUtils;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 
 import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
-public class IntentTreeServiceImpl implements IntentTreeService {
+public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentNodeDO> implements IntentTreeService {
 
     private final IntentNodeMapper intentNodeMapper;
-    private final org.buaa.rag.core.online.intent.IntentTreeService intentTreeService;
+    private final org.buaa.rag.core.online.intent.IntentTreeService onlineIntentTreeService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -85,7 +86,7 @@ public class IntentTreeServiceImpl implements IntentTreeService {
             .enabled(requestParam.getEnabled() == null ? 1 : normalizeEnabled(requestParam.getEnabled()))
             .build();
         intentNodeMapper.insert(entity);
-        intentTreeService.refreshTreeSnapshot();
+        onlineIntentTreeService.refreshTreeSnapshot();
         return entity.getId();
     }
 
@@ -156,7 +157,7 @@ public class IntentTreeServiceImpl implements IntentTreeService {
             existing.setEnabled(normalizeEnabled(requestParam.getEnabled()));
         }
         intentNodeMapper.updateById(existing);
-        intentTreeService.refreshTreeSnapshot();
+        onlineIntentTreeService.refreshTreeSnapshot();
     }
 
     @Override
@@ -170,7 +171,7 @@ public class IntentTreeServiceImpl implements IntentTreeService {
             .collect(Collectors.toCollection(ArrayList::new));
         deleteIds.add(existing.getId());
         intentNodeMapper.deleteBatchIds(deleteIds);
-        intentTreeService.refreshTreeSnapshot();
+        onlineIntentTreeService.refreshTreeSnapshot();
     }
 
     @Override
@@ -200,7 +201,7 @@ public class IntentTreeServiceImpl implements IntentTreeService {
             }
         }
         intentNodeMapper.deleteBatchIds(allIds);
-        intentTreeService.refreshTreeSnapshot();
+        onlineIntentTreeService.refreshTreeSnapshot();
     }
 
     private void batchSetEnabled(List<Long> ids, int enabled) {
@@ -213,7 +214,7 @@ public class IntentTreeServiceImpl implements IntentTreeService {
                 .eq(IntentNodeDO::getDelFlag, 0)
                 .set(IntentNodeDO::getEnabled, enabled)
         );
-        intentTreeService.refreshTreeSnapshot();
+        onlineIntentTreeService.refreshTreeSnapshot();
     }
 
     private IntentNodeDO getActiveById(Long id) {

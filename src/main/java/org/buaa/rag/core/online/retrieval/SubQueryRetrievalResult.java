@@ -6,7 +6,7 @@ import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 
 /**
- * 单个子问题的完整检索结果，供 {@link SubQueryRetrievalService} 和 {@link org.buaa.rag.core.online.chat.OnlineChatOrchestrator} 共享。
+ * 单个子问题的完整检索结果，供在线执行链路复用。
  *
  * @param query           子问题文本
  * @param intent          命中的主意图

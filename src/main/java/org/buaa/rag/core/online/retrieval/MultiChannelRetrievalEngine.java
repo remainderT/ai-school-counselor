@@ -62,6 +62,7 @@ public class MultiChannelRetrievalEngine {
     }
 
     public List<RetrievalMatch> retrieve(SearchContext ctx) {
+        long start = System.nanoTime();
         // 1. 筛选可激活的通道并按优先级排序
         List<SearchChannel> active = channels.stream()
             .filter(ch -> tryCanActivate(ch, ctx))
@@ -72,6 +73,7 @@ public class MultiChannelRetrievalEngine {
         }
 
         // 2. 并行执行各通道
+        long channelStart = System.nanoTime();
         List<CompletableFuture<SearchChannelResult>> futures = active.stream()
             .map(ch -> CompletableFuture.supplyAsync(() -> invokeChannel(ch, ctx), executor))
             .toList();
@@ -83,12 +85,13 @@ public class MultiChannelRetrievalEngine {
                     log.warn("等待检索通道结果失败", ex);
                     return null;
                 }
-            })
-            .filter(r -> r != null)
-            .toList();
+                })
+                .filter(r -> r != null)
+                .toList();
         if (channelResults.isEmpty()) {
             return List.of();
         }
+        long channelElapsed = elapsedMs(channelStart);
 
         // 3. 扁平合并所有通道的匹配结果
         List<RetrievalMatch> merged = channelResults.stream()
@@ -101,6 +104,7 @@ public class MultiChannelRetrievalEngine {
             .sorted(Comparator.comparingInt(SearchResultPostProcessor::getOrder))
             .toList();
 
+        long postProcessStart = System.nanoTime();
         List<RetrievalMatch> result = new ArrayList<>(merged);
         for (SearchResultPostProcessor proc : activeProcessors) {
             try {
@@ -109,6 +113,9 @@ public class MultiChannelRetrievalEngine {
                 log.warn("检索后处理器执行失败: {}", proc.getName(), ex);
             }
         }
+        log.info("多通道检索引擎完成 | query='{}' | activeChannels={} | merged={} | final={} | channel耗时={}ms | post耗时={}ms | 总耗时={}ms",
+            compact(ctx.getOriginalQuery()), active.size(), merged.size(), result.size(),
+            channelElapsed, elapsedMs(postProcessStart), elapsedMs(start));
         return result;
     }
 
@@ -149,5 +156,17 @@ public class MultiChannelRetrievalEngine {
             log.warn("判断后处理器启用状态失败: {}", p.getName(), ex);
             return false;
         }
+    }
+
+    private String compact(String text) {
+        if (text == null) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ").trim();
+        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
+    }
+
+    private long elapsedMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 }

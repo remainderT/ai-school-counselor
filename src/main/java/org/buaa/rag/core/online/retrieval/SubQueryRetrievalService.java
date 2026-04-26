@@ -10,7 +10,7 @@ import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.online.intent.IntentResolutionService;
 import org.buaa.rag.core.online.intent.SubQueryIntent;
-import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorService;
+import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorServiceImpl;
 import org.buaa.rag.properties.RagProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -30,8 +30,8 @@ import lombok.extern.slf4j.Slf4j;
 public class SubQueryRetrievalService {
 
     private final MultiChannelRetrievalEngine multiChannelRetrievalEngine;
-    private final SmartRetrieverService smartRetrieverService;
-    private final RetrievalPostProcessorService postProcessorService;
+    private final SmartRetrieverServiceImpl smartRetrieverService;
+    private final RetrievalPostProcessorServiceImpl postProcessorService;
     private final IntentResolutionService intentResolutionService;
     private final RagProperties ragProperties;
 
@@ -40,14 +40,19 @@ public class SubQueryRetrievalService {
      * 使用子问题已解析的候选意图，避免二次LLM调用。
      */
     public SubQueryRetrievalResult retrieveForSubQuery(String userId, SubQueryIntent subQueryIntent) {
+        long start = System.nanoTime();
         String query = subQueryIntent.subQuery();
         IntentDecision primaryIntent = selectPrimaryIntent(subQueryIntent);
         List<IntentDecision> preResolvedCandidates = subQueryIntent.candidates() != null
                 ? subQueryIntent.candidates()
                 : List.of();
         int topK = determineTopK(query);
+        long retrieveStart = System.nanoTime();
         List<RetrievalMatch> results = retrieveByStrategy(userId, query, topK, primaryIntent, preResolvedCandidates);
+        long retrieveElapsed = elapsedMs(retrieveStart);
+        long cragStart = System.nanoTime();
         CragDecision decision = postProcessorService.evaluate(query, results);
+        long cragElapsed = elapsedMs(cragStart);
 
         boolean clarifyTriggered = false;
         String clarifyMessage = null;
@@ -64,6 +69,9 @@ public class SubQueryRetrievalService {
         }
 
         List<RetrievalMatch> safeResults = results != null ? results : List.of();
+        log.info("子问题检索流程完成 | query='{}' | action={} | topK={} | results={} | retrieval={}ms | crag={}ms | 总耗时={}ms",
+            compact(query), decision.getAction(), topK, safeResults.size(),
+            retrieveElapsed, cragElapsed, elapsedMs(start));
         return new SubQueryRetrievalResult(
                 query,
                 primaryIntent,
@@ -178,11 +186,15 @@ public class SubQueryRetrievalService {
      * Fallback 检索：当主检索质量不足时，用文本精确检索兜底。
      */
     public List<RetrievalMatch> fallbackRetrieval(String userId, String query, int topK) {
+        long start = System.nanoTime();
         RagProperties.Crag cfg = ragProperties.getCrag();
         int multiplier = (cfg != null) ? cfg.getFallbackMultiplier() : 2;
         int fallbackK = Math.min(topK * Math.max(1, multiplier), ragProperties.getRetrieval().getMaxTopK());
         List<RetrievalMatch> fallback = smartRetrieverService.retrieveTextOnly(query, fallbackK, userId);
-        return postProcessorService.rerank(query, fallback, topK);
+        List<RetrievalMatch> reranked = postProcessorService.rerank(query, fallback, topK);
+        log.info("子问题Fallback检索完成 | query='{}' | fallbackK={} | 原始结果={} | 重排后={} | 耗时={}ms",
+            compact(query), fallbackK, fallback == null ? 0 : fallback.size(), reranked == null ? 0 : reranked.size(), elapsedMs(start));
+        return reranked;
     }
 
     public IntentDecision selectPrimaryIntent(SubQueryIntent subQueryIntent) {
@@ -227,9 +239,13 @@ public class SubQueryRetrievalService {
                                                               int topK,
                                                               IntentDecision intent,
                                                               List<IntentDecision> intentCandidates) {
+        long start = System.nanoTime();
         List<RetrievalMatch> results = multiChannelRetrievalEngine.retrieve(
                 userId, query, topK, intent, intentCandidates);
         if (!isLowQuality(results)) {
+            log.info("多通道检索完成 | query='{}' | topK={} | candidates={} | results={} | 重试=false | 耗时={}ms",
+                compact(query), topK, intentCandidates == null ? 0 : intentCandidates.size(),
+                results == null ? 0 : results.size(), elapsedMs(start));
             return results;
         }
         // 规范化查询后重试一次
@@ -238,10 +254,27 @@ public class SubQueryRetrievalService {
             List<RetrievalMatch> retry = multiChannelRetrievalEngine.retrieve(
                     userId, normalized, Math.min(topK * 2, ragProperties.getRetrieval().getMaxTopK()), intent, intentCandidates);
             if (!isLowQuality(retry)) {
+                log.info("多通道检索重试成功 | query='{}' | normalized='{}' | topK={} | results={} | 耗时={}ms",
+                    compact(query), compact(normalized), topK, retry.size(), elapsedMs(start));
                 return retry;
             }
         }
+        log.info("多通道检索低质量返回 | query='{}' | topK={} | candidates={} | results={} | 耗时={}ms",
+            compact(query), topK, intentCandidates == null ? 0 : intentCandidates.size(),
+            results == null ? 0 : results.size(), elapsedMs(start));
         return results;
+    }
+
+    private String compact(String text) {
+        if (text == null) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ").trim();
+        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
+    }
+
+    private long elapsedMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
     /** Reciprocal Rank Fusion */

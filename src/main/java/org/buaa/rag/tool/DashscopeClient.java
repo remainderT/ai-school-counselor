@@ -10,8 +10,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
+import org.buaa.rag.core.online.chat.StreamCancellationHandle;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -77,12 +79,40 @@ public class DashscopeClient {
                                      Double topP,
                                      Integer maxTokens,
                                      Consumer<String> chunkHandler) throws Exception {
+        ObjectNode payload = buildChatPayload(systemPrompt, userPrompt, temperature, topP, maxTokens);
+        streamChatCompletion(payload, chunkHandler, null);
+    }
+
+    public void streamChatCompletion(List<Map<String, String>> messages,
+                                     Double temperature,
+                                     Double topP,
+                                     Integer maxTokens,
+                                     Consumer<String> chunkHandler) throws Exception {
+        ObjectNode payload = buildChatPayload(messages, temperature, topP, maxTokens);
+        streamChatCompletion(payload, chunkHandler, null);
+    }
+
+    /**
+     * 支持取消句柄的流式调用重载（对齐 ragent StreamCancellationHandle）。
+     */
+    public void streamChatCompletion(List<Map<String, String>> messages,
+                                     Double temperature,
+                                     Double topP,
+                                     Integer maxTokens,
+                                     Consumer<String> chunkHandler,
+                                     StreamCancellationHandle cancelHandle) throws Exception {
+        ObjectNode payload = buildChatPayload(messages, temperature, topP, maxTokens);
+        streamChatCompletion(payload, chunkHandler, cancelHandle);
+    }
+
+    private void streamChatCompletion(ObjectNode payload,
+                                      Consumer<String> chunkHandler,
+                                      StreamCancellationHandle cancelHandle) throws Exception {
         if (!StringUtils.hasText(apiKey)) {
             log.warn("DashScope API Key 未配置，跳过流式聊天调用");
             return;
         }
 
-        ObjectNode payload = buildChatPayload(systemPrompt, userPrompt, temperature, topP, maxTokens);
         payload.put("stream", true);
         payload.with("parameters").put("incremental_output", true);
 
@@ -96,42 +126,8 @@ public class DashscopeClient {
             .build();
 
         HttpResponse<java.io.InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            String body = new String(response.body().readAllBytes(), StandardCharsets.UTF_8);
-            throw new IllegalStateException("DashScope 流式请求失败, status=" + response.statusCode() + ", body=" + body);
-        }
-
-        String previousText = "";
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isBlank() || line.startsWith(":") || !line.startsWith("data:")) {
-                    continue;
-                }
-                String data = line.substring(5).trim();
-                if (!StringUtils.hasText(data)) {
-                    continue;
-                }
-                if ("[DONE]".equals(data)) {
-                    break;
-                }
-
-                JsonNode root = objectMapper.readTree(data);
-                String currentText = extractText(root);
-                if (!StringUtils.hasText(currentText)) {
-                    continue;
-                }
-
-                String delta = currentText;
-                if (StringUtils.hasText(previousText) && currentText.startsWith(previousText)) {
-                    delta = currentText.substring(previousText.length());
-                }
-                previousText = currentText;
-                if (StringUtils.hasText(delta) && chunkHandler != null) {
-                    chunkHandler.accept(delta);
-                }
-            }
-        }
+        ensureStreamSuccess(response);
+        consumeStream(response, chunkHandler, cancelHandle);
     }
 
     public List<float[]> embed(List<String> texts) {
@@ -198,8 +194,70 @@ public class DashscopeClient {
         return response.body();
     }
 
+    private void ensureStreamSuccess(HttpResponse<java.io.InputStream> response) throws Exception {
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            String body = new String(response.body().readAllBytes(), StandardCharsets.UTF_8);
+            throw new IllegalStateException("DashScope 流式请求失败, status=" + response.statusCode() + ", body=" + body);
+        }
+    }
+
+    private void consumeStream(HttpResponse<java.io.InputStream> response,
+                               Consumer<String> chunkHandler,
+                               StreamCancellationHandle cancelHandle) throws Exception {
+        String previousText = "";
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                // LLM 层取消检查（对齐 ragent StreamCancellationHandle）
+                if (cancelHandle != null && cancelHandle.isCancelled()) {
+                    log.debug("流式读取被取消，提前退出");
+                    break;
+                }
+                if (line.isBlank() || line.startsWith(":") || !line.startsWith("data:")) {
+                    continue;
+                }
+                String data = line.substring(5).trim();
+                if (!StringUtils.hasText(data)) {
+                    continue;
+                }
+                if ("[DONE]".equals(data)) {
+                    break;
+                }
+
+                JsonNode root = objectMapper.readTree(data);
+                String currentText = extractText(root);
+                if (!StringUtils.hasText(currentText)) {
+                    continue;
+                }
+
+                String delta = currentText;
+                if (StringUtils.hasText(previousText) && currentText.startsWith(previousText)) {
+                    delta = currentText.substring(previousText.length());
+                }
+                previousText = currentText;
+                if (StringUtils.hasText(delta) && chunkHandler != null) {
+                    chunkHandler.accept(delta);
+                }
+            }
+        }
+    }
+
     private ObjectNode buildChatPayload(String systemPrompt,
                                         String userPrompt,
+                                        Double temperature,
+                                        Double topP,
+                                        Integer maxTokens) {
+        List<Map<String, String>> messages = new ArrayList<>();
+        if (StringUtils.hasText(systemPrompt)) {
+            messages.add(Map.of("role", "system", "content", systemPrompt));
+        }
+        if (StringUtils.hasText(userPrompt)) {
+            messages.add(Map.of("role", "user", "content", userPrompt));
+        }
+        return buildChatPayload(messages, temperature, topP, maxTokens);
+    }
+
+    private ObjectNode buildChatPayload(List<Map<String, String>> messages,
                                         Double temperature,
                                         Double topP,
                                         Integer maxTokens) {
@@ -207,16 +265,20 @@ public class DashscopeClient {
         payload.put("model", safeValue(chatModel, "qwen-plus"));
 
         ObjectNode input = payload.putObject("input");
-        ArrayNode messages = input.putArray("messages");
-        if (StringUtils.hasText(systemPrompt)) {
-            ObjectNode system = messages.addObject();
-            system.put("role", "system");
-            system.put("content", systemPrompt);
-        }
-        if (StringUtils.hasText(userPrompt)) {
-            ObjectNode user = messages.addObject();
-            user.put("role", "user");
-            user.put("content", userPrompt);
+        ArrayNode messageArray = input.putArray("messages");
+        if (messages != null) {
+            for (Map<String, String> message : messages) {
+                if (message == null) {
+                    continue;
+                }
+                String content = message.get("content");
+                if (!StringUtils.hasText(content)) {
+                    continue;
+                }
+                ObjectNode item = messageArray.addObject();
+                item.put("role", normalizeRole(message.get("role")));
+                item.put("content", content);
+            }
         }
 
         ObjectNode parameters = payload.putObject("parameters");
@@ -258,5 +320,16 @@ public class DashscopeClient {
 
     private String safeValue(String value, String fallback) {
         return StringUtils.hasText(value) ? value.trim() : fallback;
+    }
+
+    private String normalizeRole(String role) {
+        if (!StringUtils.hasText(role)) {
+            return "user";
+        }
+        String normalized = role.trim().toLowerCase();
+        return switch (normalized) {
+            case "system", "assistant", "user" -> normalized;
+            default -> "user";
+        };
     }
 }

@@ -11,6 +11,8 @@ public class AnswerValidator {
     public enum Verdict { OK, REFINE }
 
     private static final String VALIDATE_PROMPT = PromptTemplateLoader.load("answer-validator.st");
+    private static final double VALIDATE_TEMPERATURE = 0.1D;
+    private static final double VALIDATE_TOP_P = 0.3D;
 
     private final LlmChat llmChat;
 
@@ -23,7 +25,13 @@ public class AnswerValidator {
             return Verdict.REFINE;
         }
         String userPrompt = "问题：" + question + "\n回答：" + answer;
-        String result = llmChat.generateCompletion(VALIDATE_PROMPT, userPrompt, 32);
+        String result = llmChat.generateCompletion(
+            VALIDATE_PROMPT,
+            userPrompt,
+            32,
+            VALIDATE_TEMPERATURE,
+            VALIDATE_TOP_P
+        );
         if (result == null) {
             return Verdict.OK;
         }

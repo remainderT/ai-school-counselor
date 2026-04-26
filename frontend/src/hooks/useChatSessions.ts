@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiDelete, apiGet, apiPost, apiPut } from "../lib/api";
+import { normalizeSources, stripLegacyReferenceSection } from "../lib/chat-message";
 import type { ConversationMessageItem, ConversationSessionItem, RetrievalMatch } from "../types";
 import { useActionRequest } from "./useActionRequest";
 
@@ -38,8 +39,8 @@ function normalizeTitle(input?: string): string {
 function toConversationMessage(item: ConversationMessageItem): ChatMsg {
   return {
     role: item.role,
-    text: item.content || "",
-    sources: item.sources || [],
+    text: stripLegacyReferenceSection(item.content),
+    sources: normalizeSources(item.sources),
     messageId: item.id
   };
 }

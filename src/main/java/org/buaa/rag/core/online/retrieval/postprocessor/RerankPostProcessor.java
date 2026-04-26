@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.buaa.rag.core.model.RetrievalMatch;
-import org.buaa.rag.core.online.rerank.RerankService;
+import org.buaa.rag.core.online.rerank.RoutingRerankService;
 import org.buaa.rag.properties.SearchChannelProperties;
 import org.buaa.rag.core.online.retrieval.channel.SearchChannelResult;
 import org.buaa.rag.core.online.retrieval.channel.SearchContext;
@@ -23,7 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 public class RerankPostProcessor implements SearchResultPostProcessor {
 
     private final SearchChannelProperties properties;
-    private final RerankService rerankService;
+    private final RoutingRerankService rerankService;
 
     @Override
     public String getName() {

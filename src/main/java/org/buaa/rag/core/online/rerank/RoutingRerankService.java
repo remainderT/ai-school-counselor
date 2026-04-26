@@ -23,7 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Service
 @Primary
-public class RoutingRerankService implements RerankService {
+public class RoutingRerankService {
 
     private final Map<String, RerankClient> clientsByProvider;
     private final List<String> providerOrder;
@@ -44,7 +44,6 @@ public class RoutingRerankService implements RerankService {
                 clientsByProvider.keySet(), providerOrder);
     }
 
-    @Override
     public List<RetrievalMatch> rerank(String query, List<RetrievalMatch> candidates, int topN) {
         if (candidates == null || candidates.size() <= 1) {
             return candidates;

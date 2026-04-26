@@ -1,25 +1,30 @@
 package org.buaa.rag.core.online.chat;
 
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
+import org.buaa.rag.core.online.retrieval.SubQueryRetrievalResult;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.tool.LlmChat;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import jakarta.annotation.Nullable;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import lombok.Builder;
+import lombok.Getter;
 
 /**
- * RAG Prompt 组装服务：负责参考上下文构建、Prompt 模板应用、来源引用附加和流式答案生成。
+ * RAG Prompt 组装服务：负责参考上下文构建、Prompt 模板应用和流式答案生成。
  *
  * <p>场景规划：
  * <ul>
@@ -34,14 +39,30 @@ public class RagPromptService {
 
     private static final String MULTI_INTENT_SYNTHESIS_PROMPT =
         PromptTemplateLoader.load("chat-multi-intent-synthesis.st");
+    /** 单意图 RAG 场景默认系统提示（对齐 ragent PromptTemplateLoader 模板文件驱动） */
+    private static final String SINGLE_INTENT_DEFAULT_PROMPT =
+        PromptTemplateLoader.load("rag-single-intent.st");
+    /** 多意图综合场景默认系统提示 */
+    private static final String MULTI_INTENT_DEFAULT_PROMPT =
+        PromptTemplateLoader.load("rag-multi-intent.st");
+    private static final String TOOL_CONTEXT_HEADER = "## 动态结果片段";
+    private static final String KB_CONTEXT_HEADER = "## 文档内容";
 
     private final LlmChat llmService;
     private final RagProperties ragProperties;
 
-    /**
-     * 构建编号参考上下文块，注入到系统 Prompt 中。
-     */
-    public String constructReferenceContext(List<RetrievalMatch> matches) {
+    public List<RetrievalMatch> limitSourcesForAnswer(List<RetrievalMatch> sources) {
+        if (sources == null || sources.isEmpty()) {
+            return List.of();
+        }
+        int max = Math.max(1, ragProperties.getPrompt().getMaxSourceReferenceCount());
+        if (sources.size() <= max) {
+            return List.copyOf(sources);
+        }
+        return List.copyOf(sources.subList(0, max));
+    }
+
+    private String constructReferenceContext(List<RetrievalMatch> matches) {
         if (matches == null || matches.isEmpty()) {
             return "";
         }
@@ -56,77 +77,6 @@ public class RagPromptService {
     }
 
     /**
-     * 在回复末尾附加格式化的参考来源引用块（幂等：已有「参考来源：」则不重复添加）。
-     */
-    public String appendSourceReferences(String response, List<RetrievalMatch> sources) {
-        String safeResponse = response == null ? "" : response;
-        if (sources == null || sources.isEmpty()) {
-            return safeResponse;
-        }
-        if (safeResponse.contains("参考来源：")) {
-            return safeResponse;
-        }
-
-        List<RetrievalMatch> deduplicated = deduplicateForDisplay(sources);
-        if (deduplicated.isEmpty()) {
-            return safeResponse;
-        }
-
-        StringBuilder builder = new StringBuilder(safeResponse);
-        if (!safeResponse.isEmpty()) {
-            builder.append("\n\n");
-        }
-        builder.append("参考来源：\n");
-
-        int max = Math.min(ragProperties.getPrompt().getMaxSourceReferenceCount(), deduplicated.size());
-        for (int i = 0; i < max; i++) {
-            RetrievalMatch source = deduplicated.get(i);
-            builder.append("[").append(i + 1).append("] ").append(getSourceLabel(source));
-            if (source.getChunkId() != null) {
-                builder.append("（片段#").append(source.getChunkId()).append("）");
-            }
-            builder.append("\n");
-        }
-        return builder.toString();
-    }
-
-    /**
-     * 完整 RAG 答案生成：组装上下文 → 调用 LLM 流式输出 → 附加来源引用。
-     * 使用 KB 纯检索场景温度（rag.prompt.temperature-kb）。
-     */
-    public String generateRagAnswer(String query,
-                                    String promptTemplate,
-                                    List<Map<String, String>> conversationHistory,
-                                    List<RetrievalMatch> retrievalResults,
-                                    Consumer<String> chunkHandler) {
-        return generateRagAnswer(query, promptTemplate, conversationHistory,
-            retrievalResults, chunkHandler, false);
-    }
-
-    /**
-     * 场景感知的完整 RAG 答案生成。
-     *
-     * @param hasToolContext true 表示上下文包含 Tool 调用结果（使用较高温度），
-     *                       false 表示纯 KB 检索场景（使用低温度）
-     */
-    public String generateRagAnswer(String query,
-                                    String promptTemplate,
-                                    List<Map<String, String>> conversationHistory,
-                                    List<RetrievalMatch> retrievalResults,
-                                    Consumer<String> chunkHandler,
-                                    boolean hasToolContext) {
-        String rawResponse = generateRagAnswerWithoutReferences(
-            query, promptTemplate, conversationHistory, retrievalResults, hasToolContext);
-        String finalResponse = appendSourceReferences(rawResponse, retrievalResults);
-        if (!finalResponse.equals(rawResponse)
-                && finalResponse.startsWith(rawResponse)
-                && chunkHandler != null) {
-            chunkHandler.accept(finalResponse.substring(rawResponse.length()));
-        }
-        return finalResponse;
-    }
-
-    /**
      * 仅生成正文，不自动追加「参考来源」区块。
      * 适用于多意图场景先产出子答案，再统一做最终合成。
      */
@@ -135,6 +85,7 @@ public class RagPromptService {
                                                      List<Map<String, String>> conversationHistory,
                                                      List<RetrievalMatch> retrievalResults,
                                                      boolean hasToolContext) {
+        long start = System.nanoTime();
         String referenceContext = constructReferenceContext(retrievalResults);
         RagProperties.Prompt promptConfig = ragProperties.getPrompt();
         double temperature = hasToolContext ? promptConfig.getTemperatureTool() : promptConfig.getTemperatureKb();
@@ -158,61 +109,126 @@ public class RagPromptService {
         if (err != null) {
             throw new RuntimeException("AI服务异常: " + err.getMessage(), err);
         }
+        log.info("RAG答案生成完成 | query='{}' | refs={} | hasToolContext={} | responseChars={} | 耗时={}ms",
+            compact(query), retrievalResults == null ? 0 : retrievalResults.size(), hasToolContext,
+            responseBuilder.length(), elapsedMs(start));
         return responseBuilder.toString();
     }
 
-    /**
-     * 多意图最终合成：基于子问题独立结论，生成一段结构化总答复。
-     */
-    public String synthesizeMultiIntentAnswer(String originalQuery, List<String> subResults) {
-        if (subResults == null || subResults.isEmpty()) {
+    public String generateMultiIntentAnswer(String originalQuery,
+                                           List<Map<String, String>> conversationHistory,
+                                           List<SubQueryRetrievalResult> subQueryResults,
+                                           Consumer<String> chunkHandler) {
+        return generateMultiIntentAnswer(originalQuery, conversationHistory, subQueryResults, chunkHandler, null);
+    }
+
+    public String generateMultiIntentAnswer(String originalQuery,
+                                           List<Map<String, String>> conversationHistory,
+                                           List<SubQueryRetrievalResult> subQueryResults,
+                                           Consumer<String> chunkHandler,
+                                           @Nullable StreamCancellationHandle cancelHandle) {
+        long start = System.nanoTime();
+        if (subQueryResults == null || subQueryResults.isEmpty()) {
             return "";
         }
-        String systemPrompt = StringUtils.hasText(MULTI_INTENT_SYNTHESIS_PROMPT)
-            ? MULTI_INTENT_SYNTHESIS_PROMPT
-            : "请根据子问题结果给出综合回答，先结论后步骤。";
+        int mergedReferences = subQueryResults.stream()
+            .mapToInt(result -> result.sources() == null ? 0 : result.sources().size())
+            .sum();
+        PromptContext promptContext = PromptContext.builder()
+            .question(originalQuery)
+            .kbContext(buildMultiIntentDocumentBlock(subQueryResults))
+            .toolContext(buildMultiIntentDynamicBlock(subQueryResults))
+            .preferredPrompt(MULTI_INTENT_SYNTHESIS_PROMPT)
+            .promptSnippet(buildMultiIntentRuleBlock(subQueryResults))
+            .subQuestions(subQueryResults.stream().map(SubQueryRetrievalResult::query).toList())
+            .build();
+        boolean hasToolContext = promptContext.hasTool();
+        List<Map<String, String>> messages = buildMultiIntentMessages(
+            promptContext, conversationHistory, subQueryResults);
+        String answer = streamStructuredAnswer(messages, chunkHandler, hasToolContext, cancelHandle);
+        log.info("多意图综合答案生成完成 | query='{}' | subQueries={} | refs={} | responseChars={} | 耗时={}ms",
+            compact(originalQuery), subQueryResults.size(), mergedReferences, answer.length(), elapsedMs(start));
+        return answer;
+    }
 
-        StringBuilder userPrompt = new StringBuilder();
-        userPrompt.append("原始用户问题：\n")
-            .append(originalQuery == null ? "" : originalQuery)
-            .append("\n\n子问题处理结果：\n");
-        for (int i = 0; i < subResults.size(); i++) {
-            userPrompt.append("【结果").append(i + 1).append("】\n")
-                .append(subResults.get(i))
-                .append("\n\n");
-        }
+    public String generateSingleIntentStructuredAnswer(String query,
+                                                       List<Map<String, String>> conversationHistory,
+                                                       List<RetrievalMatch> retrievalResults,
+                                                       IntentPromptDescriptor intentPrompt,
+                                                       Consumer<String> chunkHandler,
+                                                       boolean hasToolContext) {
+        return generateSingleIntentStructuredAnswer(
+            query, conversationHistory, retrievalResults, intentPrompt, chunkHandler, hasToolContext, null);
+    }
 
-        String synthesized = llmService.generateCompletion(systemPrompt, userPrompt.toString(), 1200);
-        if (StringUtils.hasText(synthesized)) {
-            return synthesized.trim();
+    public String generateSingleIntentStructuredAnswer(String query,
+                                                       List<Map<String, String>> conversationHistory,
+                                                       List<RetrievalMatch> retrievalResults,
+                                                       IntentPromptDescriptor intentPrompt,
+                                                       Consumer<String> chunkHandler,
+                                                       boolean hasToolContext,
+                                                       @Nullable StreamCancellationHandle cancelHandle) {
+        long start = System.nanoTime();
+        PromptContext promptContext = PromptContext.builder()
+            .question(query)
+            .kbContext(buildSingleIntentDocumentBlock(retrievalResults))
+            .preferredPrompt(intentPrompt != null ? intentPrompt.promptTemplate() : null)
+            .promptSnippet(intentPrompt != null ? intentPrompt.promptSnippet() : null)
+            .subQuestions(List.of(query))
+            .build();
+        List<Map<String, String>> messages = buildSingleIntentMessages(
+            promptContext, conversationHistory, intentPrompt);
+        String answer = streamStructuredAnswer(messages, chunkHandler, hasToolContext, cancelHandle);
+        log.info("结构化单意图答案生成完成 | query='{}' | refs={} | hasToolContext={} | responseChars={} | 耗时={}ms",
+            compact(query), retrievalResults == null ? 0 : retrievalResults.size(), hasToolContext, answer.length(), elapsedMs(start));
+        return answer;
+    }
+
+    public List<RetrievalMatch> collectDisplayedMultiIntentSources(List<SubQueryRetrievalResult> subQueryResults) {
+        if (subQueryResults == null || subQueryResults.isEmpty()) {
+            return List.of();
         }
-        // 同步 LLM 异常/空输出时回退到可读拼接文本，避免前端空白
-        return String.join("\n\n", subResults);
+        int perQuestionLimit = Math.max(1, Math.min(
+            ragProperties.getPrompt().getMultiIntentSourcesPerQuestion(),
+            ragProperties.getPrompt().getMaxSourceReferenceCount()
+        ));
+        int globalLimit = Math.max(
+            perQuestionLimit,
+            Math.min(
+                ragProperties.getPrompt().getMaxSourceReferenceCount(),
+                subQueryResults.size() * perQuestionLimit
+            )
+        );
+
+        List<RetrievalMatch> merged = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (SubQueryRetrievalResult result : subQueryResults) {
+            List<RetrievalMatch> sources = result.sources();
+            if (sources == null || sources.isEmpty()) {
+                continue;
+            }
+            int addedForQuestion = 0;
+            for (RetrievalMatch match : sources) {
+                if (match == null) {
+                    continue;
+                }
+                if (!seen.add(match.matchKey())) {
+                    continue;
+                }
+                merged.add(match);
+                addedForQuestion++;
+                if (addedForQuestion >= perQuestionLimit || merged.size() >= globalLimit) {
+                    break;
+                }
+            }
+            if (merged.size() >= globalLimit) {
+                break;
+            }
+        }
+        return merged;
     }
 
     // ──────────────────────── private ────────────────────────
-
-    private List<RetrievalMatch> deduplicateForDisplay(List<RetrievalMatch> sources) {
-        if (sources == null || sources.isEmpty()) {
-            return List.of();
-        }
-        Map<String, RetrievalMatch> map = new HashMap<>();
-        for (RetrievalMatch source : sources) {
-            if (source == null) {
-                continue;
-            }
-            String md5 = source.getFileMd5() != null ? source.getFileMd5() : "unknown";
-            String chunk = source.getChunkId() != null ? source.getChunkId().toString() : "0";
-            String key = md5 + ":" + chunk;
-            map.putIfAbsent(key, source);
-        }
-        List<RetrievalMatch> deduplicated = new ArrayList<>(map.values());
-        deduplicated.sort((a, b) -> Double.compare(
-                b.getRelevanceScore() != null ? b.getRelevanceScore() : 0.0,
-                a.getRelevanceScore() != null ? a.getRelevanceScore() : 0.0
-        ));
-        return deduplicated;
-    }
 
     private String truncateText(String text, int maxLength) {
         if (text == null) {
@@ -226,5 +242,264 @@ public class RagPromptService {
 
     private String getSourceLabel(RetrievalMatch match) {
         return StringUtils.hasText(match.getSourceFileName()) ? match.getSourceFileName() : "未知来源";
+    }
+
+    private List<Map<String, String>> buildSingleIntentMessages(PromptContext promptContext,
+                                                                List<Map<String, String>> conversationHistory,
+                                                                IntentPromptDescriptor intentPrompt) {
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "system", "content",
+            buildSystemPrompt(promptContext, SINGLE_INTENT_DEFAULT_PROMPT)));
+
+        if (intentPrompt != null && !isBlank(intentPrompt.label())) {
+            messages.add(Map.of("role", "system", "content", "## 当前事项\n" + intentPrompt.label().trim()));
+        }
+
+        if (promptContext.hasKb()) {
+            messages.add(Map.of("role", "user", "content", promptContext.getKbContext()));
+        }
+
+        messages.addAll(llmService.toStructuredHistory(conversationHistory));
+        if (!isBlank(promptContext.getQuestion())) {
+            messages.add(Map.of("role", "user", "content", promptContext.getQuestion().trim()));
+        }
+        return messages;
+    }
+
+    private List<Map<String, String>> buildMultiIntentMessages(PromptContext promptContext,
+                                                               List<Map<String, String>> conversationHistory,
+                                                               List<SubQueryRetrievalResult> subQueryResults) {
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "system", "content",
+            buildSystemPrompt(promptContext, MULTI_INTENT_DEFAULT_PROMPT)));
+
+        if (promptContext.hasTool()) {
+            messages.add(Map.of("role", "system", "content", promptContext.getToolContext()));
+        }
+        if (promptContext.hasKb()) {
+            messages.add(Map.of("role", "user", "content", promptContext.getKbContext()));
+        }
+
+        if (ragProperties.getPrompt().isIncludeHistoryInMultiIntent()) {
+            messages.addAll(llmService.toStructuredHistory(conversationHistory));
+        }
+        messages.add(Map.of("role", "user", "content", buildMultiIntentUserQuery(promptContext.getQuestion(), subQueryResults)));
+        return messages;
+    }
+
+    private String buildMultiIntentRuleBlock(List<SubQueryRetrievalResult> subQueryResults) {
+        List<String> ruleLines = new ArrayList<>();
+        for (SubQueryRetrievalResult result : subQueryResults) {
+            String rule = extractIntentRule(result);
+            if (!isBlank(rule) && !ruleLines.contains(rule)) {
+                ruleLines.add(rule);
+            }
+        }
+        if (ruleLines.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder("## 回答规则\n");
+        for (int i = 0; i < ruleLines.size(); i++) {
+            builder.append(i + 1).append(". ").append(ruleLines.get(i)).append("\n");
+        }
+        builder.append(ruleLines.size() + 1)
+            .append(". 回答尽量精炼，优先覆盖全部事项，再补充关键流程、条件和时间节点。\n");
+        return builder.toString().trim();
+    }
+
+    private String buildMultiIntentDynamicBlock(List<SubQueryRetrievalResult> subQueryResults) {
+        StringBuilder prompt = new StringBuilder();
+        boolean hasContent = false;
+        prompt.append(TOOL_CONTEXT_HEADER).append("\n");
+        for (int i = 0; i < subQueryResults.size(); i++) {
+            SubQueryRetrievalResult result = subQueryResults.get(i);
+            if (!isBlank(result.directResponse())) {
+                hasContent = true;
+                prompt.append("### ").append(i + 1).append(". ").append(result.query()).append("\n");
+                prompt.append(result.directResponse()).append("\n\n");
+            } else if (result.clarifyTriggered() && !isBlank(result.clarifyMessage())) {
+                hasContent = true;
+                prompt.append("### ").append(i + 1).append(". ").append(result.query()).append("\n");
+                prompt.append("资料不足：").append(result.clarifyMessage()).append("\n\n");
+            }
+        }
+        if (!hasContent) {
+            return "";
+        }
+        return prompt.toString().trim();
+    }
+
+    private String buildSingleIntentDocumentBlock(List<RetrievalMatch> retrievalResults) {
+        if (retrievalResults == null || retrievalResults.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder(KB_CONTEXT_HEADER).append("\n");
+        for (int i = 0; i < retrievalResults.size(); i++) {
+            RetrievalMatch match = retrievalResults.get(i);
+            builder.append("[").append(i + 1).append("] ")
+                .append("(").append(getSourceLabel(match)).append(") ")
+                .append(truncateText(match.getTextContent(), ragProperties.getPrompt().getMaxReferenceLength()))
+                .append("\n");
+        }
+        return builder.toString().trim();
+    }
+
+    private String buildMultiIntentDocumentBlock(List<SubQueryRetrievalResult> subQueryResults) {
+        List<RetrievalMatch> merged = collectDisplayedMultiIntentSources(subQueryResults);
+        if (merged.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder(KB_CONTEXT_HEADER).append("\n");
+        for (int i = 0; i < merged.size(); i++) {
+            RetrievalMatch match = merged.get(i);
+            builder.append("[").append(i + 1).append("] ")
+                .append("(").append(getSourceLabel(match)).append(") ")
+                .append(truncateText(match.getTextContent(),
+                    Math.max(60, Math.min(
+                        ragProperties.getPrompt().getMultiIntentSnippetLength(),
+                        ragProperties.getPrompt().getMaxReferenceLength()
+                    ))))
+                .append("\n");
+        }
+        return builder.toString().trim();
+    }
+
+    private String buildMultiIntentUserQuery(String originalQuery, List<SubQueryRetrievalResult> subQueryResults) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("原始用户问题：\n")
+            .append(originalQuery == null ? "" : originalQuery)
+            .append("\n\n请结合上述资料，按顺序完整回答这些事项：\n");
+        for (int i = 0; i < subQueryResults.size(); i++) {
+            SubQueryRetrievalResult result = subQueryResults.get(i);
+            builder.append(i + 1).append(". ").append(result.query()).append("\n");
+        }
+        return builder.toString().trim();
+    }
+
+    private String buildSystemPrompt(PromptContext context, String fallbackPrompt) {
+        StringBuilder builder = new StringBuilder();
+        String rules = llmService.systemRulesPrompt();
+        if (StringUtils.hasText(rules)) {
+            builder.append(rules.trim()).append("\n\n");
+        }
+        if (context != null && StringUtils.hasText(context.getPreferredPrompt())) {
+            builder.append(context.getPreferredPrompt().trim()).append("\n\n");
+        } else if (StringUtils.hasText(fallbackPrompt)) {
+            builder.append(fallbackPrompt.trim()).append("\n\n");
+        }
+        if (context != null && StringUtils.hasText(context.getPromptSnippet())) {
+            builder.append(context.getPromptSnippet().trim()).append("\n\n");
+        }
+        // 场景约束由模板文件（rag-single-intent.st / rag-multi-intent.st）承载，
+        // 此处不再追加硬编码约束，避免与模板内容重复。
+        return builder.toString().trim();
+    }
+
+    private String streamStructuredAnswer(List<Map<String, String>> messages,
+                                          Consumer<String> chunkHandler,
+                                          boolean hasToolContext) {
+        return streamStructuredAnswer(messages, chunkHandler, hasToolContext, null);
+    }
+
+    /**
+     * 执行流式结构化答案生成，支持 LLM 层取消句柄（对齐 ragent StreamCancellationHandle）。
+     *
+     * @param cancelHandle 可选的取消句柄；非 null 时，LLM 层会在每个 chunk 读取后检查取消状态
+     */
+    private String streamStructuredAnswer(List<Map<String, String>> messages,
+                                          Consumer<String> chunkHandler,
+                                          boolean hasToolContext,
+                                          @Nullable StreamCancellationHandle cancelHandle) {
+        long start = System.nanoTime();
+        RagProperties.Prompt promptConfig = ragProperties.getPrompt();
+        double temperature = hasToolContext ? promptConfig.getTemperatureTool() : promptConfig.getTemperatureKb();
+        double topP = hasToolContext ? promptConfig.getTopPTool() : promptConfig.getTopPKb();
+        int maxTokens = hasToolContext ? promptConfig.getMultiIntentMaxTokens() : promptConfig.getSingleIntentMaxTokens();
+        StringBuilder responseBuilder = new StringBuilder();
+        AtomicReference<Throwable> streamError = new AtomicReference<>();
+        llmService.streamResponseWithHandle(
+            messages,
+            temperature,
+            topP,
+            maxTokens,
+            chunk -> {
+                responseBuilder.append(chunk);
+                if (chunkHandler != null) {
+                    chunkHandler.accept(chunk);
+                }
+            },
+            streamError::set,
+            () -> {
+            },
+            cancelHandle
+        );
+        Throwable err = streamError.get();
+        if (err != null) {
+            throw new RuntimeException("AI服务异常: " + err.getMessage(), err);
+        }
+        log.info("结构化答案生成完成 | messages={} | responseChars={} | hasToolContext={} | cancelled={} | 耗时={}ms",
+            messages == null ? 0 : messages.size(), responseBuilder.length(), hasToolContext,
+            cancelHandle != null && cancelHandle.isCancelled(), elapsedMs(start));
+        return responseBuilder.toString();
+    }
+
+    private String compact(String text) {
+        if (text == null) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ").trim();
+        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
+    }
+
+    private long elapsedMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
+    }
+
+    private boolean isBlank(String text) {
+        return text == null || text.isBlank();
+    }
+
+    private String extractIntentRule(SubQueryRetrievalResult result) {
+        if (result == null || result.intent() == null) {
+            return "";
+        }
+        if (!isBlank(result.intent().getPromptSnippet())) {
+            return result.intent().getPromptSnippet().trim();
+        }
+        if (!isBlank(result.intent().getPromptTemplate())) {
+            return result.intent().getPromptTemplate().trim();
+        }
+        if (!isBlank(result.intent().getLevel2())) {
+            return "优先围绕“" + result.intent().getLevel2().trim() + "”事项回答。";
+        }
+        return "";
+    }
+
+    public record IntentPromptDescriptor(String label, String promptTemplate, String promptSnippet) {
+    }
+
+    @Getter
+    @Builder
+    private static class PromptContext {
+
+        private final String question;
+        private final String kbContext;
+        private final String toolContext;
+        private final String preferredPrompt;
+        private final String promptSnippet;
+        private final List<String> subQuestions;
+
+        private boolean hasKb() {
+            return kbContext != null && !kbContext.isBlank();
+        }
+
+        private boolean hasTool() {
+            return toolContext != null && !toolContext.isBlank();
+        }
+
+        private boolean isMultiIntent() {
+            return subQuestions != null && subQuestions.size() > 1;
+        }
     }
 }

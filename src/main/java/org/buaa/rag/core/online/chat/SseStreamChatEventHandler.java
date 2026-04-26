@@ -14,11 +14,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * 基于 SSE 的流式事件处理器：实现 {@link StreamChatCallback}，
  * 将业务事件翻译为标准 SSE 帧发送给前端。
  *
- * <p>事件类型定义：
+ * <p>事件类型定义（对齐 ragent 协议）：
  * <ul>
  *   <li>{@code meta}    - 首帧，携带 messageId + taskId</li>
- *   <li>{@code message} - LLM 内容分块</li>
+ *   <li>{@code message} - LLM 内容分块（JSON: {"type":"response","delta":"..."}）</li>
  *   <li>{@code sources} - 检索来源列表（JSON）</li>
+ *   <li>{@code finish}  - 完成通知（JSON: {"title":"...","messageId":123}）</li>
  *   <li>{@code done}    - 正常结束标志</li>
  *   <li>{@code error}   - 错误描述</li>
  * </ul>
@@ -61,7 +62,11 @@ public class SseStreamChatEventHandler implements StreamChatCallback {
             return;
         }
         try {
-            emitter.send(SseEmitter.event().name("message").data(chunk));
+            // 对齐 ragent 协议：message 事件携带 JSON {type:"response", delta:"..."}
+            String payload = objectMapper.writeValueAsString(
+                new MessageDelta("response", chunk)
+            );
+            emitter.send(SseEmitter.event().name("message").data(payload));
         } catch (Exception e) {
             log.debug("发送 message 事件失败: {}", e.getMessage());
             markCancelled();
@@ -82,12 +87,28 @@ public class SseStreamChatEventHandler implements StreamChatCallback {
     }
 
     @Override
+    public void onFinish(String title, Long messageId) {
+        if (cancelled.get()) {
+            return;
+        }
+        try {
+            // 对齐 ragent 协议：finish 事件携带对话标题和消息 ID
+            String payload = objectMapper.writeValueAsString(
+                new FinishPayload(title, messageId)
+            );
+            emitter.send(SseEmitter.event().name("finish").data(payload));
+        } catch (Exception e) {
+            log.debug("发送 finish 事件失败: {}", e.getMessage());
+        }
+    }
+
+    @Override
     public void onComplete() {
         if (!completed.compareAndSet(false, true)) {
             return;
         }
         try {
-            emitter.send(SseEmitter.event().name("done").data(""));
+            emitter.send(SseEmitter.event().name("done").data("[DONE]"));
         } catch (Exception e) {
             log.debug("发送 done 事件失败: {}", e.getMessage());
         } finally {
@@ -125,4 +146,8 @@ public class SseStreamChatEventHandler implements StreamChatCallback {
     // ──────────────────────── payload records ────────────────────────
 
     public record MetaPayload(Long messageId, String taskId) {}
+
+    public record MessageDelta(String type, String delta) {}
+
+    public record FinishPayload(String title, Long messageId) {}
 }

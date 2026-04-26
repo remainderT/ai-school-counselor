@@ -3,7 +3,7 @@ package org.buaa.rag.core.online.retrieval.postprocessor;
 import java.util.List;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.core.online.rerank.RerankService;
+import org.buaa.rag.core.online.rerank.RoutingRerankService;
 import org.buaa.rag.properties.LlmProperties;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.core.model.CragDecision;
@@ -23,22 +23,24 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessorService {
+public class RetrievalPostProcessorServiceImpl {
 
     private static final String DEFAULT_CRAG_PROMPT = PromptTemplateLoader.load("retrieval-crag.st");
 
     private static final String DEFAULT_CLARIFY_PROMPT = PromptTemplateLoader.load("retrieval-clarify.st");
+    private static final double CRAG_TEMPERATURE = 0.1D;
+    private static final double CRAG_TOP_P = 0.3D;
 
     private final LlmChat llmChat;
     private final RagProperties ragProperties;
     private final LlmProperties llmProperties;
-    private final RerankService rerankService;
+    private final RoutingRerankService rerankService;
     private final ObjectMapper objectMapper;
 
     public RetrievalPostProcessorServiceImpl(LlmChat llmChat,
                                              RagProperties ragProperties,
                                              LlmProperties llmProperties,
-                                             RerankService rerankService,
+                                             RoutingRerankService rerankService,
                                              ObjectMapper objectMapper) {
         this.llmChat = llmChat;
         this.ragProperties = ragProperties;
@@ -48,6 +50,7 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
     }
 
     public CragDecision evaluate(String query, List<RetrievalMatch> matches) {
+        long start = System.nanoTime();
         RagProperties.Crag config = ragProperties.getCrag();
         if (config == null || !config.isEnabled()) {
             return new CragDecision(CragDecision.Action.ANSWER, null);
@@ -55,23 +58,37 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
 
         if (matches == null || matches.isEmpty()) {
             if (isLikelyAmbiguous(query)) {
-                return new CragDecision(CragDecision.Action.CLARIFY, buildClarifyQuestion(query, config));
+                CragDecision decision = new CragDecision(CragDecision.Action.CLARIFY, buildClarifyQuestion(query, config));
+                log.info("CRAG评估完成 | query='{}' | matches=0 | action={} | 耗时={}ms",
+                    compact(query), decision.getAction(), elapsedMs(start));
+                return decision;
             }
-            return new CragDecision(CragDecision.Action.NO_ANSWER, noResultMessage());
+            CragDecision decision = new CragDecision(CragDecision.Action.NO_ANSWER, noResultMessage());
+            log.info("CRAG评估完成 | query='{}' | matches=0 | action={} | 耗时={}ms",
+                compact(query), decision.getAction(), elapsedMs(start));
+            return decision;
         }
 
         if (config.isUseLlm() && shouldReviewWithLlm(matches, config)) {
             CragDecision decision = evaluateWithLlm(query, matches, config);
             if (decision != null) {
+                log.info("CRAG评估完成 | query='{}' | matches={} | action={} | llmReview=true | 耗时={}ms",
+                    compact(query), matches.size(), decision.getAction(), elapsedMs(start));
                 return decision;
             }
         }
 
         if (isLowQuality(matches, config.getMinScore())) {
-            return new CragDecision(CragDecision.Action.REFINE, null);
+            CragDecision decision = new CragDecision(CragDecision.Action.REFINE, null);
+            log.info("CRAG评估完成 | query='{}' | matches={} | action={} | llmReview=false | 耗时={}ms",
+                compact(query), matches.size(), decision.getAction(), elapsedMs(start));
+            return decision;
         }
 
-        return new CragDecision(CragDecision.Action.ANSWER, null);
+        CragDecision decision = new CragDecision(CragDecision.Action.ANSWER, null);
+        log.info("CRAG评估完成 | query='{}' | matches={} | action={} | llmReview=false | 耗时={}ms",
+            compact(query), matches.size(), decision.getAction(), elapsedMs(start));
+        return decision;
     }
 
     public String noResultMessage() {
@@ -131,7 +148,13 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
                 .append("\n");
         }
 
-        String output = llmChat.generateCompletion(prompt, content.toString(), 256);
+        String output = llmChat.generateCompletion(
+            prompt,
+            content.toString(),
+            256,
+            CRAG_TEMPERATURE,
+            CRAG_TOP_P
+        );
         if (output == null || output.isBlank()) {
             return null;
         }
@@ -175,7 +198,13 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
         if (!config.isUseLlm()) {
             return "为了更准确回答，请补充问题的具体场景，例如涉及哪一年、学院或制度名称。";
         }
-        String output = llmChat.generateCompletion(DEFAULT_CLARIFY_PROMPT, query, 64);
+        String output = llmChat.generateCompletion(
+            DEFAULT_CLARIFY_PROMPT,
+            query,
+            64,
+            CRAG_TEMPERATURE,
+            CRAG_TOP_P
+        );
         if (output == null || output.isBlank()) {
             return "为了更准确回答，请补充问题的具体场景，例如涉及哪一年、学院或制度名称。";
         }
@@ -207,5 +236,17 @@ public class RetrievalPostProcessorServiceImpl implements RetrievalPostProcessor
             return text;
         }
         return text.substring(0, maxLength) + "...";
+    }
+
+    private String compact(String text) {
+        if (text == null) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ").trim();
+        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
+    }
+
+    private long elapsedMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 }

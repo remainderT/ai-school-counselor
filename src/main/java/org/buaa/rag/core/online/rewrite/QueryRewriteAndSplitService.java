@@ -37,15 +37,22 @@ public class QueryRewriteAndSplitService {
 
     private static final String DEFAULT_PROMPT =
             PromptTemplateLoader.load("query-rewrite-and-split.st");
+    private static final double REWRITE_TEMPERATURE = 0.1D;
+    private static final double REWRITE_TOP_P = 0.3D;
 
     private final LlmChat llmChat;
     private final RagProperties ragProperties;
     private final ObjectMapper objectMapper;
+    private final QueryTermMappingService queryTermMappingService;
 
-    public QueryRewriteAndSplitService(LlmChat llmChat, RagProperties ragProperties, ObjectMapper objectMapper) {
+    public QueryRewriteAndSplitService(LlmChat llmChat,
+                                       RagProperties ragProperties,
+                                       ObjectMapper objectMapper,
+                                       QueryTermMappingService queryTermMappingService) {
         this.llmChat = llmChat;
         this.ragProperties = ragProperties;
         this.objectMapper = objectMapper;
+        this.queryTermMappingService = queryTermMappingService;
     }
 
     /**
@@ -65,35 +72,58 @@ public class QueryRewriteAndSplitService {
      * @param conversationHistory 完整对话历史（{@code role}/{@code content} Map 列表），可为 null
      */
     public QueryRewriteResult rewriteAndSplit(String userQuery, List<Map<String, String>> conversationHistory) {
+        return rewriteWithSplit(userQuery, conversationHistory);
+    }
+
+    public QueryRewriteResult rewriteWithSplit(String userQuery, List<Map<String, String>> conversationHistory) {
         if (!StringUtils.hasText(userQuery)) {
             return fallback(userQuery, 0L);
         }
 
         RagProperties.QueryPreprocess cfg = ragProperties.getQueryPreprocess();
         if (cfg == null || !cfg.isEnabled()) {
-            return fallback(userQuery, 0L);
+            return fastPathFallback(userQuery, 0L);
+        }
+
+        // 词项归一化（对齐 ragent QueryTermMappingService）：在 LLM 改写前先做同义词映射
+        String normalizedQuery = queryTermMappingService.normalize(normalizeQuery(userQuery));
+        if (shouldUseFastPath(normalizedQuery, conversationHistory)) {
+            long start = System.nanoTime();
+            List<String> subQuestions = ruleBasedSplit(normalizedQuery, Math.max(1, cfg.getMaxSubQuestions()));
+            long latencyMs = (System.nanoTime() - start) / 1_000_000L;
+            log.info("查询改写拆分快速路径命中 | 原问题长度={} | 子问题数={} | 耗时={}ms",
+                normalizedQuery.length(), subQuestions.size(), latencyMs);
+            return new QueryRewriteResult(normalizedQuery, subQuestions, latencyMs);
         }
 
         long start = System.nanoTime();
         String systemPrompt = DEFAULT_PROMPT;
         // 构建携带历史上下文的 userPrompt（最近 2 轮对话作为前缀）
-        String userPrompt = buildUserPromptWithHistory(userQuery, conversationHistory);
-        String rawOutput = llmChat.generateCompletion(systemPrompt, userPrompt, 512);
+        String userPrompt = buildUserPromptWithHistory(normalizedQuery, conversationHistory);
+        String rawOutput = llmChat.generateCompletion(
+            systemPrompt,
+            userPrompt,
+            512,
+            REWRITE_TEMPERATURE,
+            REWRITE_TOP_P
+        );
         long latencyMs = (System.nanoTime() - start) / 1_000_000L;
 
         if (!StringUtils.hasText(rawOutput)) {
             log.debug("改写+拆分 LLM 无输出，降级透传原始问题");
-            return fallback(userQuery, latencyMs);
+            return fastPathFallback(normalizedQuery, latencyMs);
         }
 
         ParsedOutput parsed = parse(rawOutput, Math.max(1, cfg.getMaxSubQuestions()));
         if (parsed == null || !StringUtils.hasText(parsed.rewrite())) {
             log.debug("改写+拆分 JSON 解析失败，降级透传原始问题");
-            return fallback(userQuery, latencyMs);
+            return fastPathFallback(normalizedQuery, latencyMs);
         }
 
         log.debug("查询改写+拆分完成 | 原问题: {} | 改写: {} | 子问题: {} | 耗时: {}ms",
-                userQuery, parsed.rewrite(), parsed.subQuestions(), latencyMs);
+                normalizedQuery, parsed.rewrite(), parsed.subQuestions(), latencyMs);
+        log.info("查询改写拆分完成 | 原问题长度={} | 子问题数={} | 耗时={}ms",
+            normalizedQuery.length(), parsed.subQuestions().size(), latencyMs);
 
         return new QueryRewriteResult(parsed.rewrite(), parsed.subQuestions(), latencyMs);
     }
@@ -177,6 +207,61 @@ public class QueryRewriteAndSplitService {
     private QueryRewriteResult fallback(String userQuery, long latencyMs) {
         String safe = StringUtils.hasText(userQuery) ? userQuery.trim() : "";
         return new QueryRewriteResult(safe, List.of(), latencyMs);
+    }
+
+    private QueryRewriteResult fastPathFallback(String userQuery, long latencyMs) {
+        String safe = normalizeQuery(userQuery);
+        return new QueryRewriteResult(safe, ruleBasedSplit(safe, Math.max(1, ragProperties.getQueryPreprocess().getMaxSubQuestions())), latencyMs);
+    }
+
+    private String normalizeQuery(String userQuery) {
+        if (!StringUtils.hasText(userQuery)) {
+            return "";
+        }
+        return userQuery.replaceAll("\\s+", " ").trim();
+    }
+
+    private boolean shouldUseFastPath(String query, List<Map<String, String>> conversationHistory) {
+        if (!StringUtils.hasText(query)) {
+            return false;
+        }
+        if (conversationHistory != null && !conversationHistory.isEmpty()) {
+            return false;
+        }
+        boolean hasMultiIntentDelimiter = query.contains("；")
+            || query.contains(";")
+            || query.contains("\n")
+            || query.contains("另外")
+            || query.contains("还有")
+            || query.contains("最后");
+        if (!hasMultiIntentDelimiter) {
+            return false;
+        }
+        return !query.contains("它")
+            && !query.contains("那个")
+            && !query.contains("上面")
+            && !query.contains("前面");
+    }
+
+    private List<String> ruleBasedSplit(String query, int maxSubQuestions) {
+        if (!StringUtils.hasText(query)) {
+            return List.of();
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        for (String part : query.split("[；;\\n]+")) {
+            String normalized = part == null ? "" : part.trim();
+            if (!StringUtils.hasText(normalized)) {
+                continue;
+            }
+            seen.add(normalized);
+            if (seen.size() >= maxSubQuestions) {
+                break;
+            }
+        }
+        if (seen.isEmpty()) {
+            return List.of(query);
+        }
+        return List.copyOf(seen);
     }
 
     /** 去除 LLM 可能输出的 ```json ... ``` 包裹 */

@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.buaa.rag.dao.entity.IntentNodeDO;
 import org.buaa.rag.dao.mapper.IntentNodeMapper;
@@ -64,6 +65,8 @@ public class IntentPatternService {
     @Value("${elasticsearch.intent-index:intent_patterns}")
     private String intentIndex;
 
+    private final Object initLock = new Object();
+    private final AtomicBoolean initialized = new AtomicBoolean(false);
     private List<IntentSeed> seedPatterns;
 
     public Optional<IntentDecision> semanticRoute(String query) {
@@ -164,13 +167,27 @@ public class IntentPatternService {
     }
 
     private void ensureIndexAndSeeds() throws IOException {
-        loadSeedsIfNeeded();
-        boolean exists = esClient.indices().exists(ExistsRequest.of(b -> b.index(intentIndex))).value();
-        if (!exists) {
-            createIndex();
+        if (initialized.get()) {
+            return;
         }
-        if (indexIsEmpty()) {
-            bulkSeed();
+        synchronized (initLock) {
+            if (initialized.get()) {
+                return;
+            }
+            long start = System.nanoTime();
+            loadSeedsIfNeeded();
+            boolean exists = esClient.indices().exists(ExistsRequest.of(b -> b.index(intentIndex))).value();
+            if (!exists) {
+                createIndex();
+            }
+            if (indexIsEmpty()) {
+                bulkSeed();
+            }
+            initialized.set(true);
+            log.info("意图样本索引初始化完成 | index={} | seeds={} | 耗时={}ms",
+                intentIndex,
+                seedPatterns == null ? 0 : seedPatterns.stream().mapToInt(item -> item.samples().size()).sum(),
+                elapsedMs(start));
         }
     }
 
@@ -396,6 +413,10 @@ public class IntentPatternService {
             return "";
         }
         return text.trim();
+    }
+
+    private long elapsedMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
     private record IntentSeed(String intentCode,

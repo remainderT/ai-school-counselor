@@ -26,7 +26,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
 @Service
-public class ConversationMemoryServiceImpl implements ConversationMemoryService {
+public class ConversationMemoryServiceImpl {
 
     private static final Logger log = LoggerFactory.getLogger(ConversationMemoryServiceImpl.class);
     private static final String SUMMARY_PREFIX = "历史会话摘要：";
@@ -56,7 +56,6 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
         this.memorySummaryExecutor = memorySummaryExecutor;
     }
 
-    @Override
     public List<Map<String, String>> buildContext(String sessionId, List<Map<String, String>> history) {
         if (history == null || history.isEmpty()) {
             return history == null ? List.of() : history;
@@ -93,7 +92,6 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
         return context;
     }
 
-    @Override
     public List<Map<String, String>> loadContextParallel(String sessionId, Long userId, int maxHistory) {
         RagProperties.Memory memoryConfig = ragProperties.getMemory();
         int limit = maxHistory > 0 ? maxHistory : ragProperties.getMemory().getDefaultMaxHistory();
@@ -164,7 +162,6 @@ public class ConversationMemoryServiceImpl implements ConversationMemoryService 
         return context;
     }
 
-    @Override
     public void scheduleSummary(String sessionId, Long userId) {
         RagProperties.Memory memoryConfig = ragProperties.getMemory();
         if (memoryConfig == null || !memoryConfig.isSummaryEnabled()) {

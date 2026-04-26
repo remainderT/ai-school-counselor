@@ -7,8 +7,14 @@ export interface StreamHandlers {
   onText?: (text: string) => void;
   onSources?: (sources: unknown) => void;
   onMessageId?: (messageId: number) => void;
+  onFinish?: (payload: FinishPayload) => void;
   onDone?: () => void;
   onError?: (error: Error) => void;
+}
+
+export interface FinishPayload {
+  title?: string;
+  messageId?: number;
 }
 
 /** 尝试将 SSE data 字段解析为 JSON；解析失败时返回原始字符串 */
@@ -26,9 +32,19 @@ function tryParseJson(text: string): unknown {
 function routeEvent(name: string, payload: unknown, handlers: StreamHandlers): void {
   handlers.onEvent?.({ event: name, data: payload });
   switch (name) {
-    case "message":
-      handlers.onText?.(String(payload));
+    case "message": {
+      // 新格式：{type: "response", delta: "..."} 或旧格式直接字符串
+      if (payload && typeof payload === "object" && "delta" in payload) {
+        const msgPayload = payload as { type?: string; delta?: string };
+        if (msgPayload.type === "response" || !msgPayload.type) {
+          handlers.onText?.(msgPayload.delta ?? "");
+        }
+        // type === "think" 时忽略（本项目不支持深度思考，但预留兼容）
+      } else {
+        handlers.onText?.(String(payload));
+      }
       break;
+    }
     case "meta": {
       const messageId = extractMessageId(payload);
       if (messageId !== null) {
@@ -39,6 +55,16 @@ function routeEvent(name: string, payload: unknown, handlers: StreamHandlers): v
     case "sources":
       handlers.onSources?.(payload);
       break;
+    case "finish": {
+      // 新格式：{title: "...", messageId: 123}
+      const finishPayload = payload && typeof payload === "object" ? payload as FinishPayload : {};
+      handlers.onFinish?.(finishPayload);
+      // 如果 finish 事件里有 messageId，也通知 onMessageId（兼容性）
+      if (finishPayload.messageId) {
+        handlers.onMessageId?.(finishPayload.messageId);
+      }
+      break;
+    }
     case "messageId":
       handlers.onMessageId?.(Number(payload));
       break;

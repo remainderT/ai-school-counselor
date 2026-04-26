@@ -115,16 +115,6 @@ stream:
   poll-interval-ms: 500
   max-retries: 1
 
-mcp:
-  weather:
-    enabled: true
-    server-url: http://localhost:18080/mcp
-    tool-name: weather_query
-    connect-timeout-ms: 1500
-    read-timeout-ms: 3000
-    fallback-enabled: true
-
-
 ai:
   prompt:
     ref-start: "<<参考资料开始>>"

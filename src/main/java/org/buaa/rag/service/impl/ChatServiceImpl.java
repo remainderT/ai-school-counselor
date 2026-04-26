@@ -22,21 +22,18 @@ import org.buaa.rag.common.user.UserContext;
 import org.buaa.rag.core.model.FeedbackRequest;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
-import org.buaa.rag.core.model.ChatExecutionResult;
-import org.buaa.rag.core.model.ChatRoutingPlan;
-import org.buaa.rag.core.online.chat.OnlineChatOrchestrator;
 import org.buaa.rag.core.online.chat.SseStreamChatEventHandler;
 import org.buaa.rag.core.online.chat.StreamChatCallback;
+import org.buaa.rag.core.online.chat.StreamChatPipeline;
 import org.buaa.rag.core.online.chat.StreamTaskManager;
 import org.buaa.rag.core.online.intent.IntentRouterService;
 import org.buaa.rag.core.online.retrieval.MultiChannelRetrievalEngine;
-import org.buaa.rag.core.online.retrieval.SmartRetrieverService;
-import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorService;
+import org.buaa.rag.core.online.retrieval.SmartRetrieverServiceImpl;
+import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorServiceImpl;
 import org.buaa.rag.dao.entity.ChatTraceMetricDO;
 import org.buaa.rag.dao.mapper.ChatTraceMetricMapper;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.service.ChatService;
-import org.buaa.rag.service.ConversationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -49,47 +46,24 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
+@RequiredArgsConstructor
 public class ChatServiceImpl implements ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
     private static final Pattern CITATION_INDEX_PATTERN = Pattern.compile("\\[(\\d+)]");
 
-    private final SmartRetrieverService retrieverService;
+    private final SmartRetrieverServiceImpl retrieverService;
     private final MultiChannelRetrievalEngine multiChannelRetrievalEngine;
-    private final RetrievalPostProcessorService postProcessorService;
+    private final RetrievalPostProcessorServiceImpl postProcessorService;
     private final IntentRouterService intentRouterService;
-    private final ConversationService conversationService;
+    private final ConversationServiceImpl conversationService;
     private final ChatTraceMetricMapper chatTraceMetricMapper;
-    private final OnlineChatOrchestrator onlineChatOrchestrator;
+    private final StreamChatPipeline streamChatPipeline;
     private final StreamTaskManager streamTaskManager;
     private final ObjectMapper objectMapper;
     private final RagProperties ragProperties;
     @Qualifier("chatStreamExecutor")
     private final Executor chatStreamExecutor;
-
-    public ChatServiceImpl(SmartRetrieverService retrieverService,
-                           MultiChannelRetrievalEngine multiChannelRetrievalEngine,
-                           RetrievalPostProcessorService postProcessorService,
-                           IntentRouterService intentRouterService,
-                           ConversationService conversationService,
-                           ChatTraceMetricMapper chatTraceMetricMapper,
-                           OnlineChatOrchestrator onlineChatOrchestrator,
-                           StreamTaskManager streamTaskManager,
-                           ObjectMapper objectMapper,
-                           RagProperties ragProperties,
-                           @Qualifier("chatStreamExecutor") Executor chatStreamExecutor) {
-        this.retrieverService = retrieverService;
-        this.multiChannelRetrievalEngine = multiChannelRetrievalEngine;
-        this.postProcessorService = postProcessorService;
-        this.intentRouterService = intentRouterService;
-        this.conversationService = conversationService;
-        this.chatTraceMetricMapper = chatTraceMetricMapper;
-        this.onlineChatOrchestrator = onlineChatOrchestrator;
-        this.streamTaskManager = streamTaskManager;
-        this.objectMapper = objectMapper;
-        this.ragProperties = ragProperties;
-        this.chatStreamExecutor = chatStreamExecutor;
-    }
 
     // ──────────────────────── handleChatStream ────────────────────────
 
@@ -135,80 +109,22 @@ public class ChatServiceImpl implements ChatService {
 
     @Override
     public void streamChat(String message, Long userId, String taskId, StreamChatCallback callback) {
+        StreamChatPipeline.ExecutionResult executionResult = null;
         String sessionId = null;
         Long assistantMessageId = null;
-        ChatExecutionResult executionResult = null;
-        // 在与下游 intent/retrieval 层交互时使用字符串形式的 userId
-        String userIdStr = String.valueOf(resolveUserId(userId));
 
         try {
-            // 1) 创建/复用会话
-            sessionId = conversationService.obtainOrCreateSession(userId);
+            StreamChatPipeline.Context ctx = StreamChatPipeline.Context.builder()
+                .message(message)
+                .userId(resolveUserId(userId))
+                .taskId(taskId)
+                .callback(callback)
+                .build();
+            executionResult = streamChatPipeline.execute(ctx);
+            sessionId = ctx.getSessionId();
+            assistantMessageId = ctx.getAssistantMessageId();
 
-            // 2) 持久化用户消息 + 创建 assistant 占位符
-            conversationService.appendUserMessage(sessionId, userId, message);
-            assistantMessageId = conversationService.createAssistantPlaceholder(sessionId, userId);
-
-            // 3) 首帧立即推送元信息（前端可立即获得 messageId + taskId）
-            callback.onMeta(assistantMessageId, taskId);
-
-            // 4) 绑定取消句柄（SSE 断连时可通过 taskId 清理）
-            final String capturedSessionId = sessionId;
-            final Long capturedMessageId = assistantMessageId;
-            final Long capturedUserId = userId;
-            streamTaskManager.bindCancel(taskId, () -> {
-                try {
-                    conversationService.failAssistantMessage(
-                        capturedSessionId, capturedMessageId, capturedUserId, "（用户已取消请求）");
-                } catch (Exception ignored) {
-                }
-            });
-
-            // 5) 并行加载会话上下文（摘要 + 历史）
-            List<Map<String, String>> conversationHistory = conversationService.loadConversationContext(sessionId);
-
-            // 6) 查询改写 + 子问题拆分 + 并行意图解析
-            //    携带历史上下文，让改写 LLM 能消歧代词（"它"/"上面说的"等）
-            ChatRoutingPlan routingPlan = onlineChatOrchestrator.rewriteSplitAndResolve(
-                    userIdStr, message, conversationHistory);
-
-            // 7) 歧义引导检测（若需要澄清则跳过检索直接回复）
-            String guidanceQuestion = onlineChatOrchestrator.detectGuidanceQuestion(routingPlan);
-            if (!isBlankString(guidanceQuestion)) {
-                callback.onContent(guidanceQuestion);
-                executionResult = new ChatExecutionResult(guidanceQuestion, List.of(), true, 0, 0, routingPlan.rewriteLatencyMs());
-            } else {
-                // 8) 检索 + Prompt 组装 + LLM 流式输出
-                executionResult = onlineChatOrchestrator.executeWithPlan(
-                    userIdStr,
-                    message,
-                    conversationHistory,
-                    routingPlan,
-                    chunk -> {
-                        if (!callback.isCancelled()) {
-                            callback.onContent(chunk);
-                        }
-                    }
-                );
-            }
-
-            // 9) 持久化 assistant 消息（流式占位符 → 最终内容）
-            conversationService.completeAssistantMessage(
-                sessionId,
-                assistantMessageId,
-                userId,
-                executionResult.response(),
-                executionResult.sources()
-            );
-
-            // 10) 推送来源引用
-            callback.onSources(executionResult.sources());
-
-            // 11) 写入在线链路指标
             persistTraceMetric(sessionId, assistantMessageId, userId, message, executionResult);
-
-            // 12) 正常完成
-            callback.onComplete();
 
         } catch (Exception e) {
             log.error("流式对话处理异常, userId={}, taskId={}", userId, taskId, e);
@@ -324,7 +240,7 @@ public class ChatServiceImpl implements ChatService {
                                     Long messageId,
                                     Long userId,
                                     String query,
-                                    ChatExecutionResult result) {
+                                    StreamChatPipeline.ExecutionResult result) {
         if (messageId == null || result == null) {
             return;
         }

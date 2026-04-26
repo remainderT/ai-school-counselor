@@ -3,16 +3,13 @@ package org.buaa.rag.core.online.retrieval.channel;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 import org.buaa.rag.common.enums.SearchChannelType;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
+import org.buaa.rag.core.online.retrieval.SmartRetrieverServiceImpl;
 import org.buaa.rag.properties.SearchChannelProperties;
-import org.buaa.rag.core.online.retrieval.SmartRetrieverService;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -27,16 +24,12 @@ import lombok.extern.slf4j.Slf4j;
 @Component
 public class IntentDirectedSearchChannel implements SearchChannel {
 
-    private final SmartRetrieverService smartRetrieverService;
+    private final SmartRetrieverServiceImpl smartRetrieverService;
     private final SearchChannelProperties properties;
-    private final Executor retrievalChannelExecutor;
-
-    public IntentDirectedSearchChannel(SmartRetrieverService smartRetrieverService,
-                                       SearchChannelProperties properties,
-                                       @Qualifier("retrievalChannelExecutor") Executor retrievalChannelExecutor) {
+    public IntentDirectedSearchChannel(SmartRetrieverServiceImpl smartRetrieverService,
+                                       SearchChannelProperties properties) {
         this.smartRetrieverService = smartRetrieverService;
         this.properties = properties;
-        this.retrievalChannelExecutor = retrievalChannelExecutor;
     }
 
     @Override
@@ -85,7 +78,7 @@ public class IntentDirectedSearchChannel implements SearchChannel {
                 queryUsed = context.effectiveQuery();
             } else {
                 queryUsed = enrichQuery(context.effectiveQuery(), context.getIntentDecision());
-                hits = smartRetrieverService.retrieve(queryUsed, effectiveTopK, context.getUserId());
+                hits = fetchSingleIntent(context, context.getIntentDecision(), effectiveTopK);
             }
 
             double conf = context.getIntentDecision() != null && context.getIntentDecision().getConfidence() != null
@@ -158,13 +151,8 @@ public class IntentDirectedSearchChannel implements SearchChannel {
             return List.of();
         }
 
-        List<CompletableFuture<List<RetrievalMatch>>> tasks = qualified.stream()
-            .map(d -> CompletableFuture.supplyAsync(
-                () -> fetchSingleIntent(context, d, topK), retrievalChannelExecutor))
-            .toList();
-
-        Map<String, RetrievalMatch> dedup = tasks.stream()
-            .map(CompletableFuture::join)
+        Map<String, RetrievalMatch> dedup = qualified.stream()
+            .map(d -> fetchSingleIntent(context, d, topK))
             .flatMap(List::stream)
             .collect(Collectors.toMap(
                 RetrievalMatch::matchKey,

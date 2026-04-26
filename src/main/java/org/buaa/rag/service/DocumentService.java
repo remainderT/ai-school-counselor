@@ -18,9 +18,6 @@ public interface DocumentService {
 
     /**
      * 列出用户的文档（支持按知识库过滤和名称搜索）
-     *
-     * @param knowledgeId 知识库 ID（可选）
-     * @param name        文档名称关键词（可选，模糊匹配）
      */
     List<DocumentDO> list(Long knowledgeId, String name);
 
@@ -31,8 +28,6 @@ public interface DocumentService {
 
     /**
      * 查询文档下的所有 chunk 列表
-     *
-     * @param documentId 文档 ID
      */
     List<ChunkDO> listChunks(Long documentId);
 

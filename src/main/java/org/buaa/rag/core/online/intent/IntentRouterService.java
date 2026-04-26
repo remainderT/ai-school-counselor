@@ -29,21 +29,26 @@ public class IntentRouterService {
     private static final String INTENT_PROMPT = PromptTemplateLoader.load("intent-router.st");
     private static final String TREE_CLASSIFIER_PROMPT = PromptTemplateLoader.load("intent-tree-classifier.st");
     private static final String GUIDANCE_PROMPT_FILE = "guidance-prompt.st";
+    private static final double CLASSIFY_TEMPERATURE = 0.1D;
+    private static final double CLASSIFY_TOP_P = 0.3D;
     private final LlmChat llmChat;
     private final IntentTreeService intentTreeService;
     private final IntentGuidanceProperties intentGuidanceProperties;
     private final IntentRoutingProperties intentRoutingProperties;
+    private final AmbiguityLLMChecker ambiguityLLMChecker;
     private final ObjectMapper objectMapper;
 
     public IntentRouterService(LlmChat llmChat,
                                IntentTreeService intentTreeService,
                                IntentGuidanceProperties intentGuidanceProperties,
                                IntentRoutingProperties intentRoutingProperties,
+                               AmbiguityLLMChecker ambiguityLLMChecker,
                                ObjectMapper objectMapper) {
         this.llmChat = llmChat;
         this.intentTreeService = intentTreeService;
         this.intentGuidanceProperties = intentGuidanceProperties;
         this.intentRoutingProperties = intentRoutingProperties;
+        this.ambiguityLLMChecker = ambiguityLLMChecker;
         this.objectMapper = objectMapper;
     }
 
@@ -128,7 +133,13 @@ public class IntentRouterService {
     }
 
     private IntentDecision classifyWithLlm(String query) {
-        String output = llmChat.generateCompletion(INTENT_PROMPT, query, 256);
+        String output = llmChat.generateCompletion(
+            INTENT_PROMPT,
+            query,
+            256,
+            CLASSIFY_TEMPERATURE,
+            CLASSIFY_TOP_P
+        );
         if (output == null || output.isBlank()) {
             return IntentDecision.builder()
                 .action(IntentDecision.Action.ROUTE_RAG)
@@ -178,7 +189,7 @@ public class IntentRouterService {
             return null;
         }
 
-        if (intentGuidanceProperties.isEnabled() && needsGuidance(candidates)) {
+        if (intentGuidanceProperties.isEnabled() && needsGuidance(query, candidates)) {
             IntentDecision guidance = buildGuidanceDecision(query, candidates);
             if (guidance != null) {
                 return guidance;
@@ -199,7 +210,13 @@ public class IntentRouterService {
         }
 
         String userPrompt = buildTreeClassifyUserPrompt(query, leaves);
-        String raw = llmChat.generateCompletion(TREE_CLASSIFIER_PROMPT, userPrompt, 512);
+        String raw = llmChat.generateCompletion(
+            TREE_CLASSIFIER_PROMPT,
+            userPrompt,
+            512,
+            CLASSIFY_TEMPERATURE,
+            CLASSIFY_TOP_P
+        );
         if (!StringUtils.hasText(raw)) {
             return List.of();
         }
@@ -231,7 +248,14 @@ public class IntentRouterService {
         return candidates;
     }
 
-    private boolean needsGuidance(List<IntentCandidate> candidates) {
+    /**
+     * 判断候选列表是否需要歧义引导：
+     * 先提取引导选项，再通过 {@link AmbiguityLLMChecker} 做边界区间二次确认。
+     *
+     * <p>对齐 ragent AmbiguityLLMChecker：分数比值在边界区间时调 LLM 确认，
+     * 避免简单规则在"分数相近但意图明确"场景下误触发澄清。
+     */
+    private boolean needsGuidance(String query, List<IntentCandidate> candidates) {
         if (candidates == null || candidates.size() < 2) {
             return false;
         }
@@ -240,11 +264,12 @@ public class IntentRouterService {
         if (best.score() <= 0) {
             return false;
         }
-        double ratio = second.score() / best.score();
-        if (ratio < intentGuidanceProperties.getAmbiguityRatio()) {
+        List<String> options = extractGuidanceOptions(candidates);
+        if (options.size() < 2) {
             return false;
         }
-        return extractGuidanceOptions(candidates).size() > 1;
+        // 通过 AmbiguityLLMChecker 做边界区间二次确认（对齐 ragent）
+        return ambiguityLLMChecker.isAmbiguous(query, options, best.score(), second.score());
     }
 
     /**
@@ -438,6 +463,7 @@ public class IntentRouterService {
             .level1(level1)
             .level2(level2)
             .promptTemplate(node.getPromptTemplate())
+            .promptSnippet(node.getPromptSnippet())
             .knowledgeBaseId(node.getKnowledgeBaseId())
             .toolName(tool)
             .action(action)
@@ -562,9 +588,6 @@ public class IntentRouterService {
             return null;
         }
         String normalized = toolName.trim();
-        if ("weather_query".equalsIgnoreCase(normalized) || "queryWeatherByMcp".equalsIgnoreCase(normalized)) {
-            return "weather";
-        }
         if ("none".equalsIgnoreCase(normalized)) {
             return null;
         }

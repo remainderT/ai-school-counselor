@@ -26,6 +26,8 @@ import lombok.extern.slf4j.Slf4j;
 public class LlmRerankClient implements RerankClient {
 
     private static final String DEFAULT_RERANK_PROMPT = PromptTemplateLoader.load("retrieval-rerank.st");
+    private static final double RERANK_TEMPERATURE = 0.1D;
+    private static final double RERANK_TOP_P = 0.3D;
 
     private final LlmChat llmChat;
     private final RagProperties ragProperties;
@@ -51,7 +53,13 @@ public class LlmRerankClient implements RerankClient {
         List<RetrievalMatch> subset = new ArrayList<>(candidates.subList(0, candidateLimit));
 
         String prompt = buildRerankPrompt(query, subset, config);
-        String output = llmChat.generateCompletion(resolveSystemPrompt(config), prompt, 256);
+        String output = llmChat.generateCompletion(
+            resolveSystemPrompt(config),
+            prompt,
+            256,
+            RERANK_TEMPERATURE,
+            RERANK_TOP_P
+        );
 
         Map<Integer, Double> scoreMap = parseScores(output);
         if (scoreMap.isEmpty()) {

@@ -20,15 +20,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import lombok.RequiredArgsConstructor;
+
 @RestController
 @RequestMapping("/api/rag/conversations")
+@RequiredArgsConstructor
 public class ConversationController {
 
     private final ConversationService conversationService;
-
-    public ConversationController(ConversationService conversationService) {
-        this.conversationService = conversationService;
-    }
 
     @GetMapping("/sessions")
     public Result<List<ConversationSessionRespDTO>> listSessions() {
