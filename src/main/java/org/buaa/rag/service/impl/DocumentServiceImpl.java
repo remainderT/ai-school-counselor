@@ -232,6 +232,17 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     }
 
     @Override
+    public InputStream downloadStream(Long documentId) {
+        DocumentDO document = requireOwnedDocument(documentId);
+        String objectPath = rustfsStorage.buildPrimaryPath(document.getMd5Hash(), document.getOriginalFileName());
+        try {
+            return rustfsStorage.download(objectPath);
+        } catch (Exception e) {
+            throw new ServiceException("文档下载失败: " + e.getMessage(), e, DOCUMENT_NOT_EXISTS);
+        }
+    }
+
+    @Override
     public PageResponseDTO<ChunkDO> pageChunks(Long documentId, ChunkPageReqDTO request) {
         requireOwnedDocument(documentId);
         long current = request.getCurrent() > 0 ? request.getCurrent() : 1L;

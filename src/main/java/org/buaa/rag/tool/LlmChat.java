@@ -9,6 +9,7 @@ import java.util.regex.Pattern;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
 import org.buaa.rag.core.online.chat.StreamCancellationHandle;
+import org.buaa.rag.core.trace.RagTraceNode;
 import org.buaa.rag.properties.LlmProperties;
 import org.springframework.stereotype.Service;
 
@@ -155,6 +156,7 @@ public class LlmChat {
      * 支持取消句柄的流式调用（对齐 ragent StreamCancellationHandle）。
      * cancelHandle 持有后，外部可随时调用 {@code cancelHandle.cancel()} 中断 LLM 读取。
      */
+    @RagTraceNode(name = "llm-stream-chat", type = "LLM_CHAT")
     public void streamResponseWithHandle(List<Map<String, String>> messages,
                                          Double temperatureOverride,
                                          Double topPOverride,

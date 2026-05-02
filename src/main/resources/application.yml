@@ -219,3 +219,6 @@ rag:
     per-query-max-candidates: 3
     max-total-candidates: 6
     min-score: 0.5
+  trace:
+    enabled: true
+    max-error-length: 800

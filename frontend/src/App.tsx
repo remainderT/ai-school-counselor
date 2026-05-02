@@ -5,23 +5,28 @@ import { KnowledgePanel } from "./components/KnowledgePanel";
 import { DocumentPanel } from "./components/DocumentPanel";
 import { DocumentDetailPanel } from "./components/DocumentDetailPanel";
 import { IntentTreePanel } from "./components/IntentTreePanel";
+import { TraceListPanel } from "./components/TraceListPanel";
+import { TraceDetailPanel } from "./components/TraceDetailPanel";
 import { ToastHost } from "./components/ToastHost";
 import { pushToast } from "./lib/toast";
 import { useActionRequest } from "./hooks/useActionRequest";
 import { useAuthStore } from "./store/auth-store";
 
-type TabKey = "chat" | "search" | "knowledge" | "document" | "document-detail" | "intent-tree";
+type TabKey = "chat" | "search" | "knowledge" | "document" | "document-detail" | "intent-tree" | "trace" | "trace-detail";
 
 const BRAND_NAME = "BUAA问答助手";
 const ADMIN_SIDEBAR_COLLAPSED_KEY = "adminSidebarCollapsed";
 
-const ADMIN_TABS: TabKey[] = ["search", "knowledge", "intent-tree", "document", "document-detail"];
+const ADMIN_TABS: TabKey[] = ["search", "knowledge", "intent-tree", "document", "document-detail", "trace", "trace-detail"];
 
 /** 从 URL hash 解析出当前 tab 和是否处于管理面板 */
 function parseHash(): { tab: TabKey; adminOpen: boolean } {
   const raw = window.location.hash.replace(/^#\/?/, "");
   if (raw.startsWith("admin/document/")) {
     return { tab: "document-detail", adminOpen: true };
+  }
+  if (raw.startsWith("admin/trace/")) {
+    return { tab: "trace-detail", adminOpen: true };
   }
   if (raw.startsWith("admin/")) {
     const key = raw.slice("admin/".length) as TabKey;
@@ -34,12 +39,17 @@ function parseHash(): { tab: TabKey; adminOpen: boolean } {
 }
 
 /** 将当前 tab 写入 URL hash（不触发页面刷新） */
-function setHash(tab: TabKey, adminOpen: boolean, documentId?: number | null) {
-  const hash = adminOpen && tab === "document-detail" && documentId
-    ? `#admin/document/${documentId}`
-    : adminOpen && tab !== "chat"
-      ? `#admin/${tab}`
-      : "#chat";
+function setHash(tab: TabKey, adminOpen: boolean, documentId?: number | null, traceId?: string | null) {
+  let hash: string;
+  if (adminOpen && tab === "document-detail" && documentId) {
+    hash = `#admin/document/${documentId}`;
+  } else if (adminOpen && tab === "trace-detail" && traceId) {
+    hash = `#admin/trace/${traceId}`;
+  } else if (adminOpen && tab !== "chat") {
+    hash = `#admin/${tab}`;
+  } else {
+    hash = "#chat";
+  }
   if (window.location.hash !== hash) {
     window.history.replaceState(null, "", hash);
   }
@@ -95,6 +105,11 @@ export default function App() {
     const id = Number(raw.slice("admin/document/".length));
     return Number.isFinite(id) ? id : null;
   });
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(() => {
+    const raw = window.location.hash.replace(/^#\/?/, "");
+    if (!raw.startsWith("admin/trace/")) return null;
+    return raw.slice("admin/trace/".length) || null;
+  });
 
   const authReq = useActionRequest();
   const { auth, isAdmin, restoring, loginWithPassword, logoutCurrent, registerUser, sendCode } = useAuthStore();
@@ -112,6 +127,11 @@ export default function App() {
       } else if (route.tab !== "document-detail") {
         setSelectedDocumentId(null);
       }
+      if (raw.startsWith("admin/trace/")) {
+        setSelectedTraceId(raw.slice("admin/trace/".length) || null);
+      } else if (route.tab !== "trace-detail") {
+        setSelectedTraceId(null);
+      }
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -122,6 +142,7 @@ export default function App() {
     { key: "knowledge" as const, label: "知识库管理", icon: "knowledge" },
     { key: "intent-tree" as const, label: "意图树管理", icon: "tree" },
     { key: "document" as const, label: "文档管理", icon: "document" },
+    { key: "trace" as const, label: "链路可观测", icon: "trace" },
   ], []);
 
   useEffect(() => {
@@ -220,7 +241,7 @@ export default function App() {
   };
 
   const handleAdminTabClick = (key: TabKey) => {
-    const nextKey = key === "document-detail" ? "document" : key;
+    const nextKey = key === "document-detail" ? "document" : key === "trace-detail" ? "trace" : key;
     setTabRaw(nextKey);
     if (nextKey !== "document") {
       setDocumentFilterKnowledgeId(null);
@@ -228,7 +249,22 @@ export default function App() {
     if (nextKey !== "document-detail") {
       setSelectedDocumentId(null);
     }
+    if (nextKey !== "trace-detail") {
+      setSelectedTraceId(null);
+    }
     setHash(nextKey, true, null);
+  };
+
+  const handleOpenTraceDetail = (traceId: string) => {
+    setSelectedTraceId(traceId);
+    setTabRaw("trace-detail");
+    setHash("trace-detail", true, null, traceId);
+  };
+
+  const handleBackToTraceList = () => {
+    setSelectedTraceId(null);
+    setTabRaw("trace");
+    setHash("trace", true, null);
   };
 
   const handleOpenKnowledgeDocuments = (knowledgeId: number) => {
@@ -402,6 +438,10 @@ export default function App() {
               />
             )}
             {tab === "intent-tree" && <IntentTreePanel />}
+            {tab === "trace" && <TraceListPanel onOpenTrace={handleOpenTraceDetail} />}
+            {tab === "trace-detail" && selectedTraceId && (
+              <TraceDetailPanel traceId={selectedTraceId} onBack={handleBackToTraceList} />
+            )}
           </main>
         </div>
         <button

@@ -1,5 +1,6 @@
 package org.buaa.rag.controller;
 
+import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -15,6 +16,7 @@ import org.buaa.rag.dto.resp.DocumentDetailRespDTO;
 import org.buaa.rag.dto.resp.DocumentPageRespDTO;
 import org.buaa.rag.dto.resp.PageResponseDTO;
 import org.buaa.rag.service.DocumentService;
+import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -76,9 +78,9 @@ public class DocumentController {
     }
 
     @GetMapping("/{id}/download")
-    public ResponseEntity<byte[]> download(@PathVariable Long id) {
+    public ResponseEntity<InputStreamResource> download(@PathVariable Long id) {
         DocumentDetailRespDTO detail = documentService.detail(id);
-        byte[] data = documentService.download(id);
+        InputStream inputStream = documentService.downloadStream(id);
         String filename = detail.getOriginalFileName() == null ? ("document-" + id) : detail.getOriginalFileName();
         String encodedFilename = URLEncoder.encode(filename, StandardCharsets.UTF_8).replaceAll("\\+", "%20");
         ContentDisposition disposition = ContentDisposition.attachment()
@@ -88,7 +90,7 @@ public class DocumentController {
             .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encodedFilename)
             .contentType(MediaType.APPLICATION_OCTET_STREAM)
-            .body(data);
+            .body(new InputStreamResource(inputStream));
     }
 
     @DeleteMapping("/{id}")

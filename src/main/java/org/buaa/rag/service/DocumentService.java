@@ -1,5 +1,6 @@
 package org.buaa.rag.service;
 
+import java.io.InputStream;
 import java.util.List;
 
 import org.buaa.rag.dao.entity.ChunkDO;
@@ -55,6 +56,11 @@ public interface DocumentService {
      * 下载原始文档
      */
     byte[] download(Long documentId);
+
+    /**
+     * 流式下载原始文档（用于大文件）
+     */
+    InputStream downloadStream(Long documentId);
 
     /**
      * 全量导入文档

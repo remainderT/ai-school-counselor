@@ -2,6 +2,7 @@ package org.buaa.rag.common.web;
 
 import java.util.List;
 
+import org.apache.catalina.connector.ClientAbortException;
 import org.buaa.rag.common.enums.BaseErrorCode;
 import org.buaa.rag.common.convention.exception.AbstractException;
 import org.buaa.rag.common.convention.result.Result;
@@ -37,8 +38,21 @@ public class GlobalExceptionHandler {
         return Results.failure(ex);
     }
 
+    @ExceptionHandler(ClientAbortException.class)
+    public void handleClientAbort(HttpServletRequest req, ClientAbortException ex) {
+        // 客户端主动中断连接，不需要返回响应，仅记录日志
+        log.warn("[{}] {} 客户端连接中断: {}", req.getMethod(), fullUrl(req), ex.getMessage());
+    }
+
     @ExceptionHandler(Throwable.class)
     public Result<?> handleUnexpected(HttpServletRequest req, Throwable ex) {
+        // 如果是客户端中止异常的包装，直接忽略
+        if (ex instanceof org.springframework.web.context.request.async.AsyncRequestNotUsableException asyncEx) {
+            if (asyncEx.getCause() instanceof ClientAbortException) {
+                log.warn("[{}] {} 客户端连接中断", req.getMethod(), fullUrl(req));
+                return null;
+            }
+        }
         log.error("[{}] {} 未知异常", req.getMethod(), fullUrl(req), ex);
         if (ex instanceof AbstractException biz) {
             return Results.failure(biz);

@@ -8,6 +8,7 @@ import java.util.concurrent.Executor;
 import java.util.stream.Stream;
 
 import org.buaa.rag.core.model.IntentDecision;
+import org.buaa.rag.core.trace.RagTraceNode;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.online.retrieval.channel.SearchChannel;
 import org.buaa.rag.core.online.retrieval.channel.SearchChannelResult;
@@ -45,6 +46,7 @@ public class MultiChannelRetrievalEngine {
         return retrieve(userId, query, topK, intentDecision, null);
     }
 
+    @RagTraceNode(name = "multi-channel-retrieval", type = "RETRIEVE_CHANNEL")
     public List<RetrievalMatch> retrieve(String userId,
                                          String query,
                                          int topK,

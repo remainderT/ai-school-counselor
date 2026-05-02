@@ -33,6 +33,7 @@ import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorSe
 import org.buaa.rag.dao.entity.ChatTraceMetricDO;
 import org.buaa.rag.dao.mapper.ChatTraceMetricMapper;
 import org.buaa.rag.properties.RagProperties;
+import org.buaa.rag.core.trace.RagTraceRoot;
 import org.buaa.rag.service.ChatService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -108,6 +109,7 @@ public class ChatServiceImpl implements ChatService {
     // ──────────────────────── streamChat（核心流程） ────────────────────────
 
     @Override
+    @RagTraceRoot(name = "stream-chat", taskIdArg = "taskId")
     public void streamChat(String message, Long userId, String taskId, StreamChatCallback callback) {
         StreamChatPipeline.ExecutionResult executionResult = null;
         String sessionId = null;

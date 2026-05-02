@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
+import org.buaa.rag.core.trace.RagTraceNode;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.tool.LlmChat;
 import org.springframework.stereotype.Service;
@@ -75,6 +76,7 @@ public class QueryRewriteAndSplitService {
         return rewriteWithSplit(userQuery, conversationHistory);
     }
 
+    @RagTraceNode(name = "query-rewrite-and-split", type = "REWRITE")
     public QueryRewriteResult rewriteWithSplit(String userQuery, List<Map<String, String>> conversationHistory) {
         if (!StringUtils.hasText(userQuery)) {
             return fallback(userQuery, 0L);

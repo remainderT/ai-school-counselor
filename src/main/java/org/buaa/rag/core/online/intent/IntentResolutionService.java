@@ -6,6 +6,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
 import org.buaa.rag.core.model.IntentDecision;
+import org.buaa.rag.core.trace.RagTraceNode;
 import org.buaa.rag.properties.IntentRoutingProperties;
 import org.buaa.rag.properties.IntentResolutionProperties;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -37,6 +38,7 @@ public class IntentResolutionService {
         this.intentResolutionExecutor = intentResolutionExecutor;
     }
 
+    @RagTraceNode(name = "intent-resolve", type = "INTENT")
     public List<SubQueryIntent> resolve(String userId, List<String> subQueries) {
         long start = System.nanoTime();
         if (subQueries == null || subQueries.isEmpty()) {
