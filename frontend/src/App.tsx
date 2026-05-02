@@ -3,22 +3,26 @@ import { ChatWorkbench } from "./components/ChatWorkbench";
 import { SearchPanel } from "./components/SearchPanel";
 import { KnowledgePanel } from "./components/KnowledgePanel";
 import { DocumentPanel } from "./components/DocumentPanel";
+import { DocumentDetailPanel } from "./components/DocumentDetailPanel";
 import { IntentTreePanel } from "./components/IntentTreePanel";
 import { ToastHost } from "./components/ToastHost";
 import { pushToast } from "./lib/toast";
 import { useActionRequest } from "./hooks/useActionRequest";
 import { useAuthStore } from "./store/auth-store";
 
-type TabKey = "chat" | "search" | "knowledge" | "document" | "intent-tree";
+type TabKey = "chat" | "search" | "knowledge" | "document" | "document-detail" | "intent-tree";
 
 const BRAND_NAME = "BUAA问答助手";
 const ADMIN_SIDEBAR_COLLAPSED_KEY = "adminSidebarCollapsed";
 
-const ADMIN_TABS: TabKey[] = ["search", "knowledge", "intent-tree", "document"];
+const ADMIN_TABS: TabKey[] = ["search", "knowledge", "intent-tree", "document", "document-detail"];
 
 /** 从 URL hash 解析出当前 tab 和是否处于管理面板 */
 function parseHash(): { tab: TabKey; adminOpen: boolean } {
   const raw = window.location.hash.replace(/^#\/?/, "");
+  if (raw.startsWith("admin/document/")) {
+    return { tab: "document-detail", adminOpen: true };
+  }
   if (raw.startsWith("admin/")) {
     const key = raw.slice("admin/".length) as TabKey;
     if (ADMIN_TABS.includes(key)) {
@@ -30,8 +34,12 @@ function parseHash(): { tab: TabKey; adminOpen: boolean } {
 }
 
 /** 将当前 tab 写入 URL hash（不触发页面刷新） */
-function setHash(tab: TabKey, adminOpen: boolean) {
-  const hash = adminOpen && tab !== "chat" ? `#admin/${tab}` : "#chat";
+function setHash(tab: TabKey, adminOpen: boolean, documentId?: number | null) {
+  const hash = adminOpen && tab === "document-detail" && documentId
+    ? `#admin/document/${documentId}`
+    : adminOpen && tab !== "chat"
+      ? `#admin/${tab}`
+      : "#chat";
   if (window.location.hash !== hash) {
     window.history.replaceState(null, "", hash);
   }
@@ -81,6 +89,12 @@ export default function App() {
   const [adminPanelOpen, setAdminPanelOpenRaw] = useState(initialRoute.adminOpen);
   const [adminSidebarCollapsed, setAdminSidebarCollapsed] = useState<boolean>(loadAdminSidebarCollapsed);
   const [documentFilterKnowledgeId, setDocumentFilterKnowledgeId] = useState<number | null>(null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(() => {
+    const raw = window.location.hash.replace(/^#\/?/, "");
+    if (!raw.startsWith("admin/document/")) return null;
+    const id = Number(raw.slice("admin/document/".length));
+    return Number.isFinite(id) ? id : null;
+  });
 
   const authReq = useActionRequest();
   const { auth, isAdmin, restoring, loginWithPassword, logoutCurrent, registerUser, sendCode } = useAuthStore();
@@ -89,8 +103,15 @@ export default function App() {
   useEffect(() => {
     const onHashChange = () => {
       const route = parseHash();
+      const raw = window.location.hash.replace(/^#\/?/, "");
       setTabRaw(route.tab);
       setAdminPanelOpenRaw(route.adminOpen);
+      if (raw.startsWith("admin/document/")) {
+        const id = Number(raw.slice("admin/document/".length));
+        setSelectedDocumentId(Number.isFinite(id) ? id : null);
+      } else if (route.tab !== "document-detail") {
+        setSelectedDocumentId(null);
+      }
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -199,23 +220,41 @@ export default function App() {
   };
 
   const handleAdminTabClick = (key: TabKey) => {
-    setTabRaw(key);
-    if (key !== "document") {
+    const nextKey = key === "document-detail" ? "document" : key;
+    setTabRaw(nextKey);
+    if (nextKey !== "document") {
       setDocumentFilterKnowledgeId(null);
     }
-    setHash(key, true);
+    if (nextKey !== "document-detail") {
+      setSelectedDocumentId(null);
+    }
+    setHash(nextKey, true, null);
   };
 
   const handleOpenKnowledgeDocuments = (knowledgeId: number) => {
     setDocumentFilterKnowledgeId(knowledgeId);
+    setSelectedDocumentId(null);
     setTabRaw("document");
-    setHash("document", true);
+    setHash("document", true, null);
+  };
+
+  const handleOpenDocumentDetail = (documentId: number) => {
+    setSelectedDocumentId(documentId);
+    setTabRaw("document-detail");
+    setHash("document-detail", true, documentId);
+  };
+
+  const handleBackToDocumentList = () => {
+    setSelectedDocumentId(null);
+    setTabRaw("document");
+    setHash("document", true, null);
   };
 
   const handleBackToChat = () => {
+    setSelectedDocumentId(null);
     setTabRaw("chat");
     setAdminPanelOpenRaw(false);
-    setHash("chat", false);
+    setHash("chat", false, null);
   };
 
   if (restoring) {
@@ -350,7 +389,18 @@ export default function App() {
           <main className="panel-wrap">
             {tab === "search" && <SearchPanel />}
             {tab === "knowledge" && <KnowledgePanel onOpenKnowledgeDocuments={handleOpenKnowledgeDocuments} />}
-            {tab === "document" && <DocumentPanel selectedKnowledgeId={documentFilterKnowledgeId} />}
+            {tab === "document" && (
+              <DocumentPanel
+                selectedKnowledgeId={documentFilterKnowledgeId}
+                onOpenDocumentDetail={handleOpenDocumentDetail}
+              />
+            )}
+            {tab === "document-detail" && selectedDocumentId && (
+              <DocumentDetailPanel
+                documentId={selectedDocumentId}
+                onBack={handleBackToDocumentList}
+              />
+            )}
             {tab === "intent-tree" && <IntentTreePanel />}
           </main>
         </div>
@@ -375,10 +425,10 @@ export default function App() {
     <button
       className="admin-entry-btn"
       onClick={() => {
-        const nextTab: TabKey = tab === "chat" ? "search" : tab;
+        const nextTab: TabKey = tab === "chat" || tab === "document-detail" ? "search" : tab;
         setAdminPanelOpenRaw(true);
         setTabRaw(nextTab);
-        setHash(nextTab, true);
+        setHash(nextTab, true, null);
       }}
       title="管理后台"
     >

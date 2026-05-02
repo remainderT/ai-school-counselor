@@ -1,13 +1,24 @@
 package org.buaa.rag.controller;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.dao.entity.ChunkDO;
 import org.buaa.rag.dao.entity.DocumentDO;
+import org.buaa.rag.dto.req.ChunkPageReqDTO;
+import org.buaa.rag.dto.req.DocumentPageReqDTO;
 import org.buaa.rag.dto.req.DocumentUploadReqDTO;
+import org.buaa.rag.dto.resp.DocumentDetailRespDTO;
+import org.buaa.rag.dto.resp.DocumentPageRespDTO;
+import org.buaa.rag.dto.resp.PageResponseDTO;
 import org.buaa.rag.service.DocumentService;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -44,9 +55,40 @@ public class DocumentController {
         return Results.success(documentService.list(knowledgeId, name));
     }
 
+    @GetMapping("/page")
+    public Result<PageResponseDTO<DocumentPageRespDTO>> page(DocumentPageReqDTO request) {
+        return Results.success(documentService.pageList(request));
+    }
+
+    @GetMapping("/{id}/detail")
+    public Result<DocumentDetailRespDTO> detail(@PathVariable Long id) {
+        return Results.success(documentService.detail(id));
+    }
+
     @GetMapping("/{id}/chunks")
     public Result<List<ChunkDO>> listChunks(@PathVariable Long id) {
         return Results.success(documentService.listChunks(id));
+    }
+
+    @GetMapping("/{id}/chunks/page")
+    public Result<PageResponseDTO<ChunkDO>> pageChunks(@PathVariable Long id, ChunkPageReqDTO request) {
+        return Results.success(documentService.pageChunks(id, request));
+    }
+
+    @GetMapping("/{id}/download")
+    public ResponseEntity<byte[]> download(@PathVariable Long id) {
+        DocumentDetailRespDTO detail = documentService.detail(id);
+        byte[] data = documentService.download(id);
+        String filename = detail.getOriginalFileName() == null ? ("document-" + id) : detail.getOriginalFileName();
+        String encodedFilename = URLEncoder.encode(filename, StandardCharsets.UTF_8).replaceAll("\\+", "%20");
+        ContentDisposition disposition = ContentDisposition.attachment()
+            .filename(filename, StandardCharsets.UTF_8)
+            .build();
+        return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encodedFilename)
+            .contentType(MediaType.APPLICATION_OCTET_STREAM)
+            .body(data);
     }
 
     @DeleteMapping("/{id}")

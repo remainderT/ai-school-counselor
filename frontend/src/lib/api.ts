@@ -83,6 +83,10 @@ export function apiUrl(path: string): string {
   return resolveEndpoint(path);
 }
 
+export function apiAuthHeaders(): Record<string, string> | undefined {
+  return authHeaders();
+}
+
 export function toErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }

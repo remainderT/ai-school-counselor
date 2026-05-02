@@ -16,7 +16,7 @@ CREATE TABLE `user` (
                         `del_flag`    tinyint(1)   DEFAULT 0 COMMENT '删除标识 0：未删除 1：已删除',
                         PRIMARY KEY (`id`),
                         UNIQUE KEY uk_mail (mail),
-                        UNIQUE KEY uk_username (username)
+                        UNIQUE KEY uk_username (username
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
 
 DROP TABLE IF EXISTS knowledge;

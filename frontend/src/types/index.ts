@@ -4,6 +4,14 @@ export interface ApiResult<T> {
   data: T;
 }
 
+export interface PageResponse<T> {
+  records: T[];
+  total: number;
+  size: number;
+  current: number;
+  pages: number;
+}
+
 export interface RetrievalMatch {
   fileMd5?: string;
   chunkId?: number;
@@ -51,6 +59,17 @@ export interface DocumentItem {
   processingStatusDesc?: string;
   createTime?: string;
   chunkCount?: number;
+}
+
+export interface DocumentDetailItem extends DocumentItem {
+  sourceUrl?: string;
+  scheduleEnabled?: number;
+  scheduleCron?: string;
+  chunkMode?: string;
+  nextRefreshAt?: string;
+  lastRefreshAt?: string;
+  failureReason?: string;
+  processedAt?: string;
 }
 
 export interface ChunkItem {

@@ -18,9 +18,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.apache.commons.codec.digest.DigestUtils;
@@ -34,10 +36,13 @@ import org.buaa.rag.dao.entity.KnowledgeDO;
 import org.buaa.rag.dao.mapper.ChunkMapper;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
+import org.buaa.rag.dto.req.ChunkPageReqDTO;
+import org.buaa.rag.dto.req.DocumentPageReqDTO;
 import org.buaa.rag.dto.req.DocumentUploadReqDTO;
+import org.buaa.rag.dto.resp.DocumentDetailRespDTO;
+import org.buaa.rag.dto.resp.DocumentPageRespDTO;
+import org.buaa.rag.dto.resp.PageResponseDTO;
 import org.buaa.rag.core.model.UploadPayload;
-import org.buaa.rag.common.convention.result.Result;
-import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.core.offline.ingestion.DocumentArtifactService;
 import org.buaa.rag.core.offline.ingestion.DocumentLifecycleService;
 import org.buaa.rag.core.offline.ingestion.DocumentIngestionTask;
@@ -57,7 +62,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 
 import lombok.AllArgsConstructor;
@@ -152,20 +159,102 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     }
 
     @Override
+    public PageResponseDTO<DocumentPageRespDTO> pageList(DocumentPageReqDTO request) {
+        long current = request.getCurrent() > 0 ? request.getCurrent() : 1L;
+        long size = request.getSize() > 0 ? request.getSize() : 10L;
+        Page<DocumentDO> page = new Page<>(current, size);
+        IPage<DocumentDO> result = baseMapper.selectPage(page, Wrappers.lambdaQuery(DocumentDO.class)
+            .eq(DocumentDO::getUserId, UserContext.getUserId())
+            .eq(DocumentDO::getDelFlag, 0)
+            .eq(request.getKnowledgeId() != null, DocumentDO::getKnowledgeId, request.getKnowledgeId())
+            .like(StringUtils.hasText(request.getName()), DocumentDO::getOriginalFileName, request.getName())
+            .orderByDesc(DocumentDO::getCreateTime));
+
+        Map<Long, Integer> chunkCountMap = countChunksByDocumentIds(result.getRecords().stream()
+            .map(DocumentDO::getId)
+            .collect(Collectors.toList()));
+
+        List<DocumentPageRespDTO> records = result.getRecords().stream()
+            .map(doc -> DocumentPageRespDTO.builder()
+                .id(doc.getId())
+                .knowledgeId(doc.getKnowledgeId())
+                .originalFileName(doc.getOriginalFileName())
+                .fileSizeBytes(doc.getFileSizeBytes())
+                .processingStatus(doc.getProcessingStatus())
+                .processingStatusDesc(UploadStatusEnum.descOf(doc.getProcessingStatus()))
+                .createTime(doc.getCreateTime())
+                .chunkCount(chunkCountMap.getOrDefault(doc.getId(), 0))
+                .build())
+            .collect(Collectors.toList());
+
+        return PageResponseDTO.<DocumentPageRespDTO>builder()
+            .records(records)
+            .total(result.getTotal())
+            .size(result.getSize())
+            .current(result.getCurrent())
+            .pages(result.getPages())
+            .build();
+    }
+
+    @Override
+    public DocumentDetailRespDTO detail(Long documentId) {
+        DocumentDO document = requireOwnedDocument(documentId);
+        int chunkCount = countChunksByDocumentIds(Collections.singletonList(documentId)).getOrDefault(documentId, 0);
+        return DocumentDetailRespDTO.builder()
+            .id(document.getId())
+            .knowledgeId(document.getKnowledgeId())
+            .originalFileName(document.getOriginalFileName())
+            .fileSizeBytes(document.getFileSizeBytes())
+            .processingStatus(document.getProcessingStatus())
+            .processingStatusDesc(UploadStatusEnum.descOf(document.getProcessingStatus()))
+            .createTime(document.getCreateTime())
+            .chunkCount(chunkCount)
+            .sourceUrl(document.getSourceUrl())
+            .scheduleEnabled(document.getScheduleEnabled())
+            .scheduleCron(document.getScheduleCron())
+            .chunkMode(document.getChunkMode())
+            .nextRefreshAt(document.getNextRefreshAt())
+            .lastRefreshAt(document.getLastRefreshAt())
+            .failureReason(document.getFailureReason())
+            .processedAt(document.getProcessedAt())
+            .build();
+    }
+
+    @Override
+    public byte[] download(Long documentId) {
+        DocumentDO document = requireOwnedDocument(documentId);
+        String objectPath = rustfsStorage.buildPrimaryPath(document.getMd5Hash(), document.getOriginalFileName());
+        try (InputStream inputStream = rustfsStorage.download(objectPath)) {
+            return inputStream.readAllBytes();
+        } catch (Exception e) {
+            throw new ServiceException("文档下载失败: " + e.getMessage(), e, DOCUMENT_NOT_EXISTS);
+        }
+    }
+
+    @Override
+    public PageResponseDTO<ChunkDO> pageChunks(Long documentId, ChunkPageReqDTO request) {
+        requireOwnedDocument(documentId);
+        long current = request.getCurrent() > 0 ? request.getCurrent() : 1L;
+        long size = request.getSize() > 0 ? request.getSize() : 10L;
+        Page<ChunkDO> page = new Page<>(current, size);
+        IPage<ChunkDO> result = chunkMapper.selectPage(page, Wrappers.lambdaQuery(ChunkDO.class)
+            .eq(ChunkDO::getDocumentId, documentId)
+            .eq(ChunkDO::getDelFlag, 0)
+            .like(StringUtils.hasText(request.getKeyword()), ChunkDO::getTextData, request.getKeyword())
+            .orderByAsc(ChunkDO::getFragmentIndex));
+        return PageResponseDTO.<ChunkDO>builder()
+            .records(result.getRecords())
+            .total(result.getTotal())
+            .size(result.getSize())
+            .current(result.getCurrent())
+            .pages(result.getPages())
+            .build();
+    }
+
+    @Override
     public List<ChunkDO> listChunks(Long documentId) {
-        DocumentDO document = baseMapper.selectById(documentId);
-        if (document == null || document.getDelFlag() != 0) {
-            throw new ClientException(DOCUMENT_NOT_EXISTS);
-        }
-        if (!document.getUserId().equals(UserContext.getUserId())) {
-            throw new ClientException(DOCUMENT_ACCESS_CONTROL_ERROR);
-        }
-        return chunkMapper.selectList(
-            Wrappers.lambdaQuery(ChunkDO.class)
-                .eq(ChunkDO::getDocumentId, documentId)
-                .eq(ChunkDO::getDelFlag, 0)
-                .orderByAsc(ChunkDO::getFragmentIndex)
-        );
+        requireOwnedDocument(documentId);
+        return listChunksInternal(documentId);
     }
 
     @Override
@@ -317,6 +406,39 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             return buildUrlUploadPayload(url);
         }
         throw new ClientException(DOCUMENT_UPLOAD_NULL);
+    }
+
+    private Map<Long, Integer> countChunksByDocumentIds(List<Long> documentIds) {
+        if (documentIds == null || documentIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return chunkMapper.selectList(
+            Wrappers.lambdaQuery(ChunkDO.class)
+                .select(ChunkDO::getDocumentId)
+                .in(ChunkDO::getDocumentId, documentIds)
+                .eq(ChunkDO::getDelFlag, 0)
+        ).stream().collect(Collectors.groupingBy(ChunkDO::getDocumentId,
+            Collectors.collectingAndThen(Collectors.counting(), Long::intValue)));
+    }
+
+    private DocumentDO requireOwnedDocument(Long documentId) {
+        DocumentDO document = baseMapper.selectById(documentId);
+        if (document == null || document.getDelFlag() != 0) {
+            throw new ClientException(DOCUMENT_NOT_EXISTS);
+        }
+        if (!document.getUserId().equals(UserContext.getUserId())) {
+            throw new ClientException(DOCUMENT_ACCESS_CONTROL_ERROR);
+        }
+        return document;
+    }
+
+    private List<ChunkDO> listChunksInternal(Long documentId) {
+        return chunkMapper.selectList(
+            Wrappers.lambdaQuery(ChunkDO.class)
+                .eq(ChunkDO::getDocumentId, documentId)
+                .eq(ChunkDO::getDelFlag, 0)
+                .orderByAsc(ChunkDO::getFragmentIndex)
+        );
     }
 
     private void persistUploadPayload(UploadPayload payload,

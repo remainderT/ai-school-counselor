@@ -473,7 +473,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
   ];
 
   /* ===== Compose input area ===== */
-  const ComposerInput = ({ emptyMode = false }: { emptyMode?: boolean }) => (
+  const renderComposerInput = (emptyMode = false) => (
     <div className={emptyMode ? "chat-composer empty-mode" : "chat-composer"}>
       <div className="composer-card">
         <textarea
@@ -681,7 +681,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
                 </p>
 
                 {/* Input in welcome mode */}
-                <ComposerInput emptyMode={true} />
+                {renderComposerInput(true)}
 
                 {/* Quick prompt cards */}
                 <div className="chat-prompt-grid">
@@ -836,7 +836,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
         )}
 
         {/* Composer (when has messages) */}
-        {hasMessages && <ComposerInput emptyMode={false} />}
+        {hasMessages && renderComposerInput()}
       </div>
     </section>
   );

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { apiDelete, apiGet, apiPost, apiPostForm } from "../lib/api";
+import { apiAuthHeaders, apiDelete, apiGet, apiPost, apiPostForm, apiUrl } from "../lib/api";
 import { DocStatus } from "../types";
-import type { DocumentItem, KnowledgeItem } from "../types";
+import type { DocumentItem, KnowledgeItem, PageResponse } from "../types";
 import { useActionRequest } from "../hooks/useActionRequest";
 import { CustomSelect } from "./CustomSelect";
 import type { SelectOption } from "./CustomSelect";
@@ -11,13 +11,18 @@ const POLL_INTERVAL = 3000;
 /** 轮询最大时长（毫秒），超过后自动停止 */
 const POLL_TIMEOUT = 5 * 60 * 1000;
 
+const DOCUMENT_PAGE_SIZE = 10;
+
 interface DocumentPanelProps {
   selectedKnowledgeId?: number | null;
+  onOpenDocumentDetail?: (documentId: number) => void;
 }
 
-export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
+export function DocumentPanel({ selectedKnowledgeId, onOpenDocumentDetail }: DocumentPanelProps) {
   const [items, setItems] = useState<DocumentItem[]>([]);
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   // Upload form state
   const [knowledgeId, setKnowledgeId] = useState("");
@@ -33,6 +38,7 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
   const [filterKnowledgeId, setFilterKnowledgeId] = useState("");
   const [searchName, setSearchName] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const [page, setPage] = useState(1);
 
   // Polling state
   const [polling, setPolling] = useState(false);
@@ -44,25 +50,30 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
   const actionReq = useActionRequest();
   const [importing, setImporting] = useState(false);
 
-  const load = useCallback(async (kId?: string, name?: string) => {
+  const load = useCallback(async (nextPage?: number, kId?: string, name?: string) => {
     const params = new URLSearchParams();
+    const effectivePage = nextPage ?? page;
     const effectiveKId = kId ?? filterKnowledgeId;
     const effectiveName = name ?? searchName;
+    params.set("current", String(effectivePage));
+    params.set("size", String(DOCUMENT_PAGE_SIZE));
     if (effectiveKId) params.set("knowledgeId", effectiveKId);
     if (effectiveName) params.set("name", effectiveName);
-    const qs = params.toString();
-    const path = `/api/rag/document/list${qs ? `?${qs}` : ""}`;
-    const result = await listReq.runAction(() => apiGet<DocumentItem[]>(path), {
+    const path = `/api/rag/document/page?${params.toString()}`;
+    const result = await listReq.runAction(() => apiGet<PageResponse<DocumentItem>>(path), {
       errorFallback: "文档加载失败",
       onError: setMsg
     });
     if (result.ok) {
-      const data = result.data || [];
-      setItems(data);
-      return data;
+      const data = result.data;
+      setItems(data?.records || []);
+      setTotal(data?.total || 0);
+      setTotalPages(Math.max(1, data?.pages || 1));
+      setPage(Number(data?.current || effectivePage));
+      return data?.records || [];
     }
     return [];
-  }, [filterKnowledgeId, searchName]);
+  }, [filterKnowledgeId, searchName, page]);
 
   const loadKnowledgeList = async () => {
     const result = await knowledgeReq.runAction(() => apiGet<KnowledgeItem[]>("/api/rag/knowledge/list"), {
@@ -103,14 +114,17 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
       const params = new URLSearchParams();
       if (filterKnowledgeId) params.set("knowledgeId", filterKnowledgeId);
       if (searchName) params.set("name", searchName);
-      const qs = params.toString();
-      const path = `/api/rag/document/list${qs ? `?${qs}` : ""}`;
-
       try {
-        const data = await apiGet<DocumentItem[]>(path);
-        setItems(data || []);
+        params.set("current", String(page));
+        params.set("size", String(DOCUMENT_PAGE_SIZE));
+        const data = await apiGet<PageResponse<DocumentItem>>(`/api/rag/document/page?${params.toString()}`);
+        const records = data?.records || [];
+        setItems(records);
+        setTotal(data?.total || 0);
+        setTotalPages(Math.max(1, data?.pages || 1));
+        setPage(Number(data?.current || page));
         // 如果所有文档都已处理完成（状态=DONE 或 FAILED），停止轮询
-        const hasProcessing = (data || []).some(
+        const hasProcessing = records.some(
           (doc) => doc.processingStatus === DocStatus.PENDING || doc.processingStatus === DocStatus.PROCESSING
         );
         if (!hasProcessing) {
@@ -120,7 +134,7 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
         // 轮询失败时静默忽略，等下次重试
       }
     }, POLL_INTERVAL);
-  }, [filterKnowledgeId, searchName, stopPolling]);
+  }, [filterKnowledgeId, searchName, stopPolling, page]);
 
   // 组件卸载时清理轮询
   useEffect(() => {
@@ -138,7 +152,7 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
         setFilterKnowledgeId(initialKId);
         setKnowledgeId(initialKId);
       }
-      const docs = await load(initialKId, "");
+      const docs = await load(1, initialKId, "");
       // 如果初始加载时存在处理中的文档，自动启动轮询
       const hasProcessing = docs.some(
         (doc) => doc.processingStatus === DocStatus.PENDING || doc.processingStatus === DocStatus.PROCESSING
@@ -155,18 +169,20 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
     const nextId = String(selectedKnowledgeId);
     setFilterKnowledgeId(nextId);
     setKnowledgeId(nextId);
-    void load(nextId, searchName);
+    void load(1, nextId, searchName);
   }, [selectedKnowledgeId]);
 
   // Trigger load when filter changes
   const handleFilterChange = (kId: string) => {
     setFilterKnowledgeId(kId);
-    void load(kId, searchName);
+    setPage(1);
+    void load(1, kId, searchName);
   };
 
   const handleSearch = () => {
     setSearchName(searchInput);
-    void load(filterKnowledgeId, searchInput);
+    setPage(1);
+    void load(1, filterKnowledgeId, searchInput);
   };
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
@@ -178,7 +194,8 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
   const handleClearSearch = () => {
     setSearchInput("");
     setSearchName("");
-    void load(filterKnowledgeId, "");
+    setPage(1);
+    void load(1, filterKnowledgeId, "");
   };
 
   const isFileSource = sourceType === "file";
@@ -226,10 +243,34 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
       setScheduleCron("");
       setSourceType("file");
       setShowUpload(false);
-      await load();
+      await load(1);
       // 上传成功后启动轮询，持续跟踪处理进度
       startPolling();
     }
+  };
+
+  const download = async (id: number) => {
+    const url = apiUrl(`/api/rag/document/${id}/download`);
+    const headers = apiAuthHeaders();
+    const resp = await fetch(url, {
+      method: "GET",
+      headers
+    });
+    if (!resp.ok) {
+      throw new Error(`下载失败: HTTP ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const disposition = resp.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^\";]+)"?/i);
+    const filename = decodeURIComponent(match?.[1] || match?.[2] || `document-${id}`);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(objectUrl);
   };
 
   const remove = async (id: number) => {
@@ -239,7 +280,7 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
       onError: setMsg
     });
     if (result.ok) {
-      await load();
+      await load(page);
     }
   };
 
@@ -293,7 +334,7 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
       setMsg("导入过程出错: " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setImporting(false);
-      await load();
+      await load(page);
     }
   };
 
@@ -354,6 +395,8 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
   // Build knowledge name map for display
   const knowledgeNameMap = new Map<number, string>();
   knowledgeItems.forEach((item) => knowledgeNameMap.set(item.id, item.name));
+
+  const safePage = Math.min(page, totalPages);
 
   return (
     <div className="admin-page">
@@ -535,7 +578,7 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
         <div className="admin-card">
           <div className="admin-card-header">
             <h3 className="admin-card-title">文档列表</h3>
-            <span className="admin-badge">共 {items.length} 条</span>
+            <span className="admin-badge">共 {total} 条 · 第 {safePage}/{totalPages} 页</span>
           </div>
           <div className="admin-card-body" style={{ padding: 0 }}>
             <table className="admin-table">
@@ -547,7 +590,7 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
                   <th style={{ width: 100 }}>文档大小</th>
                   <th style={{ width: 160 }}>上传时间</th>
                   <th style={{ width: 80 }}>状态</th>
-                  <th style={{ width: 80 }}>操作</th>
+                  <th style={{ width: 172 }}>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -557,7 +600,14 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
                       <div className="admin-doc-cell">
                         <DocIcon />
                         <div>
-                          <div className="admin-doc-name">{item.originalFileName || item.fileName || "未命名"}</div>
+                          <button
+                            type="button"
+                            className="admin-doc-link"
+                            onClick={() => onOpenDocumentDetail?.(item.id)}
+                            title="查看文档详情"
+                          >
+                            {item.originalFileName || item.fileName || "未命名"}
+                          </button>
                           <div className="admin-doc-id">ID: {item.id}</div>
                         </div>
                       </div>
@@ -578,15 +628,44 @@ export function DocumentPanel({ selectedKnowledgeId }: DocumentPanelProps) {
                     </td>
                     <td>{statusLabel(item.processingStatus, item.processingStatusDesc)}</td>
                     <td>
-                      <button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => void remove(item.id)} disabled={actionReq.loading}>
-                        删除
-                      </button>
+                      <div className="doc-row-actions">
+                        <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => void download(item.id)}>
+                          下载
+                        </button>
+                        <button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => void remove(item.id)} disabled={actionReq.loading}>
+                          删除
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {total > DOCUMENT_PAGE_SIZE && (
+            <div className="admin-card-body" style={{ borderTop: "1px solid var(--border-light)", paddingTop: 16, paddingBottom: 16 }}>
+              <div className="admin-pagination">
+                <button
+                  className="admin-pagination-btn"
+                  disabled={safePage <= 1 || listReq.loading}
+                  onClick={() => void load(safePage - 1)}
+                >
+                  上一页
+                </button>
+                <div className="admin-pagination-info">
+                  <span>第 {safePage} 页 / 共 {totalPages} 页</span>
+                  <span>当前展示 {items.length} 条</span>
+                </div>
+                <button
+                  className="admin-pagination-btn"
+                  disabled={safePage >= totalPages || listReq.loading}
+                  onClick={() => void load(safePage + 1)}
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         !listReq.loading && (
