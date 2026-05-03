@@ -13,7 +13,7 @@ import lombok.extern.slf4j.Slf4j;
  * 歧义二次确认服务：当意图候选分数比值落在"边界区间"时，
  * 通过一次轻量 LLM 调用判断用户问题是否真正歧义，减少误触发澄清。
  *
- * <h3>触发条件（对齐 ragent AmbiguityLLMChecker）</h3>
+ * <h3>触发条件</h3>
  * <ol>
  *   <li>候选数 ≥ 2</li>
  *   <li>次高分 / 最高分 ≥ {@code ambiguityRatio}（候选相近，有歧义可能）</li>

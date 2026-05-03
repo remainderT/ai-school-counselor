@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import jakarta.servlet.ServletRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -35,7 +36,7 @@ public class UserController {
      * 注册用户
      */
     @PostMapping("")
-    public Result<Void> register(@RequestBody UserRegisterReqDTO requestParam) {
+    public Result<Void> register(@Valid @RequestBody UserRegisterReqDTO requestParam) {
         userService.register(requestParam);
         return Results.success();
     }
@@ -60,7 +61,7 @@ public class UserController {
      * 用户登录
      */
     @PostMapping("/login")
-    public Result<UserLoginRespDTO> login(@RequestBody UserLoginReqDTO requestParam, ServletRequest request) {
+    public Result<UserLoginRespDTO> login(@Valid @RequestBody UserLoginReqDTO requestParam, ServletRequest request) {
         return Results.success(userService.login(requestParam, request));
     }
 
@@ -85,7 +86,7 @@ public class UserController {
      * 更新用户信息
      */
     @PutMapping("")
-    public Result<Void> update(@RequestBody UserUpdateReqDTO requestParam) {
+    public Result<Void> update(@Valid @RequestBody UserUpdateReqDTO requestParam) {
         userService.update(requestParam);
         return Results.success();
     }

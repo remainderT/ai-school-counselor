@@ -1,5 +1,6 @@
 package org.buaa.rag.service.impl;
 
+import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.CHUNK_NOT_EXISTS;
 import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_ACCESS_CONTROL_ERROR;
 import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_EXISTS;
 import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.DOCUMENT_NOT_EXISTS;
@@ -37,6 +38,7 @@ import org.buaa.rag.dao.mapper.ChunkMapper;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
 import org.buaa.rag.dto.req.ChunkPageReqDTO;
+import org.buaa.rag.dto.req.ChunkUpdateReqDTO;
 import org.buaa.rag.dto.req.DocumentPageReqDTO;
 import org.buaa.rag.dto.req.DocumentUploadReqDTO;
 import org.buaa.rag.dto.resp.DocumentDetailRespDTO;
@@ -94,17 +96,17 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final RemoteURLFetcher remoteURLFetcher;
 
     private static final String BASE_PATH = "/Users/yushuhao/Graduation/doc/Classification";
-    private static final Map<String, String> DIR_TO_KB_NAME = new HashMap<>() {{
-        put("教务教学", "academic_kb");
-        put("学生事务与奖助", "affairs_kb");
-        put("财务资产", "finance_kb");
-        put("校园生活服务", "campus_life_kb");
-        put("就业与职业发展", "career_kb");
-        put("科创科研", "research_kb");
-        put("心理与安全", "psy_safety_kb");
-        put("综合", "integrated_kb");
-        put("外事交流", "external_kb");
-    }};
+    private static final Map<String, String> DIR_TO_KB_NAME = Map.of(
+        "教务教学", "academic_kb",
+        "学生事务与奖助", "affairs_kb",
+        "财务资产", "finance_kb",
+        "校园生活服务", "campus_life_kb",
+        "就业与职业发展", "career_kb",
+        "科创科研", "research_kb",
+        "心理与安全", "psy_safety_kb",
+        "综合", "integrated_kb",
+        "外事交流", "external_kb"
+    );
 
     @Value("${document.refresh.min-interval-seconds:60}")
     private long refreshMinIntervalSeconds;
@@ -270,7 +272,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     }
 
     @Override
-    public void delete(String id) {
+    public void delete(Long id) {
         DocumentDO document = baseMapper.selectById(id);
         if (document == null || document.getDelFlag() != 0) {
             throw new ClientException(DOCUMENT_NOT_EXISTS);
@@ -289,6 +291,83 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
                 .eq(DocumentDO::getDelFlag, 0)
                 .set(DocumentDO::getDelFlag, 1)
         );
+    }
+
+    @Override
+    public void updateChunk(Long documentId, Long chunkId, ChunkUpdateReqDTO request) {
+        DocumentDO document = requireOwnedDocument(documentId);
+        ChunkDO chunk = requireChunk(documentId, chunkId);
+        String newText = request.getTextData();
+        if (newText == null) {
+            throw new ClientException("chunk 文本内容不能为空");
+        }
+        // 1. 更新 MySQL
+        chunkMapper.update(null, Wrappers.lambdaUpdate(ChunkDO.class)
+            .eq(ChunkDO::getId, chunk.getId())
+            .set(ChunkDO::getTextData, newText)
+            .set(ChunkDO::getTokenEstimate, estimateTokens(newText))
+            .set(ChunkDO::getMd5Hash, org.apache.commons.codec.digest.DigestUtils.md5Hex(newText))
+        );
+        // 2. 同步更新 ES 索引 + Milvus 向量
+        String collectionName = resolveKnowledgeBucketName(document.getKnowledgeId());
+        artifactService.updateSingleChunkIndex(collectionName, document, chunk.getFragmentIndex(), newText);
+    }
+
+    @Override
+    public void deleteChunk(Long documentId, Long chunkId) {
+        DocumentDO document = requireOwnedDocument(documentId);
+        ChunkDO chunk = requireChunk(documentId, chunkId);
+        // 1. 逻辑删除 MySQL
+        chunkMapper.update(null, Wrappers.lambdaUpdate(ChunkDO.class)
+            .eq(ChunkDO::getId, chunk.getId())
+            .set(ChunkDO::getDelFlag, 1)
+        );
+        // 2. 同步删除 ES 索引 + Milvus 向量
+        String collectionName = resolveKnowledgeBucketName(document.getKnowledgeId());
+        artifactService.deleteSingleChunkIndex(collectionName, document, chunk.getFragmentIndex());
+    }
+
+    @Override
+    public void toggleChunkEnabled(Long documentId, Long chunkId, boolean enabled) {
+        DocumentDO document = requireOwnedDocument(documentId);
+        ChunkDO chunk = requireChunk(documentId, chunkId);
+        // 1. 更新 MySQL enabled 字段
+        chunkMapper.update(null, Wrappers.lambdaUpdate(ChunkDO.class)
+            .eq(ChunkDO::getId, chunk.getId())
+            .set(ChunkDO::getEnabled, enabled ? 1 : 0)
+        );
+        // 2. 同步 ES 和 Milvus：禁用时删除索引/向量，启用时重新写入
+        String collectionName = resolveKnowledgeBucketName(document.getKnowledgeId());
+        if (enabled) {
+            artifactService.updateSingleChunkIndex(collectionName, document, chunk.getFragmentIndex(), chunk.getTextData());
+        } else {
+            artifactService.deleteSingleChunkIndex(collectionName, document, chunk.getFragmentIndex());
+        }
+    }
+
+    /**
+     * 校验 chunk 存在且属于指定文档
+     */
+    private ChunkDO requireChunk(Long documentId, Long chunkId) {
+        ChunkDO chunk = chunkMapper.selectOne(Wrappers.lambdaQuery(ChunkDO.class)
+            .eq(ChunkDO::getId, chunkId)
+            .eq(ChunkDO::getDocumentId, documentId)
+            .eq(ChunkDO::getDelFlag, 0)
+        );
+        if (chunk == null) {
+            throw new ClientException(CHUNK_NOT_EXISTS);
+        }
+        return chunk;
+    }
+
+    /**
+     * 简单估算 token 数（按 UTF-8 字符数 / 1.5 粗略估算）
+     */
+    private int estimateTokens(String text) {
+        if (text == null || text.isEmpty()) {
+            return 0;
+        }
+        return (int) Math.ceil(text.length() / 1.5);
     }
 
     private UploadPayload buildMultipartUploadPayload(MultipartFile file) {

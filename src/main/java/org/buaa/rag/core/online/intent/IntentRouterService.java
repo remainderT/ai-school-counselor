@@ -252,7 +252,7 @@ public class IntentRouterService {
      * 判断候选列表是否需要歧义引导：
      * 先提取引导选项，再通过 {@link AmbiguityLLMChecker} 做边界区间二次确认。
      *
-     * <p>对齐 ragent AmbiguityLLMChecker：分数比值在边界区间时调 LLM 确认，
+     * <p>分数比值在边界区间时调 LLM 确认，
      * 避免简单规则在"分数相近但意图明确"场景下误触发澄清。
      */
     private boolean needsGuidance(String query, List<IntentCandidate> candidates) {
@@ -268,7 +268,7 @@ public class IntentRouterService {
         if (options.size() < 2) {
             return false;
         }
-        // 通过 AmbiguityLLMChecker 做边界区间二次确认（对齐 ragent）
+        // 通过 AmbiguityLLMChecker 做边界区间二次确认
         return ambiguityLLMChecker.isAmbiguous(query, options, best.score(), second.score());
     }
 
@@ -277,7 +277,6 @@ public class IntentRouterService {
      *
      * <p>若问题中已经包含候选系统名（如"教务系统"），说明用户意图已明确，
      * 无需再弹出引导提示，直接返回 {@code null} 让调用方走最高分候选。
-     * 这与 ragent {@code IntentGuidanceService.shouldSkipGuidance()} 的逻辑一致。
      */
     private IntentDecision buildGuidanceDecision(String query, List<IntentCandidate> candidates) {
         List<String> options = extractGuidanceOptions(candidates);

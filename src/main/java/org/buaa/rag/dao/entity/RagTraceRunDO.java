@@ -15,14 +15,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * RAG 链路运行记录（对应 rag_trace_run 表）
- * 每次完整的 RAG 请求对应一条 Run 记录。
+ * 辅导员系统链路追踪运行记录（对应 counselor_trace_record 表）。
+ * 每次完整的 RAG 请求对应一条记录。
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@TableName("rag_trace_run")
+@TableName("counselor_trace_record")
 public class RagTraceRunDO {
 
     @TableId(type = IdType.AUTO)

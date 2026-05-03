@@ -39,7 +39,7 @@ public class RagPromptService {
 
     private static final String MULTI_INTENT_SYNTHESIS_PROMPT =
         PromptTemplateLoader.load("chat-multi-intent-synthesis.st");
-    /** 单意图 RAG 场景默认系统提示（对齐 ragent PromptTemplateLoader 模板文件驱动） */
+    /** 单意图 RAG 场景默认系统提示（由模板文件驱动） */
     private static final String SINGLE_INTENT_DEFAULT_PROMPT =
         PromptTemplateLoader.load("rag-single-intent.st");
     /** 多意图综合场景默认系统提示 */
@@ -402,22 +402,39 @@ public class RagPromptService {
             + "\n\n请结合 <documents> 内的资料，按顺序完整回答以上各事项。";
     }
 
+    /**
+     * 构建系统提示词。
+     * <p>参考 ragent 的 {@code RAGPromptService.planPrompt} 设计：
+     * <ul>
+     *   <li>单意图且有自定义 prompt → 优先使用意图节点的 promptTemplate</li>
+     *   <li>否则 → 使用默认的 single/multi intent 模板</li>
+     *   <li>意图级 promptSnippet 始终追加（补充约束规则）</li>
+     * </ul>
+     */
     private String buildSystemPrompt(PromptContext context, String fallbackPrompt) {
         StringBuilder builder = new StringBuilder();
         String rules = llmService.systemRulesPrompt();
         if (StringUtils.hasText(rules)) {
             builder.append(rules.trim()).append("\n\n");
         }
+
+        // 场景感知模板选择：优先自定义 → 默认模板
         if (context != null && StringUtils.hasText(context.getPreferredPrompt())) {
             builder.append(context.getPreferredPrompt().trim()).append("\n\n");
         } else if (StringUtils.hasText(fallbackPrompt)) {
             builder.append(fallbackPrompt.trim()).append("\n\n");
         }
+
+        // 意图级回答规则补充（promptSnippet 承载细粒度约束）
         if (context != null && StringUtils.hasText(context.getPromptSnippet())) {
-            builder.append(context.getPromptSnippet().trim()).append("\n\n");
+            builder.append("## 回答补充约束\n").append(context.getPromptSnippet().trim()).append("\n\n");
         }
-        // 场景约束由模板文件（rag-single-intent.st / rag-multi-intent.st）承载，
-        // 此处不再追加硬编码约束，避免与模板内容重复。
+
+        // 场景温度提示：纯KB场景强调精确性，Tool场景允许适度推理
+        if (context != null && context.hasTool()) {
+            builder.append("> 本次回答涉及工具/动态数据，可在工具结果基础上做适当推理和汇总。\n\n");
+        }
+
         return builder.toString().trim();
     }
 
@@ -428,7 +445,7 @@ public class RagPromptService {
     }
 
     /**
-     * 执行流式结构化答案生成，支持 LLM 层取消句柄（对齐 ragent StreamCancellationHandle）。
+     * 执行流式结构化答案生成，支持 LLM 层取消句柄。
      *
      * @param cancelHandle 可选的取消句柄；非 null 时，LLM 层会在每个 chunk 读取后检查取消状态
      */

@@ -42,6 +42,11 @@ public class ChunkDO {
     private Integer tokenEstimate;
 
     /**
+     * 是否启用 1：启用 0：禁用
+     */
+    private Integer enabled;
+
+    /**
      * 删除标识 0：未删除 1：已删除
      */
     private Integer delFlag;

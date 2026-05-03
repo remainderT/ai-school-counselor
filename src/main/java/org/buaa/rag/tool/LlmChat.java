@@ -153,7 +153,7 @@ public class LlmChat {
     }
 
     /**
-     * 支持取消句柄的流式调用（对齐 ragent StreamCancellationHandle）。
+     * 支持取消句柄的流式调用。
      * cancelHandle 持有后，外部可随时调用 {@code cancelHandle.cancel()} 中断 LLM 读取。
      */
     @RagTraceNode(name = "llm-stream-chat", type = "LLM_CHAT")

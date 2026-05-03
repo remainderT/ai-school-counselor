@@ -8,13 +8,13 @@ import org.buaa.rag.core.model.RetrievalMatch;
  * 流式对话回调接口：封装 SSE 全生命周期事件，业务层只需调用此接口，
  * 与具体传输实现（SSE/WebSocket）完全解耦。
  *
- * <p>事件流顺序（对齐 ragent 协议）：
+ * <p>事件流顺序：
  * <pre>
  * onMeta()  →  onContent()*  →  onFinish()  →  onComplete()
  *                                ↘ onError()（任意阶段均可）
  * </pre>
  *
- * <p>SSE 事件类型映射：
+ * <p>SSE 事件名称约定：
  * <ul>
  *   <li>{@code meta}    - 首帧，携带 messageId + taskId</li>
  *   <li>{@code message} - LLM 内容分块（JSON: {"type":"response","delta":"..."}）</li>

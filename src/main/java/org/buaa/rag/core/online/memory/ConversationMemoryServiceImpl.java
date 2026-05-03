@@ -110,10 +110,16 @@ public class ConversationMemoryServiceImpl {
             memorySummaryExecutor
         );
 
-        CompletableFuture.allOf(historyFuture, summaryFuture).join();
+        try {
+            CompletableFuture.allOf(historyFuture, summaryFuture).get(30, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            log.warn("并行加载历史上下文超时(30s), sessionId={}", sessionId);
+        } catch (Exception e) {
+            log.warn("并行加载历史上下文异常, sessionId={}, error={}", sessionId, e.getMessage());
+        }
 
-        List<Map<String, String>> history = historyFuture.join();
-        MessageSummaryDO summary          = summaryFuture.join();
+        List<Map<String, String>> history = historyFuture.getNow(List.of());
+        MessageSummaryDO summary          = summaryFuture.getNow(null);
 
         if (history.isEmpty()) {
             return List.of();
@@ -260,7 +266,7 @@ public class ConversationMemoryServiceImpl {
     /**
      * 调用 LLM 生成或更新摘要。
      *
-     * <p>对齐 ragent 设计：旧摘要以 assistant 消息传入，并附加"以本轮对话为准"的说明，
+     * <p>旧摘要以 assistant 消息传入，并附加"以本轮对话为准"的说明，
      * 避免旧摘要中的错误内容影响新摘要生成。
      *
      * @param previousSummary 上次生成的旧摘要（可为 null）
@@ -276,7 +282,7 @@ public class ConversationMemoryServiceImpl {
         // 加载 Prompt 模板并注入 summary_max_chars 参数
         String systemPrompt = buildSummarySystemPrompt(summaryMaxChars);
 
-        // 构建 userPrompt：旧摘要（对齐 ragent：以 "历史摘要" 标注，告知 LLM 合并去重规则）
+        // 构建 userPrompt：旧摘要（以 "历史摘要" 标注，告知 LLM 合并去重规则）
         StringBuilder userPrompt = new StringBuilder();
         if (StringUtils.hasText(previousSummary)) {
             userPrompt.append("历史摘要（仅用于合并去重，不得作为事实新增来源；若与本轮对话冲突，以本轮对话为准）：\n")

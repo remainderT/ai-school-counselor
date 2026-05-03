@@ -5,17 +5,6 @@ import java.util.Deque;
 
 /**
  * RAG 链路 Trace 上下文。
- *
- * <p>使用 {@link ThreadLocal} 存储当前线程的链路状态：
- * <ul>
- *   <li>{@code traceId}：全局链路唯一标识，在 {@code @RagTraceRoot} 入口创建</li>
- *   <li>{@code taskId}：业务任务 ID（与 SSE taskId 绑定）</li>
- *   <li>{@code nodeStack}：节点 ID 栈，维护父子关系和深度</li>
- * </ul>
- *
- * <p><b>注意：</b>RAG 在线链路内部有 CompletableFuture 异步并发，但 AOP 节点记录
- * 均在调用线程内同步完成（入栈/出栈在同一线程），因此标准 ThreadLocal 足够。
- * 若未来需要跨线程透传（如子线程也需要记录节点），可升级为 Alibaba TTL。
  */
 public final class RagTraceContext {
 
@@ -81,6 +70,36 @@ public final class RagTraceContext {
             stack.pop();
         }
     }
+
+    // ── 跨线程传播 ─────────────────────────────────────────────────────────────
+
+    /**
+     * 在父线程中调用，捕获当前 Trace 上下文的快照。
+     * 快照只复制 traceId 和 taskId（nodeStack 不跨线程共享，子线程从 depth=0 开始）。
+     */
+    public static Snapshot capture() {
+        return new Snapshot(TRACE_ID.get(), TASK_ID.get());
+    }
+
+    /**
+     * 在子线程执行开始时调用，将父线程的 traceId / taskId 恢复到当前线程。
+     */
+    public static void restore(Snapshot snapshot) {
+        if (snapshot == null) {
+            return;
+        }
+        if (snapshot.traceId != null) {
+            TRACE_ID.set(snapshot.traceId);
+        }
+        if (snapshot.taskId != null) {
+            TASK_ID.set(snapshot.taskId);
+        }
+    }
+
+    /**
+     * Trace 上下文快照，用于跨线程传播。
+     */
+    public record Snapshot(String traceId, String taskId) {}
 
     // ── 清理 ──────────────────────────────────────────────────────────────────
 

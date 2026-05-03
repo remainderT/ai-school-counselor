@@ -145,60 +145,92 @@ public class IntentResolutionService {
     }
 
     /**
-     * 当所有子查询的候选意图总数超过 {@code budget} 时，按如下策略裁剪：
+     * 当所有子查询的候选意图总数超过 {@code budget} 时，按比例分配策略裁剪。
+     *
+     * <p>算法分三步：
      * <ol>
-     *   <li>每个子查询保留置信度最高的 1 个意图（保底配额）</li>
-     *   <li>剩余配额按全局置信度降序补充</li>
+     *   <li>计算每个子查询的「意图质量分」（所有候选置信度之和），
+     *       按质量分占比为每个子查询分配配额（至少 1 个）</li>
+     *   <li>各子查询在自身配额内保留置信度最高的 N 个候选</li>
+     *   <li>若分配后有余量（因向下取整产生），将剩余配额优先补给
+     *       被截断最多的子查询</li>
      * </ol>
+     *
+     * <p>相比全局排序策略，比例分配能更公平地保证每个子查询的覆盖度，
+     * 避免某个高置信子查询独占全部配额导致其他子查询失去表达。
      */
     private List<SubQueryIntent> capTotalCandidates(List<SubQueryIntent> resolved, int budget) {
-        // 快速路径：总数未超限时直接返回
         long totalCount = resolved.stream()
-            .mapToLong(sq -> sq.candidates() == null ? 0 : sq.candidates().size())
-            .sum();
+                .mapToLong(sq -> sq.candidates() == null ? 0 : sq.candidates().size())
+                .sum();
         if (totalCount <= budget) {
             return resolved;
         }
 
-        // ---- 第一轮：每个子查询保留 top-1 ----
-        List<List<IntentDecision>> retained = new ArrayList<>(resolved.size());
-        int usedSlots = 0;
-        for (SubQueryIntent sq : resolved) {
-            List<IntentDecision> c = sq.candidates();
-            if (c != null && !c.isEmpty()) {
-                retained.add(new ArrayList<>(List.of(c.get(0))));
-                usedSlots++;
+        int queryCount = resolved.size();
+        // ---- 第一步：计算各子查询的质量分（候选置信度之和）用于按比例分配 ----
+        double[] qualityScores = new double[queryCount];
+        int[] originalSizes = new int[queryCount];
+        double totalQuality = 0.0;
+        for (int i = 0; i < queryCount; i++) {
+            List<IntentDecision> c = resolved.get(i).candidates();
+            originalSizes[i] = (c == null) ? 0 : c.size();
+            if (c != null) {
+                for (IntentDecision d : c) {
+                    double s = (d != null && d.getConfidence() != null) ? d.getConfidence() : 0.0;
+                    qualityScores[i] += s;
+                }
+            }
+            totalQuality += qualityScores[i];
+        }
+
+        // ---- 第二步：按质量分占比分配配额（每个子查询至少保留 1 个） ----
+        int[] quotas = new int[queryCount];
+        int allocated = 0;
+        for (int i = 0; i < queryCount; i++) {
+            if (originalSizes[i] == 0) {
+                quotas[i] = 0;
             } else {
-                retained.add(new ArrayList<>());
+                double ratio = totalQuality > 0 ? qualityScores[i] / totalQuality : 1.0 / queryCount;
+                quotas[i] = Math.max(1, (int) Math.floor(ratio * budget));
+                // 配额不应超过该子查询原始候选数
+                quotas[i] = Math.min(quotas[i], originalSizes[i]);
+            }
+            allocated += quotas[i];
+        }
+
+        // ---- 第三步：将余量补给被截断最多的子查询 ----
+        int remaining = budget - allocated;
+        if (remaining > 0) {
+            // 按「被截断数量」降序排列，优先补给损失最大的子查询
+            List<Integer> byTruncation = new ArrayList<>();
+            for (int i = 0; i < queryCount; i++) {
+                if (quotas[i] < originalSizes[i]) {
+                    byTruncation.add(i);
+                }
+            }
+            byTruncation.sort((a, b) ->
+                    Integer.compare(originalSizes[b] - quotas[b], originalSizes[a] - quotas[a]));
+
+            for (int idx : byTruncation) {
+                if (remaining <= 0) break;
+                int canAdd = originalSizes[idx] - quotas[idx];
+                int toAdd = Math.min(canAdd, remaining);
+                quotas[idx] += toAdd;
+                remaining -= toAdd;
             }
         }
 
-        // ---- 第二轮：收集所有非 top-1 候选，按置信度降序排序 ----
-        record ScoredEntry(int queryIdx, IntentDecision decision, double score) {}
-        List<ScoredEntry> surplus = new ArrayList<>();
-        for (int qi = 0; qi < resolved.size(); qi++) {
-            List<IntentDecision> c = resolved.get(qi).candidates();
-            if (c == null) continue;
-            for (int ci = 1; ci < c.size(); ci++) {
-                IntentDecision d = c.get(ci);
-                double s = d.getConfidence() != null ? d.getConfidence() : 0.0;
-                surplus.add(new ScoredEntry(qi, d, s));
+        // ---- 重建结果（各子查询按配额截取前 N 个） ----
+        List<SubQueryIntent> trimmed = new ArrayList<>(queryCount);
+        for (int i = 0; i < queryCount; i++) {
+            List<IntentDecision> c = resolved.get(i).candidates();
+            if (c == null || c.isEmpty() || quotas[i] == 0) {
+                trimmed.add(new SubQueryIntent(resolved.get(i).subQuery(), List.of()));
+            } else {
+                List<IntentDecision> kept = List.copyOf(c.subList(0, Math.min(quotas[i], c.size())));
+                trimmed.add(new SubQueryIntent(resolved.get(i).subQuery(), kept));
             }
-        }
-        surplus.sort((a, b) -> Double.compare(b.score(), a.score()));
-
-        // ---- 第三轮：按配额填充 ----
-        int freeSlots = Math.max(0, budget - usedSlots);
-        for (ScoredEntry entry : surplus) {
-            if (freeSlots <= 0) break;
-            retained.get(entry.queryIdx()).add(entry.decision());
-            freeSlots--;
-        }
-
-        // ---- 重建结果列表 ----
-        List<SubQueryIntent> trimmed = new ArrayList<>(resolved.size());
-        for (int i = 0; i < resolved.size(); i++) {
-            trimmed.add(new SubQueryIntent(resolved.get(i).subQuery(), List.copyOf(retained.get(i))));
         }
         return trimmed;
     }

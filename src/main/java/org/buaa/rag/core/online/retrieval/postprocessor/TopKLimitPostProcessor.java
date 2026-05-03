@@ -8,34 +8,31 @@ import org.buaa.rag.core.online.retrieval.channel.SearchContext;
 import org.springframework.stereotype.Component;
 
 /**
- * 最终截断处理器：保证结果数不超过请求的 topK。
+ * 最终截断处理器：确保返回的结果数量不超过请求的 topK。
+ *
+ * <p>始终激活，位于后处理链末尾（stage=100），作为安全兜底。
  */
 @Component
 public class TopKLimitPostProcessor implements SearchResultPostProcessor {
 
     @Override
-    public String getName() {
-        return "topk-limit";
+    public String label() {
+        return "topk-truncation";
     }
 
     @Override
-    public int getOrder() {
+    public int stage() {
         return 100;
     }
 
     @Override
-    public boolean shouldApply(SearchContext context) {
-        return true;
-    }
-
-    @Override
-    public List<RetrievalMatch> apply(List<RetrievalMatch> matches,
-                                      List<SearchChannelResult> channelResults,
-                                      SearchContext context) {
-        if (matches == null || matches.isEmpty()) {
+    public List<RetrievalMatch> process(List<RetrievalMatch> candidates,
+                                        List<SearchChannelResult> channelOutputs,
+                                        SearchContext ctx) {
+        if (candidates == null || candidates.isEmpty()) {
             return List.of();
         }
-        int limit = Math.max(1, context.getTopK());
-        return matches.size() <= limit ? matches : matches.subList(0, limit);
+        int limit = Math.max(1, ctx.getTopK());
+        return candidates.size() <= limit ? candidates : List.copyOf(candidates.subList(0, limit));
     }
 }

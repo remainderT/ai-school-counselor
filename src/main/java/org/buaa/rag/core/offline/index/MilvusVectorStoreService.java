@@ -85,6 +85,78 @@ public class MilvusVectorStoreService {
     }
 
     /**
+     * 将单个 chunk 的向量 upsert 到对应知识库的 Collection。
+     *
+     * @param collectionName 知识库 name（= bucket_name）
+     * @param document       文档实体
+     * @param fragmentId     片段序号
+     * @param textContent    新的文本内容
+     * @param vector         新的向量
+     */
+    public void upsertSingleChunk(String collectionName,
+                                  DocumentDO document,
+                                  int fragmentId,
+                                  String textContent,
+                                  float[] vector) {
+        if (document == null || vector == null || vector.length == 0) {
+            return;
+        }
+        collectionManager.ensureCollection(collectionName);
+
+        JsonObject row = new JsonObject();
+        row.addProperty("id", buildPrimaryKey(document.getMd5Hash(), fragmentId));
+        row.addProperty("source_md5", document.getMd5Hash());
+        row.addProperty("segment_number", fragmentId);
+        if (document.getUserId() != null) {
+            row.addProperty("user_id", document.getUserId());
+        }
+        if (document.getKnowledgeId() != null) {
+            row.addProperty("knowledge_id", document.getKnowledgeId());
+        }
+        row.addProperty("text_payload", truncateText(textContent));
+        row.add("embedding", vectorToGsonArray(vector));
+
+        UpsertReq request = UpsertReq.builder()
+            .collectionName(collectionName)
+            .data(List.of(row))
+            .build();
+
+        UpsertResp response = milvusClient.upsert(request);
+        log.info("Milvus 单 chunk 向量写入成功: collection={}, pk={}, upsertCnt={}",
+            collectionName, buildPrimaryKey(document.getMd5Hash(), fragmentId), response.getUpsertCnt());
+    }
+
+    /**
+     * 从对应知识库的 Collection 中删除单个 chunk 的向量。
+     *
+     * @param collectionName 知识库 name
+     * @param documentMd5    文档 MD5
+     * @param fragmentId     片段序号
+     */
+    public void deleteSingleChunk(String collectionName, String documentMd5, int fragmentId) {
+        if (documentMd5 == null || documentMd5.isBlank()) {
+            return;
+        }
+        if (!collectionManager.collectionExists(collectionName)) {
+            log.warn("Milvus collection 不存在，跳过删除: collection={}", collectionName);
+            return;
+        }
+        try {
+            String primaryKey = buildPrimaryKey(documentMd5, fragmentId);
+            DeleteResp response = milvusClient.delete(
+                DeleteReq.builder()
+                    .collectionName(collectionName)
+                    .ids(List.of(primaryKey))
+                    .build()
+            );
+            log.info("Milvus 单 chunk 向量删除完成: collection={}, pk={}, deleteCnt={}",
+                collectionName, primaryKey, response.getDeleteCnt());
+        } catch (Exception e) {
+            throw new ServiceException("Milvus 删除单 chunk 向量失败: " + e.getMessage(), e, SEARCH_SERVICE_ERROR);
+        }
+    }
+
+    /**
      * 从对应知识库的 Collection 中删除指定文档的所有向量。
      *
      * @param collectionName 知识库 name

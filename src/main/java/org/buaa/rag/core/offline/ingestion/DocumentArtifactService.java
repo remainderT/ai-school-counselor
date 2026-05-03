@@ -1,9 +1,11 @@
 package org.buaa.rag.core.offline.ingestion;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
 
 import org.apache.commons.codec.digest.DigestUtils;
 import org.buaa.rag.dao.entity.ChunkDO;
@@ -13,11 +15,12 @@ import org.buaa.rag.core.model.ContentFragment;
 import org.buaa.rag.core.offline.index.EmbeddingService;
 import org.buaa.rag.core.offline.index.EsIndexService;
 import org.buaa.rag.core.offline.index.MilvusVectorStoreService;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -29,13 +32,25 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class DocumentArtifactService {
 
     private final ChunkMapper chunkMapper;
     private final EsIndexService esIndexService;
     private final EmbeddingService documentEmbeddingService;
     private final MilvusVectorStoreService milvusVectorStoreService;
+    private final Executor artifactExecutor;
+
+    public DocumentArtifactService(ChunkMapper chunkMapper,
+                                   EsIndexService esIndexService,
+                                   EmbeddingService documentEmbeddingService,
+                                   MilvusVectorStoreService milvusVectorStoreService,
+                                   @Qualifier("retrievalChannelExecutor") Executor artifactExecutor) {
+        this.chunkMapper = chunkMapper;
+        this.esIndexService = esIndexService;
+        this.documentEmbeddingService = documentEmbeddingService;
+        this.milvusVectorStoreService = milvusVectorStoreService;
+        this.artifactExecutor = artifactExecutor;
+    }
 
     /**
      * @param collectionName 知识库对应的 Milvus Collection 名称
@@ -49,11 +64,11 @@ public class DocumentArtifactService {
         // 1. 先写 chunk
         replaceChunks(document.getId(), fragments);
 
-        // 2. ES 索引和向量编码并行执行
+        // 2. ES 索引和向量编码并行执行（使用专用线程池，避免占用 ForkJoinPool）
         CompletableFuture<Void> esFuture = CompletableFuture.runAsync(
-            () -> esIndexService.index(document, fragments));
+            () -> esIndexService.index(document, fragments), artifactExecutor);
         CompletableFuture<List<float[]>> embeddingFuture = CompletableFuture.supplyAsync(
-            () -> documentEmbeddingService.encodeFragments(fragments));
+            () -> documentEmbeddingService.encodeFragments(fragments), artifactExecutor);
 
         try {
             CompletableFuture.allOf(esFuture, embeddingFuture).join();
@@ -100,8 +115,71 @@ public class DocumentArtifactService {
         }
     }
 
+    /**
+     * 更新单个 chunk 的 ES 索引和 Milvus 向量（MySQL 由调用方自行处理）。
+     * <p>
+     * ES 索引和向量编码并行执行以降低耗时。
+     *
+     * @param collectionName 知识库对应的 Milvus Collection 名称
+     * @param document       文档实体
+     * @param fragmentIndex  chunk 片段序号
+     * @param newText        新的文本内容
+     */
+    public void updateSingleChunkIndex(String collectionName, DocumentDO document,
+                                       int fragmentIndex, String newText) {
+        if (document == null || newText == null) {
+            return;
+        }
+        ContentFragment fragment = new ContentFragment(fragmentIndex, newText);
+
+        // ES 索引和向量编码并行执行
+        CompletableFuture<Void> esFuture = CompletableFuture.runAsync(
+            () -> esIndexService.indexSingleChunk(document.getId(), fragmentIndex, newText), artifactExecutor);
+        CompletableFuture<List<float[]>> embeddingFuture = CompletableFuture.supplyAsync(
+            () -> documentEmbeddingService.encodeFragments(List.of(fragment)), artifactExecutor);
+
+        try {
+            CompletableFuture.allOf(esFuture, embeddingFuture).join();
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException("单 chunk 产物更新异常", cause);
+        }
+
+        // 向量写入 Milvus
+        List<float[]> vectors = embeddingFuture.join();
+        milvusVectorStoreService.upsertSingleChunk(collectionName, document, fragmentIndex, newText, vectors.get(0));
+    }
+
+    /**
+     * 删除单个 chunk 的 ES 索引和 Milvus 向量（MySQL 由调用方自行处理）。
+     *
+     * @param collectionName 知识库对应的 Milvus Collection 名称
+     * @param document       文档实体
+     * @param fragmentIndex  chunk 片段序号
+     */
+    public void deleteSingleChunkIndex(String collectionName, DocumentDO document, int fragmentIndex) {
+        if (document == null) {
+            return;
+        }
+        try {
+            esIndexService.deleteSingleChunk(document.getId(), fragmentIndex);
+        } catch (Exception e) {
+            log.warn("删除单 chunk ES 索引失败: documentId={}, fragmentIndex={}", document.getId(), fragmentIndex, e);
+        }
+        try {
+            milvusVectorStoreService.deleteSingleChunk(collectionName, document.getMd5Hash(), fragmentIndex);
+        } catch (Exception e) {
+            log.warn("删除单 chunk Milvus 向量失败: collection={}, md5={}, fragmentIndex={}",
+                collectionName, document.getMd5Hash(), fragmentIndex, e);
+        }
+    }
+
     private void replaceChunks(Long documentId, List<ContentFragment> fragments) {
         deleteChunks(documentId);
+        List<ChunkDO> chunks = new ArrayList<>(fragments.size());
         for (ContentFragment fragment : fragments) {
             ChunkDO chunk = new ChunkDO();
             chunk.setDocumentId(documentId);
@@ -111,9 +189,10 @@ public class DocumentArtifactService {
             chunk.setMd5Hash(DigestUtils.md5Hex(normalizedText.getBytes(StandardCharsets.UTF_8)));
             int codePointCount = normalizedText.codePointCount(0, normalizedText.length());
             chunk.setTokenEstimate(normalizedText.isBlank() ? 0 : Math.max(1, (int) Math.ceil(codePointCount / 1.8d)));
-            chunkMapper.insert(chunk);
+            chunks.add(chunk);
         }
-        log.info("已保存 {} 个 chunk: documentId={}", fragments.size(), documentId);
+        Db.saveBatch(chunks);
+        log.info("已批量保存 {} 个 chunk: documentId={}", chunks.size(), documentId);
     }
 
     private void deleteChunks(Long documentId) {

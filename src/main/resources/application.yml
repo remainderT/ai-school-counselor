@@ -220,3 +220,5 @@ rag:
   trace:
     enabled: true
     max-error-length: 800
+
+# nohup java -jar rag.jar > app.log 2>&1 & sleep 2; tail -f app.log

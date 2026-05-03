@@ -9,6 +9,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.buaa.rag.properties.EsProperties;
@@ -16,16 +19,11 @@ import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.ESIndexDO;
 import org.buaa.rag.dao.entity.KnowledgeDO;
-import org.buaa.rag.dao.entity.MessageDO;
-import org.buaa.rag.dao.entity.MessageSourceDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
-import org.buaa.rag.dao.mapper.MessageMapper;
-import org.buaa.rag.dao.mapper.MessageSourceMapper;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.offline.index.VectorEncoding;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -34,7 +32,6 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -43,20 +40,37 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class SmartRetrieverServiceImpl {
 
     private static final int MAX_RECALL_SIZE = 300;
+    private static final long PARALLEL_SEARCH_TIMEOUT_SECONDS = 30L;
 
     private final ElasticsearchClient esClient;
     private final VectorEncoding encodingService;
     private final DocumentMapper documentMapper;
     private final KnowledgeMapper knowledgeMapper;
     private final RagProperties ragProperties;
-    private final MessageMapper messageMapper;
-    private final MessageSourceMapper sourceRepository;
     private final EsProperties esProperties;
     private final MilvusRetrieverService milvusRetrieverService;
+    private final Executor retrievalExecutor;
+
+    public SmartRetrieverServiceImpl(ElasticsearchClient esClient,
+                                     VectorEncoding encodingService,
+                                     DocumentMapper documentMapper,
+                                     KnowledgeMapper knowledgeMapper,
+                                     RagProperties ragProperties,
+                                     EsProperties esProperties,
+                                     MilvusRetrieverService milvusRetrieverService,
+                                     @Qualifier("retrievalChannelExecutor") Executor retrievalExecutor) {
+        this.esClient = esClient;
+        this.encodingService = encodingService;
+        this.documentMapper = documentMapper;
+        this.knowledgeMapper = knowledgeMapper;
+        this.ragProperties = ragProperties;
+        this.esProperties = esProperties;
+        this.milvusRetrieverService = milvusRetrieverService;
+        this.retrievalExecutor = retrievalExecutor;
+    }
 
     public List<RetrievalMatch> retrieve(String queryText, int topK, String userId) {
         try {
@@ -80,7 +94,7 @@ public class SmartRetrieverServiceImpl {
                 return Collections.emptyList();
             }
             log.error("检索失败", e);
-            throw new RuntimeException("检索过程发生异常");
+            throw new RuntimeException("检索过程发生异常", e);
         }
     }
 
@@ -109,7 +123,7 @@ public class SmartRetrieverServiceImpl {
                 log.warn("索引 {} 不存在，文本检索返回空结果", esProperties.getIndex());
                 return Collections.emptyList();
             }
-            log.error("文本检索失败", e);
+            log.error("文本检索失败，降级返回空结果", e);
             return Collections.emptyList();
         }
     }
@@ -138,19 +152,10 @@ public class SmartRetrieverServiceImpl {
         List<Float> queryVector = generateQueryVector(queryText);
         int recallSize = calculateRecallSize(queryText, topK);
 
-        // 在各知识库 Collection 中并行检索并合并（Milvus 直接用 knowledge.name，不做连字符转换）
-        List<RetrievalMatch> vectorMatches = knowledgeList.stream()
-            .flatMap(kb -> {
-                try {
-                    if (queryVector != null) {
-                        return milvusRetrieverService.search(kb.getName(), queryVector, recallSize).stream();
-                    }
-                } catch (Exception e) {
-                    log.warn("知识库向量检索失败: collection={}", kb.getName(), e);
-                }
-                return java.util.stream.Stream.empty();
-            })
-            .collect(Collectors.toList());
+        // 并行：向量检索 + 文本检索同时执行
+        List<RetrievalMatch> vectorMatches = queryVector != null
+            ? searchCollectionsParallel(knowledgeList, queryVector, recallSize)
+            : Collections.emptyList();
 
         List<RetrievalMatch> textMatches;
         try {
@@ -189,16 +194,6 @@ public class SmartRetrieverServiceImpl {
         return filterAndEnrichMatches(scoped, userId, topK);
     }
 
-    public void recordFeedback(Long messageId, int score) {
-        if (messageId == null) {
-            return;
-        }
-        MessageDO update = new MessageDO();
-        update.setId(messageId);
-        update.setScore(score);
-        messageMapper.updateById(update);
-    }
-
     /**
      * 执行混合检索（全局，跨所有知识库）
      */
@@ -212,21 +207,49 @@ public class SmartRetrieverServiceImpl {
     }
 
     /**
-     * 跨所有知识库 Collection 进行向量检索并合并结果。
+     * 跨所有知识库 Collection 并行进行向量检索并合并结果。
      */
     private List<RetrievalMatch> searchAllCollections(List<Float> vector, int topK) {
         List<KnowledgeDO> allKnowledge = knowledgeMapper.selectList(
             Wrappers.lambdaQuery(KnowledgeDO.class).eq(KnowledgeDO::getDelFlag, 0)
         );
-        return allKnowledge.stream()
-            .flatMap(kb -> {
+        return searchCollectionsParallel(allKnowledge, vector, topK);
+    }
+
+    /**
+     * 并行在多个 Milvus Collection 中执行向量检索，合并所有结果。
+     * 单个 Collection 检索失败不影响其他 Collection。
+     */
+    private List<RetrievalMatch> searchCollectionsParallel(List<KnowledgeDO> knowledgeList,
+                                                           List<Float> vector,
+                                                           int topK) {
+        if (knowledgeList == null || knowledgeList.isEmpty() || vector == null) {
+            return Collections.emptyList();
+        }
+
+        List<CompletableFuture<List<RetrievalMatch>>> futures = knowledgeList.stream()
+            .map(kb -> CompletableFuture.supplyAsync(() -> {
                 try {
-                    return milvusRetrieverService.search(kb.getName(), vector, topK).stream();
+                    return milvusRetrieverService.search(kb.getName(), vector, topK);
                 } catch (Exception e) {
-                    log.warn("全局向量检索失败: collection={}", kb.getName(), e);
-                    return java.util.stream.Stream.empty();
+                    log.warn("向量检索失败: collection={}, error={}", kb.getName(), e.getMessage());
+                    return Collections.<RetrievalMatch>emptyList();
                 }
-            })
+            }, retrievalExecutor))
+            .collect(Collectors.toList());
+
+        try {
+            CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+                .get(PARALLEL_SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            log.warn("并行向量检索超时({}s), 使用已完成的部分结果", PARALLEL_SEARCH_TIMEOUT_SECONDS);
+        } catch (Exception e) {
+            log.warn("并行向量检索异常: {}", e.getMessage());
+        }
+
+        return futures.stream()
+            .map(f -> f.getNow(Collections.<RetrievalMatch>emptyList()))
+            .flatMap(List::stream)
             .collect(Collectors.toList());
     }
 
@@ -376,8 +399,6 @@ public class SmartRetrieverServiceImpl {
             filtered.add(match);
         }
 
-        applyFeedbackBoost(filtered);
-
         if (filtered.size() > topK) {
             return filtered.subList(0, topK);
         }
@@ -429,103 +450,6 @@ public class SmartRetrieverServiceImpl {
             }
         }
         return isIndexMissing(error.getCause());
-    }
-
-    private void applyFeedbackBoost(List<RetrievalMatch> matches) {
-        if (matches == null || matches.isEmpty()) {
-            return;
-        }
-        RagProperties.Feedback config = ragProperties.getFeedback();
-        if (config == null || !config.isEnabled()) {
-            return;
-        }
-
-        Set<String> md5Set = matches.stream()
-                .map(RetrievalMatch::getFileMd5)
-                .collect(Collectors.toSet());
-        Map<String, Double> boostMap = loadBoostMap(md5Set, config.getMaxBoost());
-        if (boostMap.isEmpty()) {
-            return;
-        }
-
-        for (RetrievalMatch match : matches) {
-            double baseScore = match.getRelevanceScore() != null ? match.getRelevanceScore() : 0.0;
-            double boost = boostMap.getOrDefault(match.getFileMd5(), 0.0);
-            match.setRelevanceScore(baseScore * (1 + boost));
-        }
-
-        matches.sort((a, b) -> Double.compare(
-                b.getRelevanceScore() != null ? b.getRelevanceScore() : 0.0,
-                a.getRelevanceScore() != null ? a.getRelevanceScore() : 0.0
-        ));
-    }
-
-    private Map<String, Double> loadBoostMap(Set<String> md5Set, double maxBoost) {
-        if (md5Set == null || md5Set.isEmpty()) {
-            return Map.of();
-        }
-
-        LambdaQueryWrapper<MessageSourceDO> sourceQuery = Wrappers.lambdaQuery(MessageSourceDO.class)
-                .in(MessageSourceDO::getDocumentMd5, md5Set)
-                .select(MessageSourceDO::getMessageId, MessageSourceDO::getDocumentMd5);
-        List<MessageSourceDO> sourceRows = sourceRepository.selectList(sourceQuery);
-        if (sourceRows == null || sourceRows.isEmpty()) {
-            return Map.of();
-        }
-
-        Map<Long, List<String>> messageToDocuments = new HashMap<>();
-        Set<Long> messageIds = new HashSet<>();
-        for (MessageSourceDO sourceRow : sourceRows) {
-            if (sourceRow == null || sourceRow.getMessageId() == null || sourceRow.getDocumentMd5() == null) {
-                continue;
-            }
-            Long messageId = sourceRow.getMessageId();
-            messageIds.add(messageId);
-            messageToDocuments
-                    .computeIfAbsent(messageId, key -> new ArrayList<>())
-                    .add(sourceRow.getDocumentMd5());
-        }
-        if (messageIds.isEmpty()) {
-            return Map.of();
-        }
-
-        List<MessageDO> feedbackRows = messageMapper.selectList(Wrappers.lambdaQuery(MessageDO.class)
-                .in(MessageDO::getId, messageIds)
-                .isNotNull(MessageDO::getScore)
-                .select(MessageDO::getId, MessageDO::getScore));
-        if (feedbackRows == null || feedbackRows.isEmpty()) {
-            return Map.of();
-        }
-
-        Map<String, double[]> scoreAccumulator = new HashMap<>();
-        for (MessageDO feedbackRow : feedbackRows) {
-            if (feedbackRow == null || feedbackRow.getId() == null || feedbackRow.getScore() == null) {
-                continue;
-            }
-            List<String> documents = messageToDocuments.get(feedbackRow.getId());
-            if (documents == null || documents.isEmpty()) {
-                continue;
-            }
-            for (String documentMd5 : documents) {
-                double[] stats = scoreAccumulator.computeIfAbsent(documentMd5, key -> new double[2]);
-                stats[0] += feedbackRow.getScore();
-                stats[1] += 1;
-            }
-        }
-
-        Map<String, Double> boostMap = new HashMap<>();
-        for (Map.Entry<String, double[]> entry : scoreAccumulator.entrySet()) {
-            String md5 = entry.getKey();
-            double[] stats = entry.getValue();
-            if (md5 == null || stats == null || stats[1] <= 0) {
-                continue;
-            }
-            double avgScore = stats[0] / stats[1];
-            double centered = (avgScore - 3.0) / 2.0;
-            double boost = Math.max(-maxBoost, Math.min(maxBoost, centered * maxBoost));
-            boostMap.put(md5, boost);
-        }
-        return boostMap;
     }
 
     private List<RetrievalMatch> fuseRetrievalMatches(List<List<RetrievalMatch>> resultLists, int topK) {

@@ -6,6 +6,7 @@ import java.util.List;
 import org.buaa.rag.dao.entity.ChunkDO;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dto.req.ChunkPageReqDTO;
+import org.buaa.rag.dto.req.ChunkUpdateReqDTO;
 import org.buaa.rag.dto.req.DocumentPageReqDTO;
 import org.buaa.rag.dto.req.DocumentUploadReqDTO;
 import org.buaa.rag.dto.resp.DocumentDetailRespDTO;
@@ -35,7 +36,7 @@ public interface DocumentService {
     /**
      * 删除文档
      */
-    void delete(String id);
+    void delete(Long id);
 
     /**
      * 查询文档下的所有 chunk 列表
@@ -66,5 +67,20 @@ public interface DocumentService {
      * 全量导入文档
      */
     String fullImport();
+
+    /**
+     * 编辑 chunk 文本内容
+     */
+    void updateChunk(Long documentId, Long chunkId, ChunkUpdateReqDTO request);
+
+    /**
+     * 删除单个 chunk（逻辑删除）
+     */
+    void deleteChunk(Long documentId, Long chunkId);
+
+    /**
+     * 切换 chunk 启用/禁用状态
+     */
+    void toggleChunkEnabled(Long documentId, Long chunkId, boolean enabled);
 
 }

@@ -93,7 +93,7 @@ public class DashscopeClient {
     }
 
     /**
-     * 支持取消句柄的流式调用重载（对齐 ragent StreamCancellationHandle）。
+     * 支持取消句柄的流式调用重载。
      */
     public void streamChatCompletion(List<Map<String, String>> messages,
                                      Double temperature,
@@ -208,7 +208,7 @@ public class DashscopeClient {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                // LLM 层取消检查（对齐 ragent StreamCancellationHandle）
+                // LLM 层取消检查
                 if (cancelHandle != null && cancelHandle.isCancelled()) {
                     log.debug("流式读取被取消，提前退出");
                     break;

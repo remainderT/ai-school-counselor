@@ -529,7 +529,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
       <aside className="chat-side">
         {/* Brand logo area */}
         <div className="chat-side-brand">
-          <div className="chat-brand-logo">✦</div>
+          <div className="chat-brand-logo">B</div>
           <div className="chat-brand-name">BUAA问答助手</div>
           <button
             className="chat-sidebar-close-btn"

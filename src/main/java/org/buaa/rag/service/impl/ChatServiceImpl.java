@@ -1,8 +1,6 @@
 package org.buaa.rag.service.impl;
 
 import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.MESSAGE_EMPTY;
-import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.MESSAGE_ID_REQUIRED;
-import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.SCORE_OUT_OF_RANGE;
 
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -14,11 +12,7 @@ import java.util.concurrent.Executor;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.buaa.rag.common.convention.exception.ClientException;
-import org.buaa.rag.common.convention.result.Result;
-import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.common.user.UserContext;
-import org.buaa.rag.core.model.FeedbackRequest;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.online.chat.SseStreamChatEventHandler;
@@ -29,6 +23,7 @@ import org.buaa.rag.core.online.intent.IntentRouterService;
 import org.buaa.rag.core.online.retrieval.MultiChannelRetrievalEngine;
 import org.buaa.rag.core.online.retrieval.SmartRetrieverServiceImpl;
 import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorServiceImpl;
+import org.buaa.rag.service.ConversationService;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.core.trace.RagTraceRoot;
 import org.buaa.rag.service.ChatService;
@@ -38,6 +33,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationContext;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -53,13 +49,22 @@ public class ChatServiceImpl implements ChatService {
     private final MultiChannelRetrievalEngine multiChannelRetrievalEngine;
     private final RetrievalPostProcessorServiceImpl postProcessorService;
     private final IntentRouterService intentRouterService;
-    private final ConversationServiceImpl conversationService;
+    private final ConversationService conversationService;
     private final StreamChatPipeline streamChatPipeline;
     private final StreamTaskManager streamTaskManager;
     private final ObjectMapper objectMapper;
     private final RagProperties ragProperties;
+    private final ApplicationContext applicationContext;
     @Qualifier("chatStreamExecutor")
     private final Executor chatStreamExecutor;
+
+    /**
+     * 获取当前 Bean 的 Spring AOP 代理实例，解决内部自调用不经过代理导致
+     * {@code @RagTraceRoot} 注解失效的问题。
+     */
+    private ChatService selfProxy() {
+        return applicationContext.getBean(ChatService.class);
+    }
 
     // ──────────────────────── handleChatStream ────────────────────────
 
@@ -93,8 +98,10 @@ public class ChatServiceImpl implements ChatService {
             streamTaskManager.cancel(taskId);
         });
 
+        // 通过 Spring 代理调用 streamChat，确保 @RagTraceRoot AOP 切面正常触发
+        ChatService proxy = selfProxy();
         CompletableFuture.runAsync(
-            () -> streamChat(message, resolvedUserId, taskId, eventHandler),
+            () -> proxy.streamChat(message, resolvedUserId, taskId, eventHandler),
             chatStreamExecutor
         );
 
@@ -139,7 +146,7 @@ public class ChatServiceImpl implements ChatService {
     // ──────────────────────── handleSearchRequest ────────────────────────
 
     @Override
-    public Result<List<RetrievalMatch>> handleSearchRequest(String query, int topK, Long userId) {
+    public List<RetrievalMatch> handleSearchRequest(String query, int topK, Long userId) {
         String userIdStr = String.valueOf(resolveUserId(userId));
         IntentDecision decision = null;
         try {
@@ -156,24 +163,7 @@ public class ChatServiceImpl implements ChatService {
             results = retrieverService.retrieve(query, topK, userIdStr);
             results = postProcessorService.rerank(query, results, topK);
         }
-        return Results.success(results);
-    }
-
-    // ──────────────────────── handleFeedback ────────────────────────
-
-    @Override
-    public Result<Map<String, Object>> handleFeedback(FeedbackRequest request) {
-        if (request == null || request.getMessageId() == null) {
-            throw new ClientException(MESSAGE_ID_REQUIRED);
-        }
-
-        int score = request.getScore() == null ? 0 : request.getScore();
-        if (score < 1 || score > 5) {
-            throw new ClientException(SCORE_OUT_OF_RANGE);
-        }
-
-        retrieverService.recordFeedback(request.getMessageId(), score);
-        return Results.success(Map.of("messageId", request.getMessageId(), "score", score));
+        return results;
     }
 
     // ──────────────────────── private helpers ────────────────────────
