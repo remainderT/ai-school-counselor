@@ -30,9 +30,4 @@ public interface ChatService {
      * 处理用户反馈
      */
     Result<Map<String, Object>> handleFeedback(FeedbackRequest request);
-
-    /**
-     * 查询链路指标汇总
-     */
-    Result<Map<String, Object>> queryTraceMetricSummary(int days, Long userId);
 }

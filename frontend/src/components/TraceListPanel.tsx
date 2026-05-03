@@ -175,8 +175,6 @@ export function TraceListPanel({ onOpenTrace }: TraceListPanelProps) {
   // 统计
   const durations = runs.map((r) => Number(r.durationMs ?? 0)).filter((v) => Number.isFinite(v) && v > 0);
   const successCount = runs.filter((r) => normalizeStatus(r.status) === "success").length;
-  const failedCount = runs.filter((r) => normalizeStatus(r.status) === "failed").length;
-  const runningCount = runs.filter((r) => normalizeStatus(r.status) === "running").length;
   const avgDuration = durations.length ? Math.round(durations.reduce((s, v) => s + v, 0) / durations.length) : 0;
   const p95Duration = Math.round(percentile(durations, 0.95));
   const successRate = runs.length ? Math.round((successCount / runs.length) * 1000) / 10 : 0;
@@ -214,11 +212,6 @@ export function TraceListPanel({ onOpenTrace }: TraceListPanelProps) {
 
       {/* 统计卡片 */}
       <div className="trace-stat-grid">
-        <StatCard
-          color="emerald"
-          title="成功 / 失败 / 运行中"
-          value={`${successCount} / ${failedCount} / ${runningCount}`}
-        />
         <StatCard
           color="cyan"
           title="成功率"

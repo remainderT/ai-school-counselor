@@ -41,10 +41,4 @@ public class ChatController {
     public Result<Map<String, Object>> handleFeedback(@RequestBody FeedbackRequest request) {
         return chatService.handleFeedback(request);
     }
-
-    @GetMapping("/metrics/summary")
-    public Result<Map<String, Object>> queryTraceMetricSummary(
-            @RequestParam(defaultValue = "7") int days) {
-        return chatService.queryTraceMetricSummary(days, UserContext.resolvedUserId());
-    }
 }

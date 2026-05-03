@@ -8,18 +8,21 @@ import org.buaa.rag.core.model.ContentFragment;
 import org.buaa.rag.properties.MilvusProperties;
 import org.springframework.stereotype.Component;
 
-import jakarta.annotation.PostConstruct;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.common.ConsistencyLevel;
 import io.milvus.v2.common.DataType;
 import io.milvus.v2.common.IndexParam;
 import io.milvus.v2.service.collection.request.CreateCollectionReq;
+import io.milvus.v2.service.collection.request.DropCollectionReq;
 import io.milvus.v2.service.collection.request.HasCollectionReq;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Milvus collection 管理
+ * Milvus Collection 按需管理器。
+ * <p>
+ * 每个知识库对应一个独立的 Collection（名称 = knowledge.name），
+ * 在知识库创建/删除时由 KnowledgeServiceImpl 调用本类完成生命周期管理。
  */
 @Slf4j
 @Component
@@ -29,39 +32,53 @@ public class MilvusCollectionManager {
     private final MilvusClientV2 milvusClient;
     private final MilvusProperties milvusProperties;
     private final EmbeddingService embeddingService;
-    private volatile boolean ready;
 
-    @PostConstruct
-    public void initializeOnStartup() {
-        // 启动阶段预热 collection，避免首个离线任务触发冷启动异常。
-        if (collectionExists()) {
-            ready = true;
-            log.info("Milvus collection 已就绪: {}", milvusProperties.getCollectionName());
+    /**
+     * 确保指定 Collection 存在，不存在则创建。
+     *
+     * @param collectionName 知识库 name（即 bucket_name）
+     */
+    public void ensureCollection(String collectionName) {
+        if (collectionExists(collectionName)) {
+            log.info("Milvus collection 已存在，跳过创建: {}", collectionName);
             return;
         }
         int dimension = detectEmbeddingDimension();
-        createCollection(dimension);
-        ready = true;
+        createCollection(collectionName, dimension);
     }
 
-    public void ensureReady() {
-        if (ready) {
+    /**
+     * 删除指定 Collection（知识库删除时调用）。
+     *
+     * @param collectionName 知识库 name
+     */
+    public void dropCollection(String collectionName) {
+        if (!collectionExists(collectionName)) {
+            log.warn("Milvus collection 不存在，跳过删除: {}", collectionName);
             return;
         }
-        throw new IllegalStateException("Milvus collection 未就绪: " + milvusProperties.getCollectionName());
+        try {
+            milvusClient.dropCollection(DropCollectionReq.builder()
+                .collectionName(collectionName)
+                .build());
+            log.info("Milvus collection 已删除: {}", collectionName);
+        } catch (Exception e) {
+            log.error("Milvus collection 删除失败: {}", collectionName, e);
+            throw e;
+        }
     }
 
-    private boolean collectionExists() {
+    public boolean collectionExists(String collectionName) {
         return Boolean.TRUE.equals(
             milvusClient.hasCollection(
                 HasCollectionReq.builder()
-                    .collectionName(milvusProperties.getCollectionName())
+                    .collectionName(collectionName)
                     .build()
             )
         );
     }
 
-    private void createCollection(int dimension) {
+    private void createCollection(String collectionName, int dimension) {
         List<CreateCollectionReq.FieldSchema> fields = List.of(
             CreateCollectionReq.FieldSchema.builder()
                 .name("id")
@@ -104,7 +121,6 @@ public class MilvusCollectionManager {
             .build();
 
         IndexParam.MetricType metricType = resolveMetricType();
-        // 默认使用 HNSW，结合配置参数控制召回性能与构建成本。
         IndexParam indexParam = IndexParam.builder()
             .fieldName("embedding")
             .indexName("embedding")
@@ -118,24 +134,22 @@ public class MilvusCollectionManager {
             .build();
 
         CreateCollectionReq request = CreateCollectionReq.builder()
-            .collectionName(milvusProperties.getCollectionName())
+            .collectionName(collectionName)
             .collectionSchema(schema)
             .primaryFieldName("id")
             .vectorFieldName("embedding")
             .metricType(metricType.name())
             .consistencyLevel(ConsistencyLevel.BOUNDED)
             .indexParams(List.of(indexParam))
-            .description("AI School Counselor vector store")
+            .description("AI School Counselor vector store - " + collectionName)
             .build();
 
         try {
             milvusClient.createCollection(request);
-            log.info("创建 Milvus collection 成功: {}, dimension={}",
-                milvusProperties.getCollectionName(), dimension);
+            log.info("创建 Milvus collection 成功: {}, dimension={}", collectionName, dimension);
         } catch (Exception e) {
-            // 多实例并发启动时，若已被其他实例创建则直接视为成功。
-            if (collectionExists() || isAlreadyExists(e)) {
-                log.info("Milvus collection 已存在，跳过创建: {}", milvusProperties.getCollectionName());
+            if (collectionExists(collectionName) || isAlreadyExists(e)) {
+                log.info("Milvus collection 已存在，跳过创建: {}", collectionName);
                 return;
             }
             throw e;
@@ -143,7 +157,6 @@ public class MilvusCollectionManager {
     }
 
     private int detectEmbeddingDimension() {
-        // 通过探测请求动态获取向量维度，避免模型切换后配置不一致。
         List<float[]> vectors = embeddingService.encodeFragments(
             List.of(new ContentFragment(1, "milvus-init-probe"))
         );
@@ -151,7 +164,7 @@ public class MilvusCollectionManager {
             throw new IllegalStateException("无法探测 embedding 向量维度，Milvus 初始化失败");
         }
         int dimension = vectors.get(0).length;
-        log.info("Milvus 初始化探测到 embedding 维度: {}", dimension);
+        log.info("Milvus 探测到 embedding 维度: {}", dimension);
         return dimension;
     }
 
@@ -167,11 +180,8 @@ public class MilvusCollectionManager {
         Throwable current = throwable;
         while (current != null) {
             String message = current.getMessage();
-            if (message != null) {
-                String lower = message.toLowerCase(Locale.ROOT);
-                if (lower.contains("already exist")) {
-                    return true;
-                }
+            if (message != null && message.toLowerCase(Locale.ROOT).contains("already exist")) {
+                return true;
             }
             current = current.getCause();
         }

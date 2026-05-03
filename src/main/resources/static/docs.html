@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="api-base" content="">
     <title>文档管理 - BUAA问答助手</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -16,39 +19,40 @@
                     <div class="logo">
                         <div class="logo-icon">
                             <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <!-- 飞机剪影 -->
                                 <path d="M20 8L32 20L28 22L20 18L12 22L8 20L20 8Z" fill="currentColor" opacity="0.9"/>
                                 <path d="M20 18V32" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                                 <path d="M14 28L20 32L26 28" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                             </svg>
                         </div>
                         <div class="logo-text">
-                            <h1 class="logo-title">BUAA问答助手</h1>
-                            <p class="logo-subtitle">BUAA Q&A Assistant</p>
+                            <h1 class="logo-title">BUAA 问答助手</h1>
+                            <p class="logo-subtitle">AI School Counselor</p>
                         </div>
                     </div>
                 </div>
 
+                <div class="sidebar-section-label">导航</div>
                 <nav class="nav-menu">
                     <a class="nav-item" href="index.html">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                         </svg>
-                        <span>对话</span>
+                        <span>智能对话</span>
                     </a>
                     <a class="nav-item active" href="docs.html">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                             <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
                         </svg>
                         <span>文档管理</span>
+                        <div class="nav-active-bar"></div>
                     </a>
                 </nav>
 
                 <div class="sidebar-footer">
                     <div class="system-status">
-                        <div class="status-indicator"></div>
-                        <span>系统正常</span>
+                        <div class="status-dot"></div>
+                        <span class="status-text-label">系统运行中</span>
                     </div>
                 </div>
             </div>
@@ -59,12 +63,16 @@
             <!-- 顶部工具栏 -->
             <div class="doc-toolbar">
                 <div class="toolbar-left">
-                    <h2 class="doc-page-title">文档管理</h2>
+                    <div class="page-breadcrumb">文档管理</div>
+                    <h2 class="doc-page-title">知识库文档</h2>
+                    <p class="doc-page-desc">管理用于 AI 问答的文档知识库</p>
                 </div>
                 <div class="toolbar-right">
                     <button class="btn primary" id="upload-btn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M12 5v14M5 12h14"/>
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <path d="M17 8l-5-5-5 5"/>
+                            <path d="M12 3v12"/>
                         </svg>
                         <span>上传文档</span>
                     </button>
@@ -118,12 +126,15 @@
                         <tr class="doc-empty-row">
                             <td colspan="5">
                                 <div class="doc-table-empty">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                                        <path d="M14 2v6h6"/>
-                                    </svg>
-                                    <p>暂无文档</p>
-                                    <p class="empty-hint">点击"上传文档"按钮上传你的第一个文档</p>
+                                    <div class="empty-icon-wrap">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                            <path d="M14 2v6h6"/>
+                                            <path d="M12 18v-6M9 15l3-3 3 3"/>
+                                        </svg>
+                                    </div>
+                                    <p class="empty-title">暂无文档</p>
+                                    <p class="empty-hint">点击右上角"上传文档"按钮，开始构建知识库</p>
                                 </div>
                             </td>
                         </tr>
@@ -141,34 +152,86 @@
         <div class="modal-overlay"></div>
         <div class="modal-content">
             <div class="modal-header">
-                <h3>上传文档</h3>
-                <button class="modal-close" id="modal-close">&times;</button>
+                <div class="modal-title-wrap">
+                    <div class="modal-title-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <path d="M17 8l-5-5-5 5"/>
+                            <path d="M12 3v12"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3>上传文档</h3>
+                        <p class="modal-subtitle">添加文档到知识库</p>
+                    </div>
+                </div>
+                <button class="modal-close" id="modal-close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
             </div>
 
             <form id="upload-form" class="modal-body">
                 <div class="upload-zone-modal" id="upload-zone-modal">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <path d="M17 8l-5-5-5 5"/>
-                        <path d="M12 3v12"/>
-                    </svg>
-                    <div class="upload-text">拖拽文件到此处或点击选择</div>
+                    <div class="upload-zone-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <path d="M17 8l-5-5-5 5"/>
+                            <path d="M12 3v12"/>
+                        </svg>
+                    </div>
+                    <div class="upload-text">拖拽文件到此处，或<span class="upload-link">点击选择</span></div>
                     <div class="upload-hint">支持 PDF、Word、Excel、PPT、Markdown 等格式，最大 100MB</div>
                     <input id="upload-input" type="file" accept=".pdf,.doc,.docx,.txt,.md,.html,.htm,.xls,.xlsx,.ppt,.pptx,.rtf,.csv" style="display: none;">
                 </div>
 
                 <div class="file-name-display" id="file-name-display" style="display: none;">
                     <div class="file-info">
+                        <div class="file-info-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <path d="M14 2v6h6"/>
+                            </svg>
+                        </div>
                         <span id="file-name-text"></span>
                         <button type="button" class="btn-small" onclick="document.getElementById('upload-input').click()">重新选择</button>
                     </div>
                 </div>
 
                 <div class="form-group">
-                    <label>可见性</label>
-                    <select id="upload-visibility">
-                        <option value="PRIVATE">🔒 私有</option>
-                        <option value="PUBLIC">🌐 公开</option>
+                    <label>可见性设置</label>
+                    <div class="visibility-options">
+                        <label class="visibility-option" data-value="PRIVATE">
+                            <input type="radio" name="upload-visibility-radio" value="PRIVATE" checked style="display:none">
+                            <div class="visibility-option-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                                </svg>
+                            </div>
+                            <div class="visibility-option-text">
+                                <div class="visibility-option-label">私有</div>
+                                <div class="visibility-option-desc">仅自己可见</div>
+                            </div>
+                        </label>
+                        <label class="visibility-option" data-value="PUBLIC">
+                            <input type="radio" name="upload-visibility-radio" value="PUBLIC" style="display:none">
+                            <div class="visibility-option-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                                </svg>
+                            </div>
+                            <div class="visibility-option-text">
+                                <div class="visibility-option-label">公开</div>
+                                <div class="visibility-option-desc">所有人可见</div>
+                            </div>
+                        </label>
+                    </div>
+                    <select id="upload-visibility" style="display:none">
+                        <option value="PRIVATE">PRIVATE</option>
+                        <option value="PUBLIC">PUBLIC</option>
                     </select>
                 </div>
 
@@ -176,7 +239,14 @@
                     <div id="upload-status" class="upload-status-text"></div>
                     <div class="modal-buttons">
                         <button type="button" class="btn ghost" id="modal-cancel">取消</button>
-                        <button type="submit" class="btn primary">上传</button>
+                        <button type="submit" class="btn primary">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <path d="M17 8l-5-5-5 5"/>
+                                <path d="M12 3v12"/>
+                            </svg>
+                            上传文档
+                        </button>
                     </div>
                 </div>
             </form>
@@ -184,5 +254,20 @@
     </div>
 
     <script src="js/script.js"></script>
+    <script>
+    // 可见性选项卡交互
+    document.querySelectorAll('.visibility-option').forEach(option => {
+        option.addEventListener('click', () => {
+            document.querySelectorAll('.visibility-option').forEach(o => o.classList.remove('selected'));
+            option.classList.add('selected');
+            const radio = option.querySelector('input[type=radio]');
+            radio.checked = true;
+            const select = document.getElementById('upload-visibility');
+            if (select) select.value = option.dataset.value;
+        });
+    });
+    // 默认选中第一个
+    document.querySelector('.visibility-option[data-value="PRIVATE"]')?.classList.add('selected');
+    </script>
 </body>
 </html>

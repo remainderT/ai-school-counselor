@@ -23,7 +23,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Milvus 向量写入服务
+ * Milvus 向量写入服务。
+ * <p>
+ * 每次操作均需显式传入 collectionName（= knowledge.name），实现知识库级别的向量隔离。
  */
 @Slf4j
 @Service
@@ -34,15 +36,24 @@ public class MilvusVectorStoreService {
     private final MilvusCollectionManager collectionManager;
     private final MilvusProperties milvusProperties;
 
-    public void upsertDocument(DocumentDO document,
+    /**
+     * 将文档的向量片段 upsert 到对应知识库的 Collection。
+     *
+     * @param collectionName 知识库 name（= bucket_name）
+     * @param document       文档实体
+     * @param fragments      文本片段列表
+     * @param vectors        对应的向量列表
+     */
+    public void upsertDocument(String collectionName,
+                               DocumentDO document,
                                List<ContentFragment> fragments,
                                List<float[]> vectors) {
         if (document == null || fragments == null || fragments.isEmpty()) {
             return;
         }
         validateVectors(fragments, vectors);
-        // 向量写入前确保 collection 已初始化，避免首次写入失败。
-        collectionManager.ensureReady();
+        // 确保对应 Collection 已就绪
+        collectionManager.ensureCollection(collectionName);
 
         List<JsonObject> rows = new ArrayList<>(fragments.size());
         for (int i = 0; i < fragments.size(); i++) {
@@ -64,30 +75,38 @@ public class MilvusVectorStoreService {
         }
 
         UpsertReq request = UpsertReq.builder()
-            .collectionName(milvusProperties.getCollectionName())
+            .collectionName(collectionName)
             .data(rows)
             .build();
 
         UpsertResp response = milvusClient.upsert(request);
         log.info("Milvus 文档向量写入成功: collection={}, md5={}, upsertCnt={}",
-            milvusProperties.getCollectionName(), document.getMd5Hash(), response.getUpsertCnt());
+            collectionName, document.getMd5Hash(), response.getUpsertCnt());
     }
 
-    public void deleteByDocumentMd5(String documentMd5) {
+    /**
+     * 从对应知识库的 Collection 中删除指定文档的所有向量。
+     *
+     * @param collectionName 知识库 name
+     * @param documentMd5    文档 MD5
+     */
+    public void deleteByDocumentMd5(String collectionName, String documentMd5) {
         if (documentMd5 == null || documentMd5.isBlank()) {
             return;
         }
-        collectionManager.ensureReady();
+        if (!collectionManager.collectionExists(collectionName)) {
+            log.warn("Milvus collection 不存在，跳过删除: collection={}", collectionName);
+            return;
+        }
         try {
-            // 统一按 source_md5 清理整篇文档向量。
             DeleteResp response = milvusClient.delete(
                 DeleteReq.builder()
-                    .collectionName(milvusProperties.getCollectionName())
+                    .collectionName(collectionName)
                     .filter("source_md5 == \"" + escapeLiteral(documentMd5.trim()) + "\"")
                     .build()
             );
             log.info("Milvus 删除文档向量完成: collection={}, md5={}, deleteCnt={}",
-                milvusProperties.getCollectionName(), documentMd5, response.getDeleteCnt());
+                collectionName, documentMd5, response.getDeleteCnt());
         } catch (Exception e) {
             throw new ServiceException("Milvus 删除文档向量失败: " + e.getMessage(), e, SEARCH_SERVICE_ERROR);
         }
@@ -117,9 +136,6 @@ public class MilvusVectorStoreService {
         return value.substring(0, maxLength);
     }
 
-    /**
-     * 将 float 数组序列化为 Gson {@link JsonArray}，供 Milvus upsert 使用。
-     */
     private JsonArray vectorToGsonArray(float[] embedding) {
         JsonArray arr = new JsonArray(embedding.length);
         for (int k = 0; k < embedding.length; k++) {

@@ -19,7 +19,5 @@ public class StorageProperties {
 
     private String secretAccessKey;
 
-    private String storageBucket;
-
     private String region;
 }

@@ -32,5 +32,8 @@ public class MessageDO {
 
     private String content;
 
+    /** 用户评分（1-5），仅 assistant 消息有值，其余为 null */
+    private Integer score;
+
     private LocalDateTime createdAt;
 }

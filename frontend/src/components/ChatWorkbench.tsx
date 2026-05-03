@@ -482,7 +482,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={onQuestionKeyDown}
-          placeholder={emptyMode ? "在这里输入你的问题..." : "输入你的问题... (Enter 发送，Shift+Enter 换行)"}
+          placeholder="输入你的问题就行"
           rows={1}
         />
         <div className="composer-actions">
@@ -507,11 +507,6 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
           </button>
         </div>
       </div>
-      {!emptyMode && (
-        <p className="composer-hint">
-          <kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行
-        </p>
-      )}
     </div>
   );
 

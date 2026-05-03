@@ -45,8 +45,11 @@ public class RagPromptService {
     /** 多意图综合场景默认系统提示 */
     private static final String MULTI_INTENT_DEFAULT_PROMPT =
         PromptTemplateLoader.load("rag-multi-intent.st");
+    /** 单个文档块模板：对齐 context-format.st sub-question-kb-wrapper section */
+    private static final String DOC_BLOCK_TPL =
+        "<document index=\"%d\">\n<question>%s</question>\n<content>%s</content>\n</document>";
+    /** 动态结果片段（工具结果）标头，保留给 tool context 场景 */
     private static final String TOOL_CONTEXT_HEADER = "## 动态结果片段";
-    private static final String KB_CONTEXT_HEADER = "## 文档内容";
 
     private final LlmChat llmService;
     private final RagProperties ragProperties;
@@ -171,7 +174,7 @@ public class RagPromptService {
         long start = System.nanoTime();
         PromptContext promptContext = PromptContext.builder()
             .question(query)
-            .kbContext(buildSingleIntentDocumentBlock(retrievalResults))
+            .kbContext(buildSingleIntentDocumentBlock(retrievalResults, query))
             .preferredPrompt(intentPrompt != null ? intentPrompt.promptTemplate() : null)
             .promptSnippet(intentPrompt != null ? intentPrompt.promptSnippet() : null)
             .subQuestions(List.of(query))
@@ -261,7 +264,9 @@ public class RagPromptService {
 
         messages.addAll(llmService.toStructuredHistory(conversationHistory));
         if (!isBlank(promptContext.getQuestion())) {
-            messages.add(Map.of("role", "user", "content", promptContext.getQuestion().trim()));
+            // 用 XML <question> 标签包装，对齐 context-format.st single-question section
+            messages.add(Map.of("role", "user", "content",
+                "<question>" + promptContext.getQuestion().trim() + "</question>"));
         }
         return messages;
     }
@@ -330,51 +335,71 @@ public class RagPromptService {
     }
 
     private String buildSingleIntentDocumentBlock(List<RetrievalMatch> retrievalResults) {
+        return buildSingleIntentDocumentBlock(retrievalResults, null);
+    }
+
+    private String buildSingleIntentDocumentBlock(List<RetrievalMatch> retrievalResults, String question) {
         if (retrievalResults == null || retrievalResults.isEmpty()) {
             return "";
         }
-        StringBuilder builder = new StringBuilder(KB_CONTEXT_HEADER).append("\n");
+        String q = isBlank(question) ? "用户问题" : question;
+        StringBuilder body = new StringBuilder();
         for (int i = 0; i < retrievalResults.size(); i++) {
             RetrievalMatch match = retrievalResults.get(i);
-            builder.append("[").append(i + 1).append("] ")
-                .append("(").append(getSourceLabel(match)).append(") ")
-                .append(truncateText(match.getTextContent(), ragProperties.getPrompt().getMaxReferenceLength()))
-                .append("\n");
+            String text = truncateText(match.getTextContent(), ragProperties.getPrompt().getMaxReferenceLength());
+            body.append(String.format(DOC_BLOCK_TPL, i + 1, q, text)).append("\n");
         }
-        return builder.toString().trim();
+        return "<documents>\n" + body.toString().stripTrailing() + "\n</documents>";
     }
 
     private String buildMultiIntentDocumentBlock(List<SubQueryRetrievalResult> subQueryResults) {
-        List<RetrievalMatch> merged = collectDisplayedMultiIntentSources(subQueryResults);
-        if (merged.isEmpty()) {
+        if (subQueryResults == null || subQueryResults.isEmpty()) {
             return "";
         }
+        int snippetLen = Math.max(60, Math.min(
+            ragProperties.getPrompt().getMultiIntentSnippetLength(),
+            ragProperties.getPrompt().getMaxReferenceLength()
+        ));
+        int perQuestionLimit = Math.max(1, Math.min(
+            ragProperties.getPrompt().getMultiIntentSourcesPerQuestion(),
+            ragProperties.getPrompt().getMaxSourceReferenceCount()
+        ));
 
-        StringBuilder builder = new StringBuilder(KB_CONTEXT_HEADER).append("\n");
-        for (int i = 0; i < merged.size(); i++) {
-            RetrievalMatch match = merged.get(i);
-            builder.append("[").append(i + 1).append("] ")
-                .append("(").append(getSourceLabel(match)).append(") ")
-                .append(truncateText(match.getTextContent(),
-                    Math.max(60, Math.min(
-                        ragProperties.getPrompt().getMultiIntentSnippetLength(),
-                        ragProperties.getPrompt().getMaxReferenceLength()
-                    ))))
-                .append("\n");
+        StringBuilder body = new StringBuilder();
+        int globalIdx = 1;
+        boolean anyContent = false;
+        for (SubQueryRetrievalResult result : subQueryResults) {
+            List<RetrievalMatch> sources = result.sources();
+            if (sources == null || sources.isEmpty()) {
+                // 子问题无检索结果：输出空 document 块，让模型知道该子问题无资料
+                body.append(String.format(DOC_BLOCK_TPL, globalIdx++,
+                    result.query(), "（暂无相关文档）")).append("\n");
+                continue;
+            }
+            anyContent = true;
+            int added = 0;
+            for (RetrievalMatch match : sources) {
+                if (match == null || added >= perQuestionLimit) break;
+                String text = truncateText(match.getTextContent(), snippetLen);
+                body.append(String.format(DOC_BLOCK_TPL, globalIdx++, result.query(), text)).append("\n");
+                added++;
+            }
         }
-        return builder.toString().trim();
+        if (!anyContent) {
+            return "";
+        }
+        return "<documents>\n" + body.toString().stripTrailing() + "\n</documents>";
     }
 
     private String buildMultiIntentUserQuery(String originalQuery, List<SubQueryRetrievalResult> subQueryResults) {
-        StringBuilder builder = new StringBuilder();
-        builder.append("原始用户问题：\n")
-            .append(originalQuery == null ? "" : originalQuery)
-            .append("\n\n请结合上述资料，按顺序完整回答这些事项：\n");
+        // 用 XML <questions> 块包装，对齐 context-format.st multi-questions section
+        StringBuilder questions = new StringBuilder();
         for (int i = 0; i < subQueryResults.size(); i++) {
-            SubQueryRetrievalResult result = subQueryResults.get(i);
-            builder.append(i + 1).append(". ").append(result.query()).append("\n");
+            questions.append(i + 1).append(". ").append(subQueryResults.get(i).query()).append("\n");
         }
-        return builder.toString().trim();
+        return "原始问题：" + (originalQuery == null ? "" : originalQuery)
+            + "\n\n<questions>\n" + questions.toString().stripTrailing() + "\n</questions>"
+            + "\n\n请结合 <documents> 内的资料，按顺序完整回答以上各事项。";
     }
 
     private String buildSystemPrompt(PromptContext context, String fallbackPrompt) {

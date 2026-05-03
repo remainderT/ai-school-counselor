@@ -15,6 +15,12 @@ const BackIcon = () => (
   </svg>
 );
 
+const ChevronDownIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="6 9 12 15 18 9" />
+  </svg>
+);
+
 const CHUNK_PAGE_SIZE = 10;
 
 export function DocumentDetailPanel({ documentId, onBack }: DocumentDetailPanelProps) {
@@ -24,7 +30,12 @@ export function DocumentDetailPanel({ documentId, onBack }: DocumentDetailPanelP
   const [totalPages, setTotalPages] = useState(1);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [expandedChunkId, setExpandedChunkId] = useState<number | null>(null);
   const req = useActionRequest();
+
+  const toggleChunk = (id: number) => {
+    setExpandedChunkId((current) => (current === id ? null : id));
+  };
 
   const download = useCallback(async () => {
     const url = apiUrl(`/api/rag/document/${documentId}/download`);
@@ -33,8 +44,18 @@ export function DocumentDetailPanel({ documentId, onBack }: DocumentDetailPanelP
       method: "GET",
       headers
     });
-    if (!resp.ok) {
-      throw new Error(`下载失败: HTTP ${resp.status}`);
+    const contentType = resp.headers.get("content-type") || "";
+    if (!resp.ok || contentType.includes("application/json")) {
+      let message = `下载失败: HTTP ${resp.status}`;
+      try {
+        const payload = await resp.json() as { message?: string };
+        if (payload?.message) {
+          message = payload.message;
+        }
+      } catch {
+        // ignore json parse error and keep default message
+      }
+      throw new Error(message);
     }
     const blob = await resp.blob();
     const objectUrl = window.URL.createObjectURL(blob);
@@ -160,18 +181,37 @@ export function DocumentDetailPanel({ documentId, onBack }: DocumentDetailPanelP
             ) : (
               <>
                 <div className="doc-detail-chunk-list">
-                  {chunks.map((chunk) => (
-                    <article key={chunk.id} className="doc-detail-chunk-card">
-                      <div className="doc-detail-chunk-head">
-                        <div className="doc-detail-chunk-title">Chunk #{chunk.fragmentIndex ?? 0}</div>
-                        <div className="doc-detail-chunk-meta">
-                          <span>ID: {chunk.id}</span>
-                          <span>Tokens: {chunk.tokenEstimate ?? "-"}</span>
-                        </div>
-                      </div>
-                      <pre className="doc-detail-chunk-text">{chunk.textData || "暂无内容"}</pre>
-                    </article>
-                  ))}
+                  {chunks.map((chunk) => {
+                    const expanded = expandedChunkId === chunk.id;
+                    const panelId = `chunk-panel-${chunk.id}`;
+                    return (
+                      <article key={chunk.id} className={`doc-detail-chunk-card${expanded ? " expanded" : ""}`}>
+                        <button
+                          type="button"
+                          className="doc-detail-chunk-trigger"
+                          aria-expanded={expanded}
+                          aria-controls={panelId}
+                          onClick={() => toggleChunk(chunk.id)}
+                        >
+                          <div className="doc-detail-chunk-head">
+                            <div className="doc-detail-chunk-title">Chunk #{chunk.fragmentIndex ?? 0}</div>
+                            <div className="doc-detail-chunk-head-right">
+                              <div className="doc-detail-chunk-meta">
+                                <span>ID: {chunk.id}</span>
+                                <span>Tokens: {chunk.tokenEstimate ?? "-"}</span>
+                              </div>
+                              <div className="doc-detail-chunk-arrow" aria-hidden="true"><ChevronDownIcon /></div>
+                            </div>
+                          </div>
+                        </button>
+                        {expanded && (
+                          <div id={panelId} className="doc-detail-chunk-body">
+                            <pre className="doc-detail-chunk-text">{chunk.textData || "暂无内容"}</pre>
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
                 {total > CHUNK_PAGE_SIZE && (
                   <div className="admin-pagination doc-detail-pagination">

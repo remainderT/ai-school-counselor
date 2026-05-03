@@ -12,7 +12,9 @@ import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.common.enums.BaseErrorCode;
 import org.buaa.rag.dao.entity.DocumentDO;
+import org.buaa.rag.dao.entity.KnowledgeDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
+import org.buaa.rag.dao.mapper.KnowledgeMapper;
 import org.buaa.rag.core.offline.ingestion.DocumentIngestionTask;
 import org.buaa.rag.core.offline.ingestion.DocumentLifecycleService;
 import org.buaa.rag.core.offline.parser.FileTypeValidate;
@@ -22,6 +24,7 @@ import org.buaa.rag.core.mq.IngestionProducer;
 import org.buaa.rag.properties.FileParseProperties;
 import org.buaa.rag.tool.RemoteURLFetcher;
 import org.buaa.rag.tool.RemoteURLFetcher.FetchedRemoteDocument;
+import org.buaa.rag.tool.BucketManager;
 import org.buaa.rag.tool.RustfsStorage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
@@ -45,6 +48,7 @@ public class DocumentRefreshScheduler {
     private static final String REMOTE_FILE_BASENAME = "remote-document";
 
     private final DocumentMapper documentMapper;
+    private final KnowledgeMapper knowledgeMapper;
     private final DocumentLifecycleService lifecycleService;
     private final RemoteURLFetcher remoteURLFetcher;
     private final RustfsStorage rustfsStorage;
@@ -140,7 +144,8 @@ public class DocumentRefreshScheduler {
             newMd5,
             new ByteArrayResource(body)
         );
-        rustfsStorageUpload(payload, document.getId(), nextRunAt, now);
+        String bucketName = resolveKnowledgeBucketName(document.getKnowledgeId());
+        rustfsStorageUpload(bucketName, payload, document.getId(), nextRunAt, now);
         int updated = documentMapper.update(
             null,
             Wrappers.lambdaUpdate(DocumentDO.class)
@@ -165,16 +170,33 @@ public class DocumentRefreshScheduler {
             newMd5);
     }
 
-    private void rustfsStorageUpload(UploadPayload payload,
+    private void rustfsStorageUpload(String bucketName,
+                                     UploadPayload payload,
                                      Long documentId,
                                      LocalDateTime nextRunAt,
                                      LocalDateTime now) {
         try {
-            rustfsStorage.upload(payload);
+            rustfsStorage.upload(bucketName, payload);
         } catch (Exception e) {
             touchNextRun(documentId, now, nextRunAt, "上传刷新文件失败: " + e.getMessage());
             throw new ServiceException("上传刷新文件失败: " + e.getMessage(), e, BaseErrorCode.SERVICE_ERROR);
         }
+    }
+
+    private String resolveKnowledgeBucketName(Long knowledgeId) {
+        if (knowledgeId == null) {
+            return "";
+        }
+        KnowledgeDO knowledge = knowledgeMapper.selectOne(
+            Wrappers.lambdaQuery(KnowledgeDO.class)
+                .eq(KnowledgeDO::getId, knowledgeId)
+                .eq(KnowledgeDO::getDelFlag, 0)
+        );
+        if (knowledge == null) {
+            log.warn("知识库未找到: knowledgeId={}", knowledgeId);
+            return "";
+        }
+        return BucketManager.toBucketName(knowledge.getName());
     }
 
     private LocalDateTime resolveNextRun(String cron, LocalDateTime now) {

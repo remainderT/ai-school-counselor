@@ -28,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
  * 文档内容流水线
  * <p>
  * 负责对象存储读取、解析、清洗和分块，向上游暴露统一的内容产出。
+ * bucketName 由调用方（DocumentIngestionWorkflow）透传，对应知识库的 RustFS Bucket。
  */
 @Slf4j
 @Component
@@ -40,22 +41,25 @@ public class DocumentContentPipeline {
     private final ChunkingService chunkingService;
     private final FileParseProperties fileParseProperties;
 
-    public List<ContentFragment> extract(DocumentDO document, String chunkMode) {
+    /**
+     * @param document   文档实体
+     * @param chunkMode  分块模式
+     * @param bucketName 知识库对应的 RustFS Bucket 名称
+     */
+    public List<ContentFragment> extract(DocumentDO document, String chunkMode, String bucketName) {
         if (document == null) {
             return List.of();
         }
-        // 统一从对象存储读取，保证离线重试时的数据源稳定且可复现。
-        try (InputStream inputStream = openStoredDocument(document.getMd5Hash(), document.getOriginalFileName())) {
+        try (InputStream inputStream = openStoredDocument(bucketName, document.getMd5Hash(), document.getOriginalFileName())) {
             return extractFragments(document.getOriginalFileName(), inputStream, chunkMode);
         } catch (IOException e) {
             throw new ServiceException("关闭对象存储文件流失败: " + e.getMessage(), e, STORAGE_SERVICE_ERROR);
         }
     }
 
-    private InputStream openStoredDocument(String documentMd5, String originalFileName) {
-        String primaryPath = rustfsStorage.buildPrimaryPath(documentMd5, originalFileName);
+    private InputStream openStoredDocument(String bucketName, String documentMd5, String originalFileName) {
         try {
-            return rustfsStorage.download(primaryPath);
+            return rustfsStorage.downloadPrimary(bucketName, documentMd5, originalFileName);
         } catch (Exception e) {
             throw new ServiceException(
                 "对象存储下载失败: " + e.getMessage(),
@@ -80,14 +84,12 @@ public class DocumentContentPipeline {
         log.info("文本分块完成，片段数: {}", chunks.size());
         List<ContentFragment> fragments = new ArrayList<>(chunks.size());
         for (int index = 0; index < chunks.size(); index++) {
-            // fragmentId 从 1 开始，和落库字段 fragment_index 保持一致。
             fragments.add(new ContentFragment(index + 1, chunks.get(index)));
         }
         return fragments;
     }
 
     private String extractText(InputStream stream, String fileName, String mimeType) {
-        // 解析器按 mime/fileName 选择，便于后续平滑扩展新文档类型。
         DocumentParser parser = documentParserSelector.selectByMimeType(mimeType, fileName);
         if (parser == null) {
             throw new ServiceException("未找到可用文档解析器", DOCUMENT_PARSE_FAILED);

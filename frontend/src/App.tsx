@@ -480,7 +480,7 @@ export default function App() {
   return (
     <div className="console-layout console-layout-full">
       <div className="workspace">
-        <main className="panel-wrap">
+        <main className="panel-wrap chat-panel-wrap">
           <ChatWorkbench authUsername={auth.username} adminEntryButton={adminEntryButton} onLogout={logoutCurrent} />
         </main>
       </div>

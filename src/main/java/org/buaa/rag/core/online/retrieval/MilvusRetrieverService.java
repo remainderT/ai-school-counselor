@@ -23,7 +23,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Milvus 向量检索服务
+ * Milvus 向量检索服务。
+ * <p>
+ * 每次检索均需显式传入 collectionName（= knowledge.name），实现知识库级别的检索隔离。
  */
 @Slf4j
 @Service
@@ -37,11 +39,21 @@ public class MilvusRetrieverService {
     private final MilvusCollectionManager collectionManager;
     private final MilvusProperties milvusProperties;
 
-    public List<RetrievalMatch> search(List<Float> queryVector, int topK) {
+    /**
+     * 在指定 Collection 中执行向量相似度检索。
+     *
+     * @param collectionName 知识库 name（= bucket_name）
+     * @param queryVector    查询向量
+     * @param topK           返回最大结果数
+     */
+    public List<RetrievalMatch> search(String collectionName, List<Float> queryVector, int topK) {
         if (queryVector == null || queryVector.isEmpty() || topK <= 0) {
             return Collections.emptyList();
         }
-        collectionManager.ensureReady();
+        if (!collectionManager.collectionExists(collectionName)) {
+            log.warn("Milvus collection 不存在，跳过检索: collection={}", collectionName);
+            return Collections.emptyList();
+        }
 
         try {
             int requestTopK = Math.max(1, topK);
@@ -51,8 +63,8 @@ public class MilvusRetrieverService {
             int effectiveTopK = requestTopK;
             if (effectiveTopK >= effectiveEf) {
                 effectiveTopK = Math.max(1, effectiveEf - 1);
-                log.warn("Milvus 检索参数已自动修正: requestedTopK={}, searchEf={}, effectiveTopK={}, effectiveEf={}",
-                    requestTopK, milvusProperties.getSearchEf(), effectiveTopK, effectiveEf);
+                log.warn("Milvus 检索参数已自动修正: collection={}, requestedTopK={}, effectiveTopK={}, effectiveEf={}",
+                    collectionName, requestTopK, effectiveTopK, effectiveEf);
             }
 
             float[] vector = l2Normalize(toFloatArray(queryVector));
@@ -63,7 +75,7 @@ public class MilvusRetrieverService {
             );
 
             SearchReq request = SearchReq.builder()
-                .collectionName(milvusProperties.getCollectionName())
+                .collectionName(collectionName)
                 .annsField("embedding")
                 .data(vectors)
                 .topK(effectiveTopK)
@@ -90,9 +102,6 @@ public class MilvusRetrieverService {
         }
     }
 
-    /**
-     * 将 Float 列表展开为原始 float 数组，便于传入 Milvus SDK。
-     */
     private float[] toFloatArray(List<Float> src) {
         float[] dst = new float[src.size()];
         for (int idx = 0; idx < src.size(); idx++) {
@@ -101,9 +110,6 @@ public class MilvusRetrieverService {
         return dst;
     }
 
-    /**
-     * 对向量执行 L2 归一化，使其模长为 1；零向量原样返回。
-     */
     private float[] l2Normalize(float[] vector) {
         double squaredSum = 0.0;
         for (float v : vector) {

@@ -15,10 +15,12 @@ import org.buaa.rag.properties.EsProperties;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.ESIndexDO;
-import org.buaa.rag.dao.entity.MessageFeedbackDO;
+import org.buaa.rag.dao.entity.KnowledgeDO;
+import org.buaa.rag.dao.entity.MessageDO;
 import org.buaa.rag.dao.entity.MessageSourceDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
-import org.buaa.rag.dao.mapper.MessageFeedbackMapper;
+import org.buaa.rag.dao.mapper.KnowledgeMapper;
+import org.buaa.rag.dao.mapper.MessageMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.offline.index.VectorEncoding;
@@ -49,8 +51,9 @@ public class SmartRetrieverServiceImpl {
     private final ElasticsearchClient esClient;
     private final VectorEncoding encodingService;
     private final DocumentMapper documentMapper;
+    private final KnowledgeMapper knowledgeMapper;
     private final RagProperties ragProperties;
-    private final MessageFeedbackMapper feedbackRepository;
+    private final MessageMapper messageMapper;
     private final MessageSourceMapper sourceRepository;
     private final EsProperties esProperties;
     private final MilvusRetrieverService milvusRetrieverService;
@@ -111,22 +114,60 @@ public class SmartRetrieverServiceImpl {
         }
     }
 
+    /**
+     * 在指定知识库集合中检索（意图定向）。
+     * <p>
+     * 直接在对应知识库的 Milvus Collection 中做向量检索，并用 ES 文本检索结果做 RRF 融合后过滤，
+     * 避免全局检索后再过滤的额外开销和跨库噪声。
+     */
     public List<RetrievalMatch> retrieveScoped(String queryText,
                                                int topK,
                                                String userId,
                                                Set<Long> knowledgeIds) {
-        List<RetrievalMatch> base = retrieve(queryText, Math.max(topK, topK * 2), userId);
-        if (base.isEmpty() || knowledgeIds == null || knowledgeIds.isEmpty()) {
-            if (base.size() > topK) {
-                return base.subList(0, topK);
-            }
-            return base;
+        if (knowledgeIds == null || knowledgeIds.isEmpty()) {
+            return retrieve(queryText, topK, userId);
         }
 
-        Set<String> md5s = base.stream()
+        // 查出各知识库的 collectionName
+        List<KnowledgeDO> knowledgeList = knowledgeMapper.selectList(
+            Wrappers.lambdaQuery(KnowledgeDO.class)
+                .in(KnowledgeDO::getId, knowledgeIds)
+                .eq(KnowledgeDO::getDelFlag, 0)
+        );
+
+        List<Float> queryVector = generateQueryVector(queryText);
+        int recallSize = calculateRecallSize(queryText, topK);
+
+        // 在各知识库 Collection 中并行检索并合并（Milvus 直接用 knowledge.name，不做连字符转换）
+        List<RetrievalMatch> vectorMatches = knowledgeList.stream()
+            .flatMap(kb -> {
+                try {
+                    if (queryVector != null) {
+                        return milvusRetrieverService.search(kb.getName(), queryVector, recallSize).stream();
+                    }
+                } catch (Exception e) {
+                    log.warn("知识库向量检索失败: collection={}", kb.getName(), e);
+                }
+                return java.util.stream.Stream.empty();
+            })
+            .collect(Collectors.toList());
+
+        List<RetrievalMatch> textMatches;
+        try {
+            textMatches = performTextOnlyRetrievalRaw(queryText, recallSize);
+        } catch (Exception e) {
+            textMatches = Collections.emptyList();
+        }
+
+        // RRF 融合
+        List<RetrievalMatch> fused = fuseRetrievalMatches(List.of(textMatches, vectorMatches), topK);
+
+        // 过滤只保留属于目标知识库的结果
+        Set<String> md5s = fused.stream()
             .map(RetrievalMatch::getFileMd5)
             .filter(md5 -> md5 != null && !md5.isBlank())
             .collect(Collectors.toSet());
+
         if (md5s.isEmpty()) {
             return List.of();
         }
@@ -140,45 +181,53 @@ public class SmartRetrieverServiceImpl {
             .filter(doc -> doc.getKnowledgeId() != null && knowledgeIds.contains(doc.getKnowledgeId()))
             .map(DocumentDO::getMd5Hash)
             .collect(Collectors.toSet());
-        if (allowed.isEmpty()) {
-            return List.of();
-        }
-        List<RetrievalMatch> scoped = base.stream()
+
+        List<RetrievalMatch> scoped = fused.stream()
             .filter(match -> allowed.contains(match.getFileMd5()))
             .collect(Collectors.toList());
-        if (scoped.size() > topK) {
-            return scoped.subList(0, topK);
-        }
-        return scoped;
+
+        return filterAndEnrichMatches(scoped, userId, topK);
     }
 
-    public void recordFeedback(Long messageId, String userId, int score, String comment) {
-        MessageFeedbackDO feedback = new MessageFeedbackDO();
-        feedback.setMessageId(messageId);
-        feedback.setUserId(parseUserId(userId));
-        feedback.setScore(score);
-        feedback.setComment(comment);
-        feedbackRepository.insert(feedback);
-    }
-
-    private Long parseUserId(String userId) {
-        try {
-            return userId == null ? null : Long.valueOf(userId);
-        } catch (NumberFormatException e) {
-            return null;
+    public void recordFeedback(Long messageId, int score) {
+        if (messageId == null) {
+            return;
         }
+        MessageDO update = new MessageDO();
+        update.setId(messageId);
+        update.setScore(score);
+        messageMapper.updateById(update);
     }
 
     /**
-     * 执行混合检索
+     * 执行混合检索（全局，跨所有知识库）
      */
     private List<RetrievalMatch> performHybridRetrieval(String query,
                                                         List<Float> vector,
                                                         int topK) throws Exception {
         int recallSize = calculateRecallSize(query, topK);
         List<RetrievalMatch> textMatches = performTextOnlyRetrievalRaw(query, recallSize);
-        List<RetrievalMatch> vectorMatches = milvusRetrieverService.search(vector, recallSize);
+        List<RetrievalMatch> vectorMatches = searchAllCollections(vector, recallSize);
         return fuseRetrievalMatches(List.of(textMatches, vectorMatches), topK);
+    }
+
+    /**
+     * 跨所有知识库 Collection 进行向量检索并合并结果。
+     */
+    private List<RetrievalMatch> searchAllCollections(List<Float> vector, int topK) {
+        List<KnowledgeDO> allKnowledge = knowledgeMapper.selectList(
+            Wrappers.lambdaQuery(KnowledgeDO.class).eq(KnowledgeDO::getDelFlag, 0)
+        );
+        return allKnowledge.stream()
+            .flatMap(kb -> {
+                try {
+                    return milvusRetrieverService.search(kb.getName(), vector, topK).stream();
+                } catch (Exception e) {
+                    log.warn("全局向量检索失败: collection={}", kb.getName(), e);
+                    return java.util.stream.Stream.empty();
+                }
+            })
+            .collect(Collectors.toList());
     }
 
     private int calculateRecallSize(String query, int topK) {
@@ -253,7 +302,7 @@ public class SmartRetrieverServiceImpl {
                                                                List<Float> vector,
                                                                int topK) throws Exception {
         int recallSize = calculateRecallSize(queryText, topK);
-        return milvusRetrieverService.search(vector, recallSize);
+        return searchAllCollections(vector, recallSize);
     }
 
     /**
@@ -440,20 +489,20 @@ public class SmartRetrieverServiceImpl {
             return Map.of();
         }
 
-        LambdaQueryWrapper<MessageFeedbackDO> feedbackQuery = Wrappers.lambdaQuery(MessageFeedbackDO.class)
-                .in(MessageFeedbackDO::getMessageId, messageIds)
-                .select(MessageFeedbackDO::getMessageId, MessageFeedbackDO::getScore);
-        List<MessageFeedbackDO> feedbackRows = feedbackRepository.selectList(feedbackQuery);
+        List<MessageDO> feedbackRows = messageMapper.selectList(Wrappers.lambdaQuery(MessageDO.class)
+                .in(MessageDO::getId, messageIds)
+                .isNotNull(MessageDO::getScore)
+                .select(MessageDO::getId, MessageDO::getScore));
         if (feedbackRows == null || feedbackRows.isEmpty()) {
             return Map.of();
         }
 
         Map<String, double[]> scoreAccumulator = new HashMap<>();
-        for (MessageFeedbackDO feedbackRow : feedbackRows) {
-            if (feedbackRow == null || feedbackRow.getMessageId() == null || feedbackRow.getScore() == null) {
+        for (MessageDO feedbackRow : feedbackRows) {
+            if (feedbackRow == null || feedbackRow.getId() == null || feedbackRow.getScore() == null) {
                 continue;
             }
-            List<String> documents = messageToDocuments.get(feedbackRow.getMessageId());
+            List<String> documents = messageToDocuments.get(feedbackRow.getId());
             if (documents == null || documents.isEmpty()) {
                 continue;
             }
@@ -531,5 +580,13 @@ public class SmartRetrieverServiceImpl {
                 .map(DocumentDO::getMd5Hash)
                 .filter(md5 -> md5 != null && !md5.isBlank())
                 .toList();
+    }
+
+    private Long parseUserId(String userId) {
+        try {
+            return userId == null ? null : Long.valueOf(userId);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

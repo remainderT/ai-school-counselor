@@ -54,6 +54,7 @@ import org.buaa.rag.properties.FileParseProperties;
 import org.buaa.rag.service.DocumentService;
 import org.buaa.rag.core.offline.parser.FileTypeValidate;
 import org.buaa.rag.core.offline.parser.FileTypeValidate.InspectedFile;
+import org.buaa.rag.tool.BucketManager;
 import org.buaa.rag.tool.RustfsStorage;
 import org.springframework.core.io.ByteArrayResource;
 
@@ -124,11 +125,11 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         String scheduleCron = normalizeScheduleCron(request.getScheduleCron());
         boolean scheduleEnabled = Boolean.TRUE.equals(request.getScheduleEnabled());
 
-        verifyUploadKnowledge(knowledgeId);
+        KnowledgeDO knowledge = verifyUploadKnowledge(knowledgeId);
         validateScheduleConfig(scheduleEnabled, scheduleCron, isUrlSource);
         LocalDateTime nextRefreshAt = resolveNextRefreshAt(scheduleEnabled, scheduleCron);
         UploadPayload payload = chooseUploadPayload(file, url);
-        persistUploadPayload(payload, knowledgeId, chunkMode, isUrlSource ? url : null, scheduleEnabled, scheduleCron,
+        persistUploadPayload(payload, knowledge, chunkMode, isUrlSource ? url : null, scheduleEnabled, scheduleCron,
             nextRefreshAt);
     }
 
@@ -223,8 +224,8 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     @Override
     public byte[] download(Long documentId) {
         DocumentDO document = requireOwnedDocument(documentId);
-        String objectPath = rustfsStorage.buildPrimaryPath(document.getMd5Hash(), document.getOriginalFileName());
-        try (InputStream inputStream = rustfsStorage.download(objectPath)) {
+        String bucketName = resolveKnowledgeBucketName(document.getKnowledgeId());
+        try (InputStream inputStream = rustfsStorage.downloadPrimary(bucketName, document.getMd5Hash(), document.getOriginalFileName())) {
             return inputStream.readAllBytes();
         } catch (Exception e) {
             throw new ServiceException("文档下载失败: " + e.getMessage(), e, DOCUMENT_NOT_EXISTS);
@@ -234,9 +235,9 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     @Override
     public InputStream downloadStream(Long documentId) {
         DocumentDO document = requireOwnedDocument(documentId);
-        String objectPath = rustfsStorage.buildPrimaryPath(document.getMd5Hash(), document.getOriginalFileName());
+        String bucketName = resolveKnowledgeBucketName(document.getKnowledgeId());
         try {
-            return rustfsStorage.download(objectPath);
+            return rustfsStorage.downloadPrimary(bucketName, document.getMd5Hash(), document.getOriginalFileName());
         } catch (Exception e) {
             throw new ServiceException("文档下载失败: " + e.getMessage(), e, DOCUMENT_NOT_EXISTS);
         }
@@ -278,8 +279,9 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw new ClientException(DOCUMENT_ACCESS_CONTROL_ERROR);
         }
 
-        rustfsStorage.delete(document.getMd5Hash(), document.getOriginalFileName());
-        artifactService.cleanup(document);
+        String bucketName = resolveKnowledgeBucketName(document.getKnowledgeId());
+        rustfsStorage.delete(bucketName, document.getMd5Hash(), document.getOriginalFileName());
+        artifactService.cleanup(bucketName, document);
         baseMapper.update(
             null,
             Wrappers.lambdaUpdate(DocumentDO.class)
@@ -453,7 +455,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     }
 
     private void persistUploadPayload(UploadPayload payload,
-                                      Long knowledgeId,
+                                      KnowledgeDO knowledge,
                                       String chunkMode,
                                       String sourceUrl,
                                       boolean scheduleEnabled,
@@ -463,11 +465,12 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         if (document != null) {
             throw new ClientException(DOCUMENT_EXISTS);
         }
+        String bucketName = BucketManager.toBucketName(knowledge.getName());
         try {
-            rustfsStorage.upload(payload);
+            rustfsStorage.upload(bucketName, payload);
             document = lifecycleService.createPendingDocument(
                 payload,
-                knowledgeId,
+                knowledge.getId(),
                 sourceUrl,
                 scheduleEnabled ? 1 : 0,
                 scheduleEnabled ? scheduleCron : null,
@@ -479,7 +482,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         } catch (Exception e) {
             // 文档记录尚未落库时，尝试清理已上传的对象存储文件，避免孤儿文件。
             if (document == null) {
-                rustfsStorage.delete(payload.md5(), payload.originalFilename());
+                rustfsStorage.delete(bucketName, payload.md5(), payload.originalFilename());
             }
             markUploadFailure(document, e);
             throw new ServiceException("文件上传失败: " + e.getMessage(), e, DOCUMENT_UPLOAD_FAILED);
@@ -503,6 +506,26 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw new ClientException(KNOWLEDGE_ACCESS_DENIED);
         }
         return knowledge;
+    }
+
+    /**
+     * 根据知识库 ID 查询对应的 bucketName，找不到时返回空字符串并打印告警。
+     * bucketName 由 knowledge.name 动态计算，不存入数据库。
+     */
+    private String resolveKnowledgeBucketName(Long knowledgeId) {
+        if (knowledgeId == null) {
+            return "";
+        }
+        KnowledgeDO knowledge = knowledgeMapper.selectOne(
+            Wrappers.lambdaQuery(KnowledgeDO.class)
+                .eq(KnowledgeDO::getId, knowledgeId)
+                .eq(KnowledgeDO::getDelFlag, 0)
+        );
+        if (knowledge == null) {
+            log.warn("知识库未找到: knowledgeId={}", knowledgeId);
+            return "";
+        }
+        return BucketManager.toBucketName(knowledge.getName());
     }
 
     private void markUploadFailure(DocumentDO document, Exception error) {

@@ -249,21 +249,32 @@ export function DocumentPanel({ selectedKnowledgeId, onOpenDocumentDetail }: Doc
     }
   };
 
-  const download = async (id: number) => {
-    const url = apiUrl(`/api/rag/document/${id}/download`);
+  const download = async (item: DocumentItem) => {
+    const url = apiUrl(`/api/rag/document/${item.id}/download`);
     const headers = apiAuthHeaders();
     const resp = await fetch(url, {
       method: "GET",
       headers
     });
-    if (!resp.ok) {
-      throw new Error(`下载失败: HTTP ${resp.status}`);
+    const contentType = resp.headers.get("content-type") || "";
+    if (!resp.ok || contentType.includes("application/json")) {
+      let message = `下载失败: HTTP ${resp.status}`;
+      try {
+        const payload = await resp.json() as { message?: string };
+        if (payload?.message) {
+          message = payload.message;
+        }
+      } catch {
+        // ignore json parse error and keep default message
+      }
+      throw new Error(message);
     }
     const blob = await resp.blob();
     const objectUrl = window.URL.createObjectURL(blob);
     const disposition = resp.headers.get("content-disposition") || "";
     const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^\";]+)"?/i);
-    const filename = decodeURIComponent(match?.[1] || match?.[2] || `document-${id}`);
+    const fallbackName = item.originalFileName || item.fileName || `document-${item.id}`;
+    const filename = decodeURIComponent(match?.[1] || match?.[2] || fallbackName);
     const link = document.createElement("a");
     link.href = objectUrl;
     link.download = filename;
@@ -629,7 +640,7 @@ export function DocumentPanel({ selectedKnowledgeId, onOpenDocumentDetail }: Doc
                     <td>{statusLabel(item.processingStatus, item.processingStatusDesc)}</td>
                     <td>
                       <div className="doc-row-actions">
-                        <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => void download(item.id)}>
+                        <button className="admin-btn admin-btn-ghost admin-btn-sm" onClick={() => void download(item)}>
                           下载
                         </button>
                         <button className="admin-btn admin-btn-danger admin-btn-sm" onClick={() => void remove(item.id)} disabled={actionReq.loading}>

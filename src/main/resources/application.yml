@@ -59,7 +59,6 @@ spring:
 milvus:
   uri: http://localhost:19530
   token:
-  collection-name: knowledge
   metric-type: COSINE
   index-m: 48
   ef-construction: 200
@@ -70,7 +69,6 @@ storage:
   service-endpoint: http://localhost:9000
   access-key-id: rustfsadmin
   secret-access-key: rustfsadmin
-  storage-bucket: uploads
   region: cn-beijing
 
 file:

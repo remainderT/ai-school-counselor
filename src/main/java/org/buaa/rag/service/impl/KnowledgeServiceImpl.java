@@ -13,6 +13,7 @@ import java.util.stream.Collectors;
 
 import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.user.UserContext;
+import org.buaa.rag.core.offline.index.MilvusCollectionManager;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.KnowledgeDO;
 import org.buaa.rag.dao.mapper.DocumentMapper;
@@ -21,6 +22,7 @@ import org.buaa.rag.dto.req.KnowledgeCreateReqDTO;
 import org.buaa.rag.dto.req.KnowledgeUpdateReqDTO;
 import org.buaa.rag.dto.resp.KnowledgeListRespDTO;
 import org.buaa.rag.service.KnowledgeService;
+import org.buaa.rag.tool.BucketManager;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -30,12 +32,16 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, KnowledgeDO> implements KnowledgeService {
 
     private final DocumentMapper documentMapper;
+    private final BucketManager bucketManager;
+    private final MilvusCollectionManager collectionManager;
 
     @Override
     public Long create(KnowledgeCreateReqDTO requestParam) {
@@ -48,6 +54,11 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
 
         ensureNameNotDuplicate(userId, name, null);
         String desc = requestParam.getDescription();
+
+        // RustFS Bucket 名：下划线转连字符（RustFS 不允许下划线）
+        // Milvus Collection 名：直接用 knowledge.name（Milvus 不允许连字符）
+        String bucketName = BucketManager.toBucketName(name);
+
         KnowledgeDO knowledge = KnowledgeDO.builder()
             .userId(userId)
             .name(name)
@@ -58,6 +69,19 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         } catch (DuplicateKeyException ex) {
             throw new ClientException(KNOWLEDGE_NAME_DUPLICATE);
         }
+
+        // 同步创建对应的 RustFS Bucket 和 Milvus Collection
+        try {
+            bucketManager.ensureBucket(bucketName);
+            collectionManager.ensureCollection(name);  // Milvus 用原始 name（下划线）
+        } catch (Exception e) {
+            // 存储资源创建失败时回滚数据库记录，保持一致性
+            baseMapper.deleteById(knowledge.getId());
+            log.error("知识库存储资源初始化失败，已回滚: name={}", name, e);
+            throw new RuntimeException("知识库存储资源初始化失败: " + e.getMessage(), e);
+        }
+
+        log.info("知识库创建成功: id={}, name={}, bucketName={}", knowledge.getId(), name, bucketName);
         return knowledge.getId();
     }
 
@@ -74,7 +98,6 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
             return Collections.emptyList();
         }
 
-        // 批量查询每个知识库的文档数量
         List<Long> knowledgeIds = knowledgeList.stream()
             .map(KnowledgeDO::getId)
             .collect(Collectors.toList());
@@ -119,6 +142,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         KnowledgeDO existing = loadKnowledge(id);
         validateOwner(existing);
 
+        // 注意：name 更新不影响 bucket/collection（已创建的存储资源名称不可修改）
         if (requestParam != null && StringUtils.hasText(requestParam.getName())) {
             String nextName = requestParam.getName().trim();
             if (!nextName.equals(existing.getName())) {
@@ -147,7 +171,26 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeMapper, Knowledge
         if (relatedDocuments != null && relatedDocuments > 0) {
             throw new ClientException(KNOWLEDGE_HAS_DOCUMENTS);
         }
+
         baseMapper.deleteById(id);
+
+        // 同步清理对应的 RustFS Bucket 和 Milvus Collection（best-effort，不阻断删除）
+        String kbName = knowledge.getName();
+        String bucketName = BucketManager.toBucketName(kbName);
+        if (StringUtils.hasText(kbName)) {
+            try {
+                bucketManager.deleteBucket(bucketName);       // RustFS 用连字符
+            } catch (Exception e) {
+                log.warn("知识库 Bucket 清理失败（忽略）: bucketName={}", bucketName, e);
+            }
+            try {
+                collectionManager.dropCollection(kbName);     // Milvus 用原始 name（下划线）
+            } catch (Exception e) {
+                log.warn("知识库 Milvus Collection 清理失败（忽略）: collection={}", kbName, e);
+            }
+        }
+
+        log.info("知识库删除成功: id={}, name={}, bucketName={}", id, kbName, bucketName);
     }
 
     private KnowledgeDO loadKnowledge(Long id) {

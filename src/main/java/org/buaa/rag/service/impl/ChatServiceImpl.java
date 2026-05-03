@@ -4,7 +4,6 @@ import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.MESSAGE_EMPTY;
 import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.MESSAGE_ID_REQUIRED;
 import static org.buaa.rag.common.enums.OnlineErrorCodeEnum.SCORE_OUT_OF_RANGE;
 
-import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -30,8 +29,6 @@ import org.buaa.rag.core.online.intent.IntentRouterService;
 import org.buaa.rag.core.online.retrieval.MultiChannelRetrievalEngine;
 import org.buaa.rag.core.online.retrieval.SmartRetrieverServiceImpl;
 import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorServiceImpl;
-import org.buaa.rag.dao.entity.ChatTraceMetricDO;
-import org.buaa.rag.dao.mapper.ChatTraceMetricMapper;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.core.trace.RagTraceRoot;
 import org.buaa.rag.service.ChatService;
@@ -43,7 +40,6 @@ import org.springframework.stereotype.Service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
@@ -58,7 +54,6 @@ public class ChatServiceImpl implements ChatService {
     private final RetrievalPostProcessorServiceImpl postProcessorService;
     private final IntentRouterService intentRouterService;
     private final ConversationServiceImpl conversationService;
-    private final ChatTraceMetricMapper chatTraceMetricMapper;
     private final StreamChatPipeline streamChatPipeline;
     private final StreamTaskManager streamTaskManager;
     private final ObjectMapper objectMapper;
@@ -126,8 +121,6 @@ public class ChatServiceImpl implements ChatService {
             sessionId = ctx.getSessionId();
             assistantMessageId = ctx.getAssistantMessageId();
 
-            persistTraceMetric(sessionId, assistantMessageId, userId, message, executionResult);
-
         } catch (Exception e) {
             log.error("流式对话处理异常, userId={}, taskId={}", userId, taskId, e);
             // 回滚 assistant 占位符
@@ -179,90 +172,11 @@ public class ChatServiceImpl implements ChatService {
             throw new ClientException(SCORE_OUT_OF_RANGE);
         }
 
-        Long userId = resolveUserId(request.getUserId());
-        String userIdStr = String.valueOf(userId);
-
-        retrieverService.recordFeedback(request.getMessageId(), userIdStr, score, request.getComment());
-        chatTraceMetricMapper.update(
-            ChatTraceMetricDO.builder()
-                .userFeedbackScore(score)
-                .build(),
-            Wrappers.lambdaUpdate(ChatTraceMetricDO.class)
-                .eq(ChatTraceMetricDO::getMessageId, request.getMessageId())
-        );
+        retrieverService.recordFeedback(request.getMessageId(), score);
         return Results.success(Map.of("messageId", request.getMessageId(), "score", score));
     }
 
-    // ──────────────────────── queryTraceMetricSummary ────────────────────────
-
-    @Override
-    public Result<Map<String, Object>> queryTraceMetricSummary(int days, Long userId) {
-        int windowDays = Math.max(1, Math.min(days, 365));
-        LocalDateTime startTime = LocalDateTime.now().minusDays(windowDays);
-
-        var wrapper = Wrappers.lambdaQuery(ChatTraceMetricDO.class)
-            .ge(ChatTraceMetricDO::getCreatedAt, startTime)
-            .orderByDesc(ChatTraceMetricDO::getCreatedAt);
-        if (userId != null) {
-            wrapper.eq(ChatTraceMetricDO::getUserId, userId);
-        }
-        List<ChatTraceMetricDO> rows = chatTraceMetricMapper.selectList(wrapper);
-        if (rows == null || rows.isEmpty()) {
-            return Results.success(Map.of(
-                "days", windowDays,
-                "sampleSize", 0,
-                "avgRewriteLatencyMs", 0.0,
-                "avgRetrievalHitRate", 0.0,
-                "avgCitationRate", 0.0,
-                "clarifyTriggerRate", 0.0,
-                "avgFeedbackScore", 0.0
-            ));
-        }
-
-        List<Integer> feedbackScores = rows.stream()
-            .map(ChatTraceMetricDO::getUserFeedbackScore)
-            .filter(java.util.Objects::nonNull)
-            .toList();
-
-        return Results.success(Map.of(
-            "days", windowDays,
-            "sampleSize", rows.size(),
-            "avgRewriteLatencyMs", round4(avgField(rows, ChatTraceMetricDO::getRewriteLatencyMs)),
-            "avgRetrievalHitRate", round4(avgField(rows, ChatTraceMetricDO::getRetrievalHitRate)),
-            "avgCitationRate", round4(avgField(rows, ChatTraceMetricDO::getCitationRate)),
-            "clarifyTriggerRate", round4(avgField(rows, ChatTraceMetricDO::getClarifyTriggered)),
-            "avgFeedbackScore", round4(feedbackScores.stream().mapToInt(Integer::intValue).average().orElse(0.0)),
-            "feedbackCoverage", round4(feedbackScores.size() * 1.0 / rows.size())
-        ));
-    }
-
     // ──────────────────────── private helpers ────────────────────────
-
-    private void persistTraceMetric(String sessionId,
-                                    Long messageId,
-                                    Long userId,
-                                    String query,
-                                    StreamChatPipeline.ExecutionResult result) {
-        if (messageId == null || result == null) {
-            return;
-        }
-        try {
-            ChatTraceMetricDO metric = ChatTraceMetricDO.builder()
-                .sessionId(sessionId)
-                .messageId(messageId)
-                .userId(resolveUserId(userId))
-                .queryText(query)
-                .rewriteLatencyMs(Math.max(0, result.rewriteLatencyMs()))
-                .retrievalHitRate(result.retrievalTopK() <= 0 ? 0.0 :
-                    Math.max(0.0, Math.min(1.0, result.retrievedCount() * 1.0 / result.retrievalTopK())))
-                .citationRate(computeCitationRate(result.response(), result.sources()))
-                .clarifyTriggered(result.clarifyTriggered() ? 1 : 0)
-                .build();
-            chatTraceMetricMapper.insert(metric);
-        } catch (Exception e) {
-            log.debug("写入在线链路指标失败, messageId={}, error={}", messageId, e.getMessage());
-        }
-    }
 
     private double computeCitationRate(String answer, List<RetrievalMatch> sources) {
         if (answer == null || answer.isBlank() || sources == null || sources.isEmpty()) {
@@ -285,16 +199,6 @@ public class ChatServiceImpl implements ChatService {
 
     private Long resolveUserId(Long userId) {
         return userId != null ? userId : UserContext.resolvedUserId();
-    }
-
-    private <T extends Number> double avgField(List<ChatTraceMetricDO> rows,
-                                               java.util.function.Function<ChatTraceMetricDO, T> getter) {
-        return rows.stream()
-            .map(getter)
-            .filter(java.util.Objects::nonNull)
-            .mapToDouble(Number::doubleValue)
-            .average()
-            .orElse(0.0);
     }
 
     private double round4(double value) {

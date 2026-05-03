@@ -122,14 +122,22 @@ public class MultiChannelRetrievalEngine {
     }
 
     private SearchChannelResult invokeChannel(SearchChannel channel, SearchContext ctx) {
+        long start = System.nanoTime();
         try {
             SearchChannelResult result = channel.execute(ctx);
             if (result != null) {
+                long elapsed = elapsedMs(start);
+                int count = result.getMatches() == null ? 0 : result.getMatches().size();
+                log.info("检索通道完成 | channel={} | type={} | count={} | 耗时={}ms",
+                    channel.getName(), channel.getType(), count, elapsed);
                 return result;
             }
+            log.info("检索通道返回空结果 | channel={} | type={} | 耗时={}ms",
+                channel.getName(), channel.getType(), elapsedMs(start));
             return emptyResult(channel);
         } catch (Exception ex) {
-            log.warn("检索通道执行失败: {}", channel.getName(), ex);
+            log.warn("检索通道执行失败 | channel={} | type={} | 耗时={}ms",
+                channel.getName(), channel.getType(), elapsedMs(start), ex);
             return emptyResult(channel);
         }
     }

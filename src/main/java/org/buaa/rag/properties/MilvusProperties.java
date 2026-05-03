@@ -24,11 +24,6 @@ public class MilvusProperties {
     private String token;
 
     /**
-     * 全局 collection 名称
-     */
-    private String collectionName = "knowledge_milvus";
-
-    /**
      * 向量相似度度量
      */
     private String metricType = "COSINE";

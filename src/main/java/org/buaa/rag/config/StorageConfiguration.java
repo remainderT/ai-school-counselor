@@ -13,13 +13,12 @@ import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
-import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
-import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
-import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
-import software.amazon.awssdk.services.s3.model.S3Exception;
 
 /**
- * RustFS (S3 compatible) 对象存储配置
+ * RustFS (S3 compatible) 对象存储配置。
+ * <p>
+ * Bucket 的生命周期（创建/删除）由 {@code BucketManager} 在知识库创建/删除时按需管理，
+ * 此处仅负责构建 S3Client Bean。
  */
 @Slf4j
 @Configuration
@@ -30,7 +29,7 @@ public class StorageConfiguration {
 
     @Bean
     public S3Client rustfsS3Client() {
-        S3Client storageClient = S3Client.builder()
+        return S3Client.builder()
             .endpointOverride(URI.create(properties.getServiceEndpoint()))
             .credentialsProvider(StaticCredentialsProvider.create(
                 AwsBasicCredentials.create(properties.getAccessKeyId(), properties.getSecretAccessKey())))
@@ -39,33 +38,5 @@ public class StorageConfiguration {
                 .build())
             .region(Region.of(properties.getRegion()))
             .build();
-        ensureBucketExists(storageClient);
-        return storageClient;
-    }
-
-    private void ensureBucketExists(S3Client client) {
-        try {
-            String bucket = properties.getStorageBucket();
-            client.headBucket(HeadBucketRequest.builder().bucket(bucket).build());
-            log.info("存储桶已就绪: {}", bucket);
-        } catch (NoSuchBucketException e) {
-            createBucket(client);
-        } catch (S3Exception e) {
-            if (e.statusCode() == 404) {
-                createBucket(client);
-                return;
-            }
-            log.error("存储桶初始化失败: {}", e.getMessage(), e);
-            throw new RuntimeException("无法初始化对象存储", e);
-        } catch (Exception e) {
-            log.error("存储桶初始化失败: {}", e.getMessage(), e);
-            throw new RuntimeException("无法初始化对象存储", e);
-        }
-    }
-
-    private void createBucket(S3Client client) {
-        String bucket = properties.getStorageBucket();
-        client.createBucket(CreateBucketRequest.builder().bucket(bucket).build());
-        log.info("成功创建存储桶: {}", bucket);
     }
 }

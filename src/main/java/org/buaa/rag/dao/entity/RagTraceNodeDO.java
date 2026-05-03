@@ -15,14 +15,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * RAG 链路节点记录（对应 t_rag_trace_node 表）
+ * RAG 链路节点记录（对应 rag_trace_node 表）
  * 每个 @RagTraceNode 标注的方法调用对应一条 Node 记录，通过 parentNodeId 维护树形结构。
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@TableName("t_rag_trace_node")
+@TableName("rag_trace_node")
 public class RagTraceNodeDO {
 
     @TableId(type = IdType.AUTO)

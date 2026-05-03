@@ -743,10 +743,12 @@ function renderDocumentTable(documents) {
 
         // 文档名称
         const tdName = document.createElement('td');
-        const ext = getFileExtension(doc.originalFileName || '').toUpperCase();
+        const ext = getFileExtension(doc.originalFileName || '').toLowerCase();
+        const extLabel = ext.toUpperCase() || 'DOC';
+        const iconClass = `doc-file-icon type-${ext}`;
         tdName.innerHTML = `
             <div class="doc-file-name">
-                <div class="doc-file-icon">${ext || 'DOC'}</div>
+                <div class="${iconClass}">${extLabel}</div>
                 <div class="doc-file-text">
                     <strong title="${escapeHtml(doc.originalFileName || '未知文件')}">${escapeHtml(doc.originalFileName || '未知文件')}</strong>
                 </div>
@@ -756,22 +758,31 @@ function renderDocumentTable(documents) {
         // 文件大小
         const tdSize = document.createElement('td');
         tdSize.textContent = formatFileSize(doc.fileSizeBytes);
+        tdSize.style.color = 'var(--text-tertiary)';
+        tdSize.style.fontFamily = 'var(--font-mono)';
+        tdSize.style.fontSize = '12.5px';
 
         // 上传时间
         const tdDate = document.createElement('td');
         tdDate.textContent = formatDate(doc.uploadedAt);
+        tdDate.style.color = 'var(--text-tertiary)';
+        tdDate.style.fontSize = '12.5px';
 
         // 可见性
         const tdVisibility = document.createElement('td');
         const visibility = (doc.visibility || 'PRIVATE').toLowerCase();
-        const visText = getVisibilityText(doc.visibility);
-        tdVisibility.innerHTML = `<span class="doc-visibility-badge ${visibility}">${visText}</span>`;
+        const isPublic = visibility === 'public';
+        const visIcon = isPublic
+            ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`
+            : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+        const visLabel = isPublic ? '公开' : '私有';
+        tdVisibility.innerHTML = `<span class="doc-visibility-badge ${visibility}">${visIcon}${visLabel}</span>`;
 
         // 操作
         const tdActions = document.createElement('td');
         tdActions.innerHTML = `
             <div class="doc-table-actions">
-                <button class="doc-action-icon delete" title="删除" onclick="deleteDocument('${escapeHtml(doc.md5Hash)}')">
+                <button class="doc-action-icon delete" title="删除文档" onclick="deleteDocument('${escapeHtml(doc.md5Hash)}')">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                     </svg>
@@ -808,8 +819,8 @@ function formatDate(dateString) {
 
 function getVisibilityText(visibility) {
     const map = {
-        'PRIVATE': '🔒 私有',
-        'PUBLIC': '🌐 公开'
+        'PRIVATE': '私有',
+        'PUBLIC': '公开'
     };
     return map[visibility] || '私有';
 }
