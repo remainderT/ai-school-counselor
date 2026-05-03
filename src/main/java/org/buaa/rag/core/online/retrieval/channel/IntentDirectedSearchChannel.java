@@ -33,17 +33,22 @@ public class IntentDirectedSearchChannel implements SearchChannel {
     }
 
     @Override
-    public String getName() {
+    public String channelId() {
         return "intent-directed";
     }
 
     @Override
-    public int getPriority() {
+    public String description() {
+        return "基于意图判定的精准定向检索通道";
+    }
+
+    @Override
+    public int dispatchOrder() {
         return 1;
     }
 
     @Override
-    public boolean canActivate(SearchContext context) {
+    public boolean isApplicable(SearchContext context) {
         if (!properties.getChannels().getIntentDirected().isEnabled()) {
             return false;
         }
@@ -65,50 +70,42 @@ public class IntentDirectedSearchChannel implements SearchChannel {
     }
 
     @Override
-    public SearchChannelResult execute(SearchContext context) {
-        long t0 = System.currentTimeMillis();
+    public SearchChannelResult fetch(SearchContext context) {
+        long t0 = System.nanoTime();
         try {
             int multiplier = Math.max(1, properties.getChannels().getIntentDirected().getTopKMultiplier());
             int effectiveTopK = Math.max(1, context.getTopK() * multiplier);
             List<IntentDecision> decisions = context.getIntentDecisions();
             List<RetrievalMatch> hits;
-            String queryUsed;
             if (decisions != null && !decisions.isEmpty()) {
                 hits = fetchMultiIntent(context, decisions, effectiveTopK);
-                queryUsed = context.effectiveQuery();
             } else {
-                queryUsed = enrichQuery(context.effectiveQuery(), context.getIntentDecision());
-                hits = fetchSingleIntent(context, context.getIntentDecision(), effectiveTopK);
+                hits = fetchSingleIntent(context, context.getIntentDecision(), effectiveTopK, context.resolvedQuery());
             }
 
-            double conf = context.getIntentDecision() != null && context.getIntentDecision().getConfidence() != null
-                ? context.getIntentDecision().getConfidence()
-                : 0.0;
+            // 为命中结果标记来源通道
+            hits.forEach(h -> h.setChannelType(SearchChannelType.INTENT_DIRECTED));
 
-            return SearchChannelResult.builder()
-                .channelType(SearchChannelType.INTENT_DIRECTED)
-                .channelName(getName())
-                .matches(hits)
-                .confidence(conf)
-                .elapsedMs(System.currentTimeMillis() - t0)
-                .metadata(Map.of("query", queryUsed, "topK", effectiveTopK,
-                                 "intentCount", decisions == null ? 0 : decisions.size()))
-                .build();
+            double topScore = hits.stream()
+                    .mapToDouble(h -> h.getRelevanceScore() != null ? h.getRelevanceScore() : 0.0)
+                    .max().orElse(0.0);
+
+            return SearchChannelResult.of(
+                    SearchChannelType.INTENT_DIRECTED, channelId(),
+                    hits, topScore, nanosToMs(t0));
         } catch (Exception ex) {
             log.warn("意图定向检索失败", ex);
-            return SearchChannelResult.builder()
-                .channelType(SearchChannelType.INTENT_DIRECTED)
-                .channelName(getName())
-                .matches(List.of())
-                .confidence(0.0)
-                .elapsedMs(System.currentTimeMillis() - t0)
-                .build();
+            return SearchChannelResult.empty(SearchChannelType.INTENT_DIRECTED, channelId());
         }
     }
 
     @Override
-    public SearchChannelType getType() {
+    public SearchChannelType channelType() {
         return SearchChannelType.INTENT_DIRECTED;
+    }
+
+    private long nanosToMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
     // ----- 内部方法 -----
@@ -152,7 +149,7 @@ public class IntentDirectedSearchChannel implements SearchChannel {
         }
 
         Map<String, RetrievalMatch> dedup = qualified.stream()
-            .map(d -> fetchSingleIntent(context, d, topK))
+            .map(d -> fetchSingleIntent(context, d, topK, context.resolvedQuery()))
             .flatMap(List::stream)
             .collect(Collectors.toMap(
                 RetrievalMatch::matchKey,
@@ -167,8 +164,9 @@ public class IntentDirectedSearchChannel implements SearchChannel {
 
     private List<RetrievalMatch> fetchSingleIntent(SearchContext context,
                                                     IntentDecision decision,
-                                                    int topK) {
-        String query = enrichQuery(context.effectiveQuery(), decision);
+                                                    int topK,
+                                                    String baseQuery) {
+        String query = enrichQuery(baseQuery, decision);
         Set<Long> kbIds = decision.getKnowledgeBaseId() != null
             ? Set.of(decision.getKnowledgeBaseId())
             : Set.of();

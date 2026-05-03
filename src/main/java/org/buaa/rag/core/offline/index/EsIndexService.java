@@ -51,6 +51,41 @@ public class EsIndexService {
         log.info("ES 文本索引完成: documentId={}, 片段数={}", document.getId(), fragments.size());
     }
 
+    /**
+     * 索引（upsert）单个 chunk 到 ES。
+     *
+     * @param documentId    文档 ID
+     * @param fragmentIndex chunk 片段序号
+     * @param textData      新的文本内容
+     */
+    public void indexSingleChunk(Long documentId, int fragmentIndex, String textData) {
+        String esDocId = buildEsDocId(documentId, fragmentIndex);
+        ESIndexDO doc = ESIndexDO.builder()
+            .id(esDocId)
+            .documentId(documentId)
+            .fragmentIndex(fragmentIndex)
+            .textData(textData)
+            .build();
+        bulkIndex(List.of(doc));
+        log.info("ES 单 chunk 索引完成: documentId={}, fragmentIndex={}", documentId, fragmentIndex);
+    }
+
+    /**
+     * 删除单个 chunk 的 ES 索引文档。
+     *
+     * @param documentId    文档 ID
+     * @param fragmentIndex chunk 片段序号
+     */
+    public void deleteSingleChunk(Long documentId, int fragmentIndex) {
+        String esDocId = buildEsDocId(documentId, fragmentIndex);
+        try {
+            esClient.delete(d -> d.index(esProperties.getIndex()).id(esDocId));
+            log.info("ES 单 chunk 索引删除完成: documentId={}, fragmentIndex={}", documentId, fragmentIndex);
+        } catch (Exception e) {
+            throw new ServiceException("删除 ES 单 chunk 索引失败: " + e.getMessage(), e, SEARCH_SERVICE_ERROR);
+        }
+    }
+
     public void deleteByDocumentId(Long documentId) {
         if (documentId == null || documentId <= 0) {
             return;

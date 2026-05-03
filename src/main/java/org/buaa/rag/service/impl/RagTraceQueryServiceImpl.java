@@ -60,6 +60,19 @@ public class RagTraceQueryServiceImpl implements RagTraceQueryService {
     }
 
     @Override
+    public RagTraceRunVO getRunByTraceId(String traceId) {
+        if (!StringUtils.hasText(traceId)) {
+            return null;
+        }
+        RagTraceRunDO run = runMapper.selectOne(
+            Wrappers.lambdaQuery(RagTraceRunDO.class)
+                .eq(RagTraceRunDO::getTraceId, traceId.trim())
+                .last("LIMIT 1")
+        );
+        return run != null ? toRunVO(run) : null;
+    }
+
+    @Override
     public List<RagTraceNodeVO> listNodes(String traceId) {
         if (!StringUtils.hasText(traceId)) {
             return List.of();

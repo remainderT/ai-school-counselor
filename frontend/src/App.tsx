@@ -15,7 +15,7 @@ import { useAuthStore } from "./store/auth-store";
 type TabKey = "chat" | "search" | "knowledge" | "document" | "document-detail" | "intent-tree" | "trace" | "trace-detail";
 
 const BRAND_NAME = "BUAA问答助手";
-const ADMIN_SIDEBAR_COLLAPSED_KEY = "adminSidebarCollapsed";
+// Layout uses top-bar navigation for admin panel (no sidebar collapse needed)
 
 const ADMIN_TABS: TabKey[] = ["search", "knowledge", "intent-tree", "document", "document-detail", "trace", "trace-detail"];
 
@@ -55,14 +55,7 @@ function setHash(tab: TabKey, adminOpen: boolean, documentId?: number | null, tr
   }
 }
 
-/** 从 localStorage 读取管理侧边栏折叠状态（模块顶层避免组件内重复创建） */
-function loadAdminSidebarCollapsed(): boolean {
-  try {
-    return window.localStorage.getItem(ADMIN_SIDEBAR_COLLAPSED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
+// sidebar collapse helper removed — using top-bar layout
 
 /* ---- Inline SVG Icons ---- */
 const AdminIcon = () => (
@@ -97,7 +90,7 @@ export default function App() {
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authMsg, setAuthMsg] = useState("");
   const [adminPanelOpen, setAdminPanelOpenRaw] = useState(initialRoute.adminOpen);
-  const [adminSidebarCollapsed, setAdminSidebarCollapsed] = useState<boolean>(loadAdminSidebarCollapsed);
+  // admin sidebar collapsed state removed — now using top-bar layout
   const [documentFilterKnowledgeId, setDocumentFilterKnowledgeId] = useState<number | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(() => {
     const raw = window.location.hash.replace(/^#\/?/, "");
@@ -160,13 +153,7 @@ export default function App() {
     }
   }, [auth?.username]);
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(ADMIN_SIDEBAR_COLLAPSED_KEY, adminSidebarCollapsed ? "1" : "0");
-    } catch {
-      // ignore storage failures
-    }
-  }, [adminSidebarCollapsed]);
+  // sidebar collapse persistence removed — using top-bar layout
 
   const doLogin = async () => {
     if (!username.trim() || !password.trim()) {
@@ -307,17 +294,21 @@ export default function App() {
     return (
       <>
         <div className="auth-screen">
-          <section className="auth-panel" onKeyDown={handleAuthKeyDown}>
-            <div className="auth-hero">
-              <div className="brand auth-brand">
-                <div className="brand-logo">✦</div>
-                <div>
-                  <div className="brand-title">{BRAND_NAME}</div>
-                  <div className="brand-subtitle">北京航空航天大学</div>
-                </div>
+          {/* Centered hero text */}
+          <div className="auth-hero">
+            <div className="brand auth-brand">
+              <div className="brand-logo">B</div>
+              <div>
+                <div className="brand-title">{BRAND_NAME}</div>
+                <div className="brand-subtitle">北京航空航天大学</div>
               </div>
             </div>
+            <h1 className="auth-slogan">智能问答 · 校园助手</h1>
+            <p className="auth-desc">基于 RAG 技术，为你精准解答校园生活中的每一个问题</p>
+          </div>
 
+          {/* Centered card form */}
+          <section className="auth-panel" onKeyDown={handleAuthKeyDown}>
             <div className="auth-form">
               <div className="auth-form-head">
                 <h2 className="auth-title">{authMode === "login" ? "欢迎回来" : "创建账号"}</h2>
@@ -382,26 +373,24 @@ export default function App() {
     );
   }
 
-  /* ---- Admin panel is open: show admin sidebar + admin content ---- */
+  /* ---- Admin panel is open: top-bar navigation layout ---- */
   if (isAdmin && adminPanelOpen) {
     return (
-      <div className={adminSidebarCollapsed ? "console-layout admin-sidebar-collapsed" : "console-layout"}>
-        <aside className="sidebar admin-sidebar">
-          <div className="brand">
-            <div className="brand-logo">✦</div>
-            <div className="brand-title">{BRAND_NAME}</div>
+      <div className="admin-topbar-layout">
+        <header className="admin-topbar">
+          <div className="admin-topbar-left">
+            <div className="admin-topbar-brand">
+              <div className="admin-topbar-logo">B</div>
+              <span className="admin-topbar-title">{BRAND_NAME}</span>
+              <span className="admin-topbar-badge">管理后台</span>
+            </div>
           </div>
 
-          <button className="admin-back-btn" onClick={handleBackToChat}>
-            <BackIcon />
-            <span>返回聊天</span>
-          </button>
-
-          <nav className="side-nav" aria-label="管理功能">
+          <nav className="admin-topbar-nav" aria-label="管理功能">
             {adminTabs.map((item) => (
               <button
                 key={item.key}
-                className={tab === item.key ? "side-item active" : "side-item"}
+                className={tab === item.key ? "admin-topbar-tab active" : "admin-topbar-tab"}
                 onClick={() => handleAdminTabClick(item.key)}
               >
                 <span className={`side-icon side-icon-${item.icon}`} aria-hidden="true" />
@@ -410,19 +399,23 @@ export default function App() {
             ))}
           </nav>
 
-          <div className="sidebar-footer">
-            <div className="sidebar-user">
-              <div className="sidebar-user-avatar">{auth.username.charAt(0).toUpperCase()}</div>
-              <span className="sidebar-user-name">{auth.username}</span>
+          <div className="admin-topbar-right">
+            <button className="admin-topbar-back" onClick={handleBackToChat}>
+              <BackIcon />
+              <span>返回聊天</span>
+            </button>
+            <div className="admin-topbar-user">
+              <div className="admin-topbar-avatar">{auth.username.charAt(0).toUpperCase()}</div>
+              <span className="admin-topbar-username">{auth.username}</span>
             </div>
-            <button className="sidebar-logout-btn" onClick={logoutCurrent} title="退出登录">
+            <button className="admin-topbar-logout" onClick={logoutCurrent} title="退出登录">
               <LogoutIcon />
             </button>
           </div>
-        </aside>
+        </header>
 
-        <div className="workspace">
-          <main className="panel-wrap">
+        <div className="admin-topbar-body">
+          <main className="admin-topbar-content">
             {tab === "search" && <SearchPanel />}
             {tab === "knowledge" && <KnowledgePanel onOpenKnowledgeDocuments={handleOpenKnowledgeDocuments} />}
             {tab === "document" && (
@@ -444,17 +437,6 @@ export default function App() {
             )}
           </main>
         </div>
-        <button
-          className={adminSidebarCollapsed ? "admin-sidebar-handle collapsed" : "admin-sidebar-handle"}
-          type="button"
-          onClick={() => setAdminSidebarCollapsed((v) => !v)}
-          title={adminSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-          aria-label={adminSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-        >
-          <span className="sidebar-handle-arrow" aria-hidden="true">
-            {adminSidebarCollapsed ? ">" : "<"}
-          </span>
-        </button>
         <ToastHost />
       </div>
     );

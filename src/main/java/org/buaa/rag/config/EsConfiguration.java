@@ -28,17 +28,22 @@ public class EsConfiguration {
     private final EsProperties esProperties;
 
     /**
+     * 创建底层 RestClient Bean，由 Spring 管理生命周期并在容器关闭时自动释放连接池。
+     */
+    @Bean(destroyMethod = "close")
+    public RestClient restClient() {
+        return RestClient.builder(
+                new HttpHost(esProperties.getHost(), esProperties.getPort(), esProperties.getScheme())
+        ).build();
+    }
+
+    /**
      * 构建Elasticsearch客户端实例
      *
      * @return ES客户端
      */
     @Bean
-    public ElasticsearchClient elasticsearchClient() {
-        RestClientBuilder clientBuilder = RestClient.builder(
-                new HttpHost(esProperties.getHost(), esProperties.getPort(), esProperties.getScheme())
-        );
-
-        RestClient restClient = clientBuilder.build();
+    public ElasticsearchClient elasticsearchClient(RestClient restClient) {
         RestClientTransport transport = new RestClientTransport(
                 restClient,
                 new JacksonJsonpMapper()

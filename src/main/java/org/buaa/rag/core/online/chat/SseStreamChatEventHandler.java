@@ -14,7 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * 基于 SSE 的流式事件处理器：实现 {@link StreamChatCallback}，
  * 将业务事件翻译为标准 SSE 帧发送给前端。
  *
- * <p>事件类型定义（对齐 ragent 协议）：
+ * <h3>事件类型</h3>
  * <ul>
  *   <li>{@code meta}    - 首帧，携带 messageId + taskId</li>
  *   <li>{@code message} - LLM 内容分块（JSON: {"type":"response","delta":"..."}）</li>
@@ -24,20 +24,37 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *   <li>{@code error}   - 错误描述</li>
  * </ul>
  *
+ * <h3>分块发送</h3>
+ * <p>LLM 返回的 token 粒度可能过细（单字符），导致 SSE 帧过于碎片化、
+ * 网络开销大。{@code chunkSize} 参数控制内容合并粒度——当累积字符数
+ * 达到阈值后才实际发送一帧，降低网络传输次数。设为 1 表示逐字符发送。
+ *
  * <p>线程安全：由 {@link #cancelled} 原子标志保护，支持多线程并发写入。
  */
 public class SseStreamChatEventHandler implements StreamChatCallback {
 
     private static final Logger log = LoggerFactory.getLogger(SseStreamChatEventHandler.class);
-    private final ObjectMapper objectMapper;
 
+    /** 默认分块大小（字符数），1 表示不合并 */
+    private static final int DEFAULT_CHUNK_SIZE = 1;
+
+    private final ObjectMapper objectMapper;
     private final SseEmitter emitter;
+    private final int chunkSize;
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
     private final AtomicBoolean completed = new AtomicBoolean(false);
 
+    /** 累积缓冲区，用于合并碎片 token */
+    private final StringBuilder chunkBuffer = new StringBuilder();
+
     public SseStreamChatEventHandler(SseEmitter emitter, ObjectMapper objectMapper) {
+        this(emitter, objectMapper, DEFAULT_CHUNK_SIZE);
+    }
+
+    public SseStreamChatEventHandler(SseEmitter emitter, ObjectMapper objectMapper, int chunkSize) {
         this.emitter = emitter;
         this.objectMapper = objectMapper;
+        this.chunkSize = Math.max(1, chunkSize);
     }
 
     @Override
@@ -61,11 +78,35 @@ public class SseStreamChatEventHandler implements StreamChatCallback {
         if (cancelled.get() || chunk == null) {
             return;
         }
+        synchronized (chunkBuffer) {
+            chunkBuffer.append(chunk);
+            if (chunkBuffer.length() >= chunkSize) {
+                flushBuffer();
+            }
+        }
+    }
+
+    /**
+     * 强制刷出缓冲区中的剩余内容（在 finish/complete 前调用）。
+     */
+    private void flushBuffer() {
+        String pending;
+        synchronized (chunkBuffer) {
+            if (chunkBuffer.isEmpty()) {
+                return;
+            }
+            pending = chunkBuffer.toString();
+            chunkBuffer.setLength(0);
+        }
+        sendMessageEvent(pending);
+    }
+
+    private void sendMessageEvent(String delta) {
+        if (cancelled.get() || delta == null || delta.isEmpty()) {
+            return;
+        }
         try {
-            // 对齐 ragent 协议：message 事件携带 JSON {type:"response", delta:"..."}
-            String payload = objectMapper.writeValueAsString(
-                new MessageDelta("response", chunk)
-            );
+            String payload = objectMapper.writeValueAsString(new MessageDelta("response", delta));
             emitter.send(SseEmitter.event().name("message").data(payload));
         } catch (Exception e) {
             log.debug("发送 message 事件失败: {}", e.getMessage());
@@ -75,6 +116,7 @@ public class SseStreamChatEventHandler implements StreamChatCallback {
 
     @Override
     public void onSources(List<RetrievalMatch> sources) {
+        flushBuffer(); // 确保所有 LLM 内容已发送
         if (cancelled.get()) {
             return;
         }
@@ -88,11 +130,12 @@ public class SseStreamChatEventHandler implements StreamChatCallback {
 
     @Override
     public void onFinish(String title, Long messageId) {
+        flushBuffer(); // 确保所有 LLM 内容已发送
         if (cancelled.get()) {
             return;
         }
         try {
-            // 对齐 ragent 协议：finish 事件携带对话标题和消息 ID
+            // finish 事件携带对话标题和消息 ID
             String payload = objectMapper.writeValueAsString(
                 new FinishPayload(title, messageId)
             );

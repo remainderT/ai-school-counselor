@@ -34,4 +34,11 @@ public class IntentDecision {
     private String promptTemplate;
     private String promptSnippet;
     private Long knowledgeBaseId;
+
+    /**
+     * 意图节点级别的 topK 覆盖值。
+     * 非 null 且大于 0 时优先于全局 defaultTopK，让不同意图（如高频FAQ vs 长文档）
+     * 可以独立控制检索数量。参考 ragent 的 IntentNode.topK 设计。
+     */
+    private Integer topK;
 }

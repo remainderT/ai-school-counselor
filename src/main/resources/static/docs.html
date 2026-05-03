@@ -7,7 +7,7 @@
     <title>文档管理 - BUAA问答助手</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -63,9 +63,15 @@
             <!-- 顶部工具栏 -->
             <div class="doc-toolbar">
                 <div class="toolbar-left">
-                    <div class="page-breadcrumb">文档管理</div>
+                    <div class="page-breadcrumb">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px;opacity:0.5">
+                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                            <polyline points="9 22 9 12 15 12 15 22"/>
+                        </svg>
+                        文档管理
+                    </div>
                     <h2 class="doc-page-title">知识库文档</h2>
-                    <p class="doc-page-desc">管理用于 AI 问答的文档知识库</p>
+                    <p class="doc-page-desc">管理用于 AI 问答的文档知识库，上传文档后系统将自动解析并建立索引</p>
                 </div>
                 <div class="toolbar-right">
                     <button class="btn primary" id="upload-btn">
@@ -76,6 +82,22 @@
                         </svg>
                         <span>上传文档</span>
                     </button>
+                </div>
+            </div>
+
+            <!-- 统计卡片 -->
+            <div class="doc-stats" id="doc-stats" style="display:none">
+                <div class="doc-stat-card">
+                    <div class="doc-stat-value" id="stat-total">0</div>
+                    <div class="doc-stat-label">总文档数</div>
+                </div>
+                <div class="doc-stat-card">
+                    <div class="doc-stat-value" id="stat-public">0</div>
+                    <div class="doc-stat-label">公开文档</div>
+                </div>
+                <div class="doc-stat-card">
+                    <div class="doc-stat-value" id="stat-private">0</div>
+                    <div class="doc-stat-label">私有文档</div>
                 </div>
             </div>
 
@@ -268,6 +290,21 @@
     });
     // 默认选中第一个
     document.querySelector('.visibility-option[data-value="PRIVATE"]')?.classList.add('selected');
+
+    // 统计卡片更新
+    function updateDocStats() {
+        const docs = window.state?.allDocuments || [];
+        if (docs.length > 0) {
+            document.getElementById('doc-stats').style.display = '';
+            document.getElementById('stat-total').textContent = docs.length;
+            document.getElementById('stat-public').textContent = docs.filter(d => d.visibility === 'PUBLIC').length;
+            document.getElementById('stat-private').textContent = docs.filter(d => d.visibility === 'PRIVATE').length;
+        }
+    }
+    // 定时检查
+    setInterval(() => {
+        if (window.state?.allDocuments?.length) updateDocStats();
+    }, 1000);
     </script>
 </body>
 </html>

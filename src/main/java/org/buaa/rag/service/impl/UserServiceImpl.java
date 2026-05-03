@@ -189,17 +189,37 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserDO> implements 
 
     @Override
     public void update(UserUpdateReqDTO requestParam) {
-        String password = DigestUtils.md5DigestAsHex((requestParam.getPassword() + UserContext.getSalt()).getBytes());
-        UserDO userDO = UserDO.builder()
-                .username(requestParam.getNewUsername())
-                .password(password)
-                .avatar(requestParam.getAvatar())
-                .build();
+        if (requestParam == null) {
+            throw new ClientException("更新参数不能为空");
+        }
+        String salt = UserContext.getSalt();
+        if (salt == null) {
+            throw new ClientException(UserErrorCodeEnum.USER_TOKEN_NULL);
+        }
+
+        UserDO.UserDOBuilder builder = UserDO.builder()
+                .avatar(requestParam.getAvatar());
+
+        // 仅在提供了新用户名时才更新
+        if (StrUtil.isNotBlank(requestParam.getNewUsername())) {
+            builder.username(requestParam.getNewUsername());
+        }
+        // 仅在提供了密码时才重新加密
+        if (StrUtil.isNotBlank(requestParam.getPassword())) {
+            String password = DigestUtils.md5DigestAsHex((requestParam.getPassword() + salt).getBytes());
+            builder.password(password);
+        }
+
+        UserDO userDO = builder.build();
         LambdaUpdateWrapper<UserDO> updateWrapper = Wrappers.lambdaUpdate(UserDO.class)
                 .eq(UserDO::getMail, UserContext.getMail());
         baseMapper.update(userDO, updateWrapper);
+
+        // 刷新缓存：优先用新用户名查询，回退到邮箱查询
+        String lookupUsername = StrUtil.isNotBlank(requestParam.getNewUsername())
+                ? requestParam.getNewUsername() : UserContext.getUsername();
         UserDO newUserDO = baseMapper.selectOne(Wrappers.lambdaQuery(UserDO.class)
-                .eq(UserDO::getUsername, requestParam.getNewUsername()));
+                .eq(UserDO::getUsername, lookupUsername));
         cacheUserInfo(newUserDO);
     }
 }

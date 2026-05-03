@@ -12,6 +12,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import org.buaa.rag.common.prompt.PromptTemplateLoader;
+import org.buaa.rag.common.user.UserContext;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.dao.entity.ChunkDO;
 import org.buaa.rag.dao.entity.ConversationDO;
@@ -26,9 +28,11 @@ import org.buaa.rag.dao.mapper.MessageMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
 import org.buaa.rag.dao.mapper.MessageSummaryMapper;
 import org.buaa.rag.core.online.memory.ConversationMemoryServiceImpl;
+// TODO: ConversationMemoryServiceImpl 应抽取接口以支持面向接口编程
 import org.buaa.rag.dto.resp.ConversationMessageRespDTO;
 import org.buaa.rag.dto.resp.ConversationSessionRespDTO;
 import org.buaa.rag.service.ConversationService;
+import org.buaa.rag.tool.LlmChat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -50,6 +54,9 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
     private static final int MAX_HISTORY_SIZE = 60;
     private static final String STREAM_PLACEHOLDER = "__STREAMING__";
     private static final int TITLE_MAX_LENGTH = 40;
+    private static final String DEFAULT_TITLE = "新会话";
+    private static final String CONVERSATION_TITLE_PROMPT = "conversation-title.st";
+    private static final DateTimeFormatter ISO_DATETIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
 
     private final ConversationMapper conversationMapper;
     private final MessageMapper messageMapper;
@@ -58,6 +65,7 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
     private final MessageSourceMapper sourceRepository;
     private final MessageSummaryMapper messageSummaryMapper;
     private final ConversationMemoryServiceImpl conversationMemoryService;
+    private final LlmChat llmChat;
 
     // ------------------------------------------------------------------ //
     //  会话管理
@@ -163,6 +171,81 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
         return buildSessionResp(normalizedSessionId, resolvedUserId, normalizedTitle, (int) count);
     }
 
+    @Override
+    public String generateAndPersistTitle(String sessionId, String question) {
+        if (!StringUtils.hasText(sessionId)) {
+            return DEFAULT_TITLE;
+        }
+        String normalizedSessionId = normalize(sessionId);
+        // 查询会话记录
+        ConversationDO conv = conversationMapper.selectOne(Wrappers.lambdaQuery(ConversationDO.class)
+                .eq(ConversationDO::getSessionId, normalizedSessionId));
+        if (conv == null) {
+            return DEFAULT_TITLE;
+        }
+        // 如果已有非默认标题，直接返回
+        if (StringUtils.hasText(conv.getTitle()) && !DEFAULT_TITLE.equals(conv.getTitle())) {
+            return conv.getTitle();
+        }
+        // 调用 LLM 生成标题
+        String title = generateTitleFromQuestion(question);
+        // 持久化到数据库
+        ConversationDO update = new ConversationDO();
+        update.setId(conv.getId());
+        update.setTitle(title);
+        conversationMapper.updateById(update);
+        log.info("会话标题已生成并持久化 - sessionId: {}, title: {}", normalizedSessionId, title);
+        return title;
+    }
+
+    /**
+     * 通过 LLM 根据用户问题生成简洁会话标题。
+     * 失败时降级为截取问题前 N 个字符。
+     */
+    private String generateTitleFromQuestion(String question) {
+        if (!StringUtils.hasText(question)) {
+            return DEFAULT_TITLE;
+        }
+        try {
+            String prompt = PromptTemplateLoader.render(CONVERSATION_TITLE_PROMPT, Map.of(
+                    "title_max_chars", String.valueOf(TITLE_MAX_LENGTH),
+                    "question", question.trim()
+            ));
+            if (!StringUtils.hasText(prompt)) {
+                log.warn("会话标题 prompt 模板加载失败，使用降级策略");
+                return buildFallbackTitle(question);
+            }
+            String title = llmChat.generateCompletion(null, prompt, 100, 0.7, 0.3);
+            if (StringUtils.hasText(title)) {
+                // 清理可能的多余符号
+                title = title.trim()
+                        .replaceAll("^[\"'《「【]", "")
+                        .replaceAll("[\"'》」】]$", "")
+                        .replaceAll("^标题[：:]\\s*", "");
+                return title.length() > TITLE_MAX_LENGTH
+                        ? title.substring(0, TITLE_MAX_LENGTH)
+                        : title;
+            }
+        } catch (Exception e) {
+            log.warn("LLM 生成会话标题失败，使用降级策略: {}", e.getMessage());
+        }
+        return buildFallbackTitle(question);
+    }
+
+    /**
+     * 降级标题生成：截取问题前 N 个字符。
+     */
+    private String buildFallbackTitle(String question) {
+        if (!StringUtils.hasText(question)) {
+            return DEFAULT_TITLE;
+        }
+        String cleaned = question.replaceAll("\\s+", " ").trim();
+        if (cleaned.length() <= TITLE_MAX_LENGTH) {
+            return cleaned;
+        }
+        return cleaned.substring(0, TITLE_MAX_LENGTH) + "...";
+    }
+
     // ------------------------------------------------------------------ //
     //  消息操作
     // ------------------------------------------------------------------ //
@@ -244,6 +327,20 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
             log.warn("查询会话列表失败: userId={}", resolvedUserId, e);
             return List.of();
         }
+    }
+
+    @Override
+    public List<ConversationMessageRespDTO> listMessages(String sessionId, Long userId, int limit) {
+        if (!StringUtils.hasText(sessionId)) {
+            return List.of();
+        }
+        // 校验会话归属，防止水平越权
+        Long resolvedUserId = resolveUserId(userId);
+        if (!isSessionOwnedBy(sessionId.trim(), resolvedUserId)) {
+            log.warn("拒绝查看非本人会话历史 - userId: {}, sessionId: {}", resolvedUserId, sessionId);
+            return List.of();
+        }
+        return listMessages(sessionId, limit);
     }
 
     @Override
@@ -517,17 +614,17 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
     }
 
     private String getCurrentTimestamp() {
-        return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+        return LocalDateTime.now().format(ISO_DATETIME_FMT);
     }
 
     private String formatTimestamp(LocalDateTime timestamp) {
         if (timestamp == null) {
             return getCurrentTimestamp();
         }
-        return timestamp.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+        return timestamp.format(ISO_DATETIME_FMT);
     }
 
     private Long resolveUserId(Long userId) {
-        return userId != null ? userId : 1L;
+        return userId != null ? userId : UserContext.resolvedUserId();
     }
 }

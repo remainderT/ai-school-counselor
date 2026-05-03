@@ -25,14 +25,6 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * RAG 全链路 Trace AOP 切面。
- *
- * <p>拦截两类注解：
- * <ul>
- *   <li>{@link RagTraceRoot}：创建/完成 t_rag_trace_run 记录，绑定 traceId 到 ThreadLocal</li>
- *   <li>{@link RagTraceNode}：创建/完成 t_rag_trace_node 记录，维护节点栈实现父子关系</li>
- * </ul>
- *
- * <p>{@code @Order(Ordered.HIGHEST_PRECEDENCE + 10)} 确保 Trace 切面在限流等切面之后执行。
  */
 @Aspect
 @Component
@@ -226,9 +218,9 @@ public class RagTraceAspect {
         return null;
     }
 
-    /** 生成雪花 ID（简化版：时间戳 + 随机数） */
+    /** 生成全局唯一 ID（基于 UUID，避免高并发下时间戳 + 随机数碰撞） */
     private String generateId() {
-        return String.valueOf(System.currentTimeMillis()) + (int)(Math.random() * 100000);
+        return java.util.UUID.randomUUID().toString().replace("-", "");
     }
 
     /** 截断异常信息，防止超 VARCHAR 长度限制 */

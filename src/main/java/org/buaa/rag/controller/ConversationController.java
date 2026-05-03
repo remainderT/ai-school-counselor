@@ -2,6 +2,8 @@ package org.buaa.rag.controller;
 
 import java.util.List;
 
+import jakarta.validation.Valid;
+
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
 import org.buaa.rag.common.user.UserContext;
@@ -36,7 +38,7 @@ public class ConversationController {
 
     @PostMapping("/sessions")
     public Result<ConversationSessionRespDTO> createSession(
-            @RequestBody ConversationSessionCreateReqDTO request) {
+            @Valid @RequestBody ConversationSessionCreateReqDTO request) {
         return Results.success(conversationService.createSession(UserContext.resolvedUserId(), request.getTitle()));
     }
 
@@ -49,7 +51,7 @@ public class ConversationController {
     @PutMapping("/sessions/{sessionId}")
     public Result<ConversationSessionRespDTO> renameSession(
             @PathVariable String sessionId,
-            @RequestBody ConversationSessionRenameReqDTO request) {
+            @Valid @RequestBody ConversationSessionRenameReqDTO request) {
         return Results.success(conversationService.renameSession(sessionId, UserContext.resolvedUserId(), request.getTitle()));
     }
 
@@ -57,6 +59,7 @@ public class ConversationController {
     public Result<List<ConversationMessageRespDTO>> listHistory(
             @RequestParam String sessionId,
             @RequestParam(defaultValue = "120") int limit) {
-        return Results.success(conversationService.listMessages(sessionId, limit));
+        // 传入 userId 校验会话归属，防止水平越权
+        return Results.success(conversationService.listMessages(sessionId, UserContext.resolvedUserId(), limit));
     }
 }

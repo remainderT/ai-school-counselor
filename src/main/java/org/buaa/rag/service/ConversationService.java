@@ -48,4 +48,17 @@ public interface ConversationService extends IService<ConversationDO> {
 
     /** 查询会话历史消息 */
     List<ConversationMessageRespDTO> listMessages(String sessionId, int limit);
+
+    /** 查询会话历史消息（带用户归属校验） */
+    List<ConversationMessageRespDTO> listMessages(String sessionId, Long userId, int limit);
+
+    /**
+     * 根据用户首条问题通过 LLM 生成会话标题，并持久化到数据库。
+     * 如果该会话已有非默认标题则跳过。
+     *
+     * @param sessionId 会话 ID
+     * @param question  用户问题
+     * @return 生成（或已有）的标题
+     */
+    String generateAndPersistTitle(String sessionId, String question);
 }

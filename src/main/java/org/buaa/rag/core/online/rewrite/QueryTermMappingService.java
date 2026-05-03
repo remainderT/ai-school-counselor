@@ -22,7 +22,7 @@ import lombok.extern.slf4j.Slf4j;
  * <p>映射规则来自 {@code rag.query-preprocess.term-mapping} 配置，
  * 按最长匹配优先（先替换较长的词条），避免短词吞并长词。
  *
- * <p>对齐 ragent {@code QueryTermMappingService} 的设计。
+ * <p>负责查询词项的同义词归一化处理。
  */
 @Slf4j
 @Service

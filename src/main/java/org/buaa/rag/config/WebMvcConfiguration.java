@@ -56,13 +56,14 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
     }
 
     /**
-     * 配置HTTP消息转换器
+     * 扩展HTTP消息转换器（在默认转换器基础上追加，而非替换）
      * 确保中文字符正确显示
      */
     @Override
-    public void configureMessageConverters(List<HttpMessageConverter<?>> converters) {
-        converters.add(createStringConverter());
-        converters.add(createJsonConverter());
+    public void extendMessageConverters(List<HttpMessageConverter<?>> converters) {
+        // 将自定义的 UTF-8 字符串转换器和 JSON 转换器插入到列表前端，优先匹配
+        converters.add(0, createStringConverter());
+        converters.add(1, createJsonConverter());
     }
 
     /**

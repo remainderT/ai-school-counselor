@@ -80,6 +80,8 @@ export interface ChunkItem {
   encodingModel?: string;
   md5Hash?: string;
   tokenEstimate?: number;
+  /** 是否启用 1：启用 0：禁用 */
+  enabled?: number;
 }
 
 export interface StreamEvent {

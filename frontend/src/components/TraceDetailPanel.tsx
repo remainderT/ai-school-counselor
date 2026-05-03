@@ -4,7 +4,7 @@ import { pushToast } from "../lib/toast";
 
 // ===== 类型定义 =====
 
-interface RagTraceRunVO {
+interface TraceRecordVO {
   traceId: string;
   traceName?: string | null;
   conversationId?: string | null;
@@ -18,7 +18,7 @@ interface RagTraceRunVO {
   errorMessage?: string | null;
 }
 
-interface RagTraceNodeVO {
+interface TraceStepVO {
   nodeId: string;
   traceId: string;
   parentNodeId?: string | null;
@@ -33,9 +33,9 @@ interface RagTraceNodeVO {
   errorMessage?: string | null;
 }
 
-interface RagTraceDetail {
-  run: RagTraceRunVO;
-  nodes: RagTraceNodeVO[];
+interface TraceDetailData {
+  run: TraceRecordVO;
+  nodes: TraceStepVO[];
 }
 
 interface TraceDetailPanelProps {
@@ -56,26 +56,18 @@ function normalizeStatus(status?: string | null): "success" | "failed" | "runnin
 
 function statusLabel(status?: string | null): string {
   const s = normalizeStatus(status);
-  if (s === "success") return "成功";
-  if (s === "failed") return "失败";
-  if (s === "running") return "运行中";
+  if (s === "success") return "SUCCESS";
+  if (s === "failed") return "FAILED";
+  if (s === "running") return "RUNNING";
   return status || "-";
-}
-
-function statusBadgeClass(status?: string | null): string {
-  const s = normalizeStatus(status);
-  if (s === "success") return "trace-badge trace-badge-success";
-  if (s === "failed") return "trace-badge trace-badge-failed";
-  if (s === "running") return "trace-badge trace-badge-running";
-  return "trace-badge trace-badge-default";
 }
 
 function formatDuration(ms?: number | null): string {
   if (ms == null || !Number.isFinite(Number(ms)) || Number(ms) < 0) return "-";
   const v = Number(ms);
-  if (v < 1000) return `${Math.round(v)} ms`;
-  if (v < 60_000) return `${(v / 1000).toFixed(2)} s`;
-  return `${(v / 1000).toFixed(1)} s`;
+  if (v < 1000) return `${Math.round(v)}ms`;
+  if (v < 60_000) return `${(v / 1000).toFixed(2)}s`;
+  return `${(v / 1000).toFixed(1)}s`;
 }
 
 function formatDateTime(iso?: string | null): string {
@@ -100,7 +92,7 @@ function toTimestamp(iso?: string | null): number {
   }
 }
 
-function resolveNodeDuration(node: RagTraceNodeVO): number {
+function resolveNodeDuration(node: TraceStepVO): number {
   if (node.durationMs != null && Number.isFinite(Number(node.durationMs))) {
     return Math.max(0, Number(node.durationMs));
   }
@@ -113,129 +105,79 @@ function clamp(val: number, min: number, max: number): number {
   return Math.min(Math.max(val, min), max);
 }
 
+/** 节点类型 → 颜色标签映射 */
+const NODE_TYPE_COLORS: Record<string, { bg: string; text: string }> = {
+  REWRITE:             { bg: "#ede9fe", text: "#7c3aed" },
+  INTENT:              { bg: "#e0f2fe", text: "#0284c7" },
+  RETRIEVE_CHANNEL:    { bg: "#ecfdf5", text: "#059669" },
+  CRAG_EVAL:           { bg: "#fef3c7", text: "#b45309" },
+  SUB_QUERY_RETRIEVAL: { bg: "#fce7f3", text: "#be185d" },
+  ROUTE_EXECUTE:       { bg: "#f3e8ff", text: "#9333ea" },
+  LLM_CHAT:            { bg: "#dbeafe", text: "#2563eb" },
+  METHOD:              { bg: "#f1f5f9", text: "#475569" },
+};
+
+function getNodeColor(type?: string | null) {
+  if (!type) return { bg: "#f1f5f9", text: "#64748b" };
+  return NODE_TYPE_COLORS[type] ?? { bg: "#f1f5f9", text: "#64748b" };
+}
+
 // ===== Inline SVG Icons =====
 
-const BackIcon = () => (
+const ArrowLeftIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M19 12H5" />
-    <polyline points="12 19 5 12 12 5" />
+    <path d="M19 12H5" /><polyline points="12 19 5 12 12 5" />
   </svg>
 );
 
 const RefreshIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="23 4 23 10 17 10" />
-    <polyline points="1 20 1 14 7 14" />
+    <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
     <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
   </svg>
 );
 
 const CopyIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+
+const ClockIcon = () => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+  </svg>
+);
+
+const CalendarIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+  </svg>
+);
+
+const UserIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+  </svg>
+);
+
+const ListIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
   </svg>
 );
 
 const ZapIcon = () => (
-  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
   </svg>
 );
-
-// ===== 时间刻度 =====
-
-function TimeScale({ totalMs }: { totalMs: number }) {
-  const ticks = [0, 25, 50, 75, 100];
-  return (
-    <div className="trace-timescale">
-      {ticks.map((p) => (
-        <div key={p} className="trace-timescale-tick" style={{ left: `${p}%` }}>
-          <div className="trace-timescale-line" />
-          <span className="trace-timescale-label">{formatDuration((totalMs * p) / 100)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ===== 瀑布图行 =====
-
-interface WaterfallRowProps {
-  node: RagTraceNodeVO & {
-    depthValue: number;
-    resolvedDurationMs: number;
-    offsetMs: number;
-    leftPercent: number;
-    widthPercent: number;
-  };
-  isTopSlowest: boolean;
-}
-
-function WaterfallRow({ node, isTopSlowest }: WaterfallRowProps) {
-  const status = normalizeStatus(node.status);
-  const dotClass = status === "success" ? "trace-wf-dot success"
-    : status === "failed" ? "trace-wf-dot failed"
-    : status === "running" ? "trace-wf-dot running"
-    : "trace-wf-dot default";
-  const barClass = status === "success" ? "trace-wf-bar success"
-    : status === "failed" ? "trace-wf-bar failed"
-    : status === "running" ? "trace-wf-bar running"
-    : "trace-wf-bar default";
-
-  const displayName = node.nodeName || node.methodName || node.nodeId;
-
-  return (
-    <div className={`trace-wf-row${isTopSlowest ? " trace-wf-row-slowest" : ""}`}>
-      {/* 节点名 */}
-      <div
-        className="trace-wf-col-name"
-        style={{ paddingLeft: `${Math.min(node.depthValue, 6) * 16 + 4}px` }}
-      >
-        <span className={dotClass} />
-        <span className="trace-wf-name-text" title={displayName}>{displayName}</span>
-        {isTopSlowest && <span className="trace-wf-slowest-icon"><ZapIcon /></span>}
-      </div>
-
-      {/* 类型 */}
-      <div className="trace-wf-col-type">
-        <span className="trace-node-type-badge" title={node.nodeType ?? "-"}>
-          {node.nodeType || "-"}
-        </span>
-      </div>
-
-      {/* 时间条 */}
-      <div className="trace-wf-col-bar">
-        <div className="trace-wf-bar-track">
-          {[25, 50, 75].map((p) => (
-            <div key={p} className="trace-wf-bar-guide" style={{ left: `${p}%` }} />
-          ))}
-          <div
-            className={barClass}
-            style={{
-              left: `${node.leftPercent}%`,
-              width: `${Math.max(node.widthPercent, 0.5)}%`,
-              minWidth: 4
-            }}
-            title={`${displayName} — ${formatDuration(node.resolvedDurationMs)}`}
-          />
-        </div>
-      </div>
-
-      {/* 耗时 */}
-      <div className="trace-wf-col-duration">
-        <span className="trace-wf-duration">{formatDuration(node.resolvedDurationMs)}</span>
-        <span className="trace-wf-offset">@{formatDuration(node.offsetMs)}</span>
-      </div>
-    </div>
-  );
-}
 
 // ===== 主组件 =====
 
 export function TraceDetailPanel({ traceId, onBack }: TraceDetailPanelProps) {
   const requestRef = useRef(0);
-  const [detail, setDetail] = useState<RagTraceDetail | null>(null);
+  const [detail, setDetail] = useState<TraceDetailData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -245,7 +187,7 @@ export function TraceDetailPanel({ traceId, onBack }: TraceDetailPanelProps) {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiGet<RagTraceDetail>(`/api/rag/traces/runs/${encodeURIComponent(id)}/nodes`);
+      const data = await apiGet<TraceDetailData>(`/api/rag/traces/runs/${encodeURIComponent(id)}/nodes`);
       if (requestRef.current !== reqId) return;
       setDetail(data);
     } catch (e) {
@@ -310,163 +252,205 @@ export function TraceDetailPanel({ traceId, onBack }: TraceDetailPanelProps) {
     const total = nodes.length;
     const failed = nodes.filter((n) => normalizeStatus(n.status) === "failed").length;
     const success = nodes.filter((n) => normalizeStatus(n.status) === "success").length;
-    const running = nodes.filter((n) => normalizeStatus(n.status) === "running").length;
     const durations = nodes.map((n) => resolveNodeDuration(n));
     const avgDuration = total > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / total) : 0;
     const sortedByDuration = [...nodes].sort((a, b) => resolveNodeDuration(b) - resolveNodeDuration(a));
     const topSlowestId = sortedByDuration[0]?.nodeId ?? null;
-    return { total, failed, success, running, avgDuration, topSlowestId };
+    return { total, failed, success, avgDuration, topSlowestId };
   }, [detail?.nodes]);
 
   const handleCopyTraceId = () => {
     navigator.clipboard.writeText(traceId).then(
-      () => pushToast("Trace Id 已复制", "success"),
+      () => pushToast("Trace ID 已复制", "success"),
       () => pushToast("复制失败", "error")
     );
   };
 
-  const shortTraceId = traceId.length > 28
-    ? `${traceId.slice(0, 12)}...${traceId.slice(-8)}`
-    : traceId;
-
   if (loading && !detail) {
     return (
       <div className="admin-page">
-        <div className="admin-empty" style={{ padding: "80px 24px" }}>
-          <p>加载链路详情中...</p>
-        </div>
+        <div className="admin-empty" style={{ padding: "80px 24px" }}><p>加载链路详情中...</p></div>
       </div>
     );
   }
 
+  const runStatus = normalizeStatus(run?.status);
+  const statusColorMap = { success: "#10b981", failed: "#ef4444", running: "#f59e0b" };
+  const statusColor = runStatus ? statusColorMap[runStatus] : "#94a3b8";
+  const statusCls = runStatus === "success" ? "trc-tag-success" : runStatus === "failed" ? "trc-tag-failed" : runStatus === "running" ? "trc-tag-running" : "trc-tag-default";
+
   return (
-    <div className="admin-page trace-detail-page">
-      {/* 页头 */}
-      <div className="admin-page-header">
-        <div>
-          <button type="button" className="admin-btn admin-btn-ghost admin-btn-sm doc-detail-back" onClick={onBack}>
-            <BackIcon /> 返回链路列表
-          </button>
-          <div className="trace-detail-title-row">
-            <h1 className="admin-page-title">{run?.traceName || "未命名链路"}</h1>
-            {run?.status && (
-              <span className={statusBadgeClass(run.status)}>
-                {statusLabel(run.status)}
-              </span>
-            )}
-          </div>
-        </div>
-        <button
-          className="admin-btn admin-btn-ghost admin-btn-sm"
-          onClick={() => void loadDetail(traceId)}
-          disabled={loading}
-        >
-          <RefreshIcon /> 刷新
+    <div className="admin-page trc-detail-page">
+      {/* 顶部导航 */}
+      <div className="trc-detail-nav">
+        <button className="trc-back-link" onClick={onBack}>
+          <ArrowLeftIcon />
+          返回列表
         </button>
+        <div className="trc-detail-actions">
+          <button className="trc-refresh-btn" onClick={() => void loadDetail(traceId)} disabled={loading} title="刷新">
+            <RefreshIcon />
+          </button>
+        </div>
       </div>
 
       {error && <div className="admin-alert admin-alert-error">{error}</div>}
 
-      {/* 元信息 */}
-      {run && (
-        <div className="trace-detail-meta-row">
-          <button
-            className="trace-meta-copy-btn"
-            onClick={handleCopyTraceId}
-            title="点击复制 Trace Id"
-          >
-            <CopyIcon /> {shortTraceId}
-          </button>
-          <span className="trace-meta-item">{formatDateTime(run.startTime)}</span>
-          {(run.username || run.userId) && (
-            <span className="trace-meta-item">{run.username || run.userId}</span>
-          )}
-        </div>
-      )}
-
-      {/* 错误提示 */}
+      {/* 错误信息 banner */}
       {run?.errorMessage && (
-        <div className="admin-alert admin-alert-error">
-          <strong>执行出错：</strong>{run.errorMessage}
+        <div className="trc-error-banner">
+          <strong>执行异常：</strong>{run.errorMessage}
         </div>
       )}
 
-      {/* 指标条 */}
-      {run && (
-        <div className="trace-metrics-bar">
-          <div className="trace-metric-item">
-            <span className="trace-metric-value trace-metric-primary">{formatDuration(run.durationMs)}</span>
-            <span className="trace-metric-label">总耗时</span>
-          </div>
-          <div className="trace-metric-sep" />
-          <div className="trace-metric-item">
-            <span className="trace-metric-value">{nodeStats.total}</span>
-            <span className="trace-metric-label">节点</span>
-          </div>
-          <div className="trace-metric-sep" />
-          <div className="trace-metric-item">
-            <span className="trace-metric-value trace-metric-success">{nodeStats.success}</span>
-            <span className="trace-metric-label">成功</span>
-          </div>
-          <div className="trace-metric-sep" />
-          <div className="trace-metric-item">
-            <span className={`trace-metric-value${nodeStats.failed > 0 ? " trace-metric-error" : ""}`}>{nodeStats.failed}</span>
-            <span className="trace-metric-label">失败</span>
-          </div>
-          {nodeStats.running > 0 && (
-            <>
-              <div className="trace-metric-sep" />
-              <div className="trace-metric-item">
-                <span className="trace-metric-value trace-metric-warning">{nodeStats.running}</span>
-                <span className="trace-metric-label">运行中</span>
+      {/* 左右分栏主体 */}
+      <div className="trc-detail-split">
+        {/* ===== 左侧：概览面板 ===== */}
+        {run && (
+          <div className="trc-overview-panel">
+            <div className="trc-overview-header">
+              <div className="trc-overview-title-row">
+                <span className="trc-overview-dot" style={{ background: statusColor }} />
+                <h2 className="trc-overview-name">{run.traceName || "stream-chat"}</h2>
               </div>
-            </>
-          )}
-          <div className="trace-metric-sep" />
-          <div className="trace-metric-item">
-            <span className="trace-metric-value">{formatDuration(nodeStats.avgDuration)}</span>
-            <span className="trace-metric-label">平均耗时</span>
-          </div>
-        </div>
-      )}
-
-      {/* 瀑布图 */}
-      <div className="admin-card">
-        <div className="admin-card-header">
-          <div>
-            <h3 className="admin-card-title">执行时序</h3>
-          </div>
-          <span className="admin-badge">窗口 {formatDuration(timeline.totalWindowMs)}</span>
-        </div>
-        <div className="admin-card-body" style={{ padding: 0 }}>
-          {timeline.rows.length === 0 ? (
-            <div className="admin-empty" style={{ padding: "48px 24px" }}>
-              <p>暂无节点记录</p>
+              <span className={`trc-overview-status-tag ${statusCls}`} style={{ background: `${statusColor}18`, color: statusColor, border: `1px solid ${statusColor}40` }}>
+                {statusLabel(run.status)}
+              </span>
+              <button className="trc-overview-trace-id" onClick={handleCopyTraceId} title="点击复制 Trace ID">
+                <CopyIcon />
+                {traceId.length > 18 ? `${traceId.slice(0, 8)}...${traceId.slice(-6)}` : traceId}
+              </button>
             </div>
-          ) : (
-            <div>
-              {/* 表头 */}
-              <div className="trace-wf-header">
-                <div className="trace-wf-col-name">节点</div>
-                <div className="trace-wf-col-type">类型</div>
-                <div className="trace-wf-col-bar">
-                  <TimeScale totalMs={timeline.totalWindowMs} />
+
+            <div className="trc-overview-info">
+              <div className="trc-info-row">
+                <span className="trc-info-label"><ClockIcon /> 总耗时</span>
+                <span className="trc-info-value">{formatDuration(run.durationMs)}</span>
+              </div>
+              <div className="trc-info-row">
+                <span className="trc-info-label"><CalendarIcon /> 开始时间</span>
+                <span className="trc-info-value">{formatDateTime(run.startTime)}</span>
+              </div>
+              <div className="trc-info-row">
+                <span className="trc-info-label"><CalendarIcon /> 结束时间</span>
+                <span className="trc-info-value">{formatDateTime(run.endTime)}</span>
+              </div>
+              {(run.username || run.userId) && (
+                <div className="trc-info-row">
+                  <span className="trc-info-label"><UserIcon /> 用户</span>
+                  <span className="trc-info-value">{run.username || run.userId}</span>
                 </div>
-                <div className="trace-wf-col-duration">耗时</div>
-              </div>
+              )}
+            </div>
 
-              {/* 行 */}
-              <div className="trace-wf-body">
-                {timeline.rows.map((node) => (
-                  <WaterfallRow
-                    key={node.nodeId}
-                    node={node}
-                    isTopSlowest={node.nodeId === nodeStats.topSlowestId}
-                  />
-                ))}
+            {/* 底部 2x2 统计网格 */}
+            <div className="trc-overview-stats">
+              <div className="trc-stat-cell">
+                <span className="trc-stat-cell-val">{nodeStats.total}</span>
+                <span className="trc-stat-cell-label">执行步骤</span>
+              </div>
+              <div className="trc-stat-cell">
+                <span className="trc-stat-cell-val trc-val-success">{nodeStats.success}</span>
+                <span className="trc-stat-cell-label">成功</span>
+              </div>
+              <div className="trc-stat-cell">
+                <span className={`trc-stat-cell-val${nodeStats.failed > 0 ? " trc-val-error" : ""}`}>{nodeStats.failed}</span>
+                <span className="trc-stat-cell-label">失败</span>
+              </div>
+              <div className="trc-stat-cell">
+                <span className="trc-stat-cell-val">{formatDuration(nodeStats.avgDuration)}</span>
+                <span className="trc-stat-cell-label">平均耗时</span>
               </div>
             </div>
-          )}
+          </div>
+        )}
+
+        {/* ===== 右侧：瀑布图时间线 ===== */}
+        <div className="trc-waterfall-panel">
+          <div className="trc-waterfall-header">
+            <h3 className="trc-waterfall-title">
+              <ListIcon />
+              执行时序
+            </h3>
+            <span className="trc-waterfall-window">时间窗口 {formatDuration(timeline.totalWindowMs)}</span>
+          </div>
+
+          <div>
+            {timeline.rows.length === 0 ? (
+              <div className="admin-empty" style={{ padding: "48px 24px" }}><p>暂无步骤记录</p></div>
+            ) : (
+              <>
+                {/* 表头 */}
+                <div className="trc-wf-header">
+                  <div>步骤节点</div>
+                  <div>类型</div>
+                  <div>
+                    <div className="trc-wf-timescale">
+                      {[0, 25, 50, 75, 100].map((p) => (
+                        <span key={p} className="trc-wf-tick" style={{ left: `${p}%` }}>
+                          {formatDuration((timeline.totalWindowMs * p) / 100)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>耗时</div>
+                </div>
+
+                {/* 行 */}
+                <div className="trc-wf-rows">
+                  {timeline.rows.map((node: any) => {
+                    const status = normalizeStatus(node.status);
+                    const isSlowest = node.nodeId === nodeStats.topSlowestId;
+                    const color = getNodeColor(node.nodeType);
+                    const barColor = status === "failed" ? "#ef4444" : status === "running" ? "#f59e0b" : "#10b981";
+
+                    return (
+                      <div key={node.nodeId} className={`trc-wf-row${isSlowest ? " trc-wf-row-slowest" : ""}`}>
+                        <div className="trc-wf-col-name" style={{ paddingLeft: `${Math.min(node.depthValue, 5) * 18 + 8}px` }}>
+                          <span className={`trc-wf-dot ${status === "success" ? "success" : status === "failed" ? "failed" : "running"}`} />
+                          <span className="trc-wf-name" title={node.nodeName || node.methodName || node.nodeId}>
+                            {node.nodeName || node.methodName || node.nodeId}
+                          </span>
+                          {isSlowest && (
+                            <span className="trc-wf-slowest-tag">
+                              <ZapIcon />
+                              最慢
+                            </span>
+                          )}
+                        </div>
+                        <div className="trc-wf-col-type">
+                          <span className="trc-wf-type-badge" style={{ background: color.bg, color: color.text }}>
+                            {node.nodeType || "METHOD"}
+                          </span>
+                        </div>
+                        <div className="trc-wf-col-bar">
+                          <div className="trc-wf-bar-track">
+                            {[25, 50, 75].map((p) => (
+                              <div key={p} className="trc-wf-bar-guide" style={{ left: `${p}%` }} />
+                            ))}
+                            <div
+                              className="trc-wf-bar"
+                              style={{
+                                left: `${node.leftPercent}%`,
+                                width: `${Math.max(node.widthPercent, 0.5)}%`,
+                                minWidth: 4,
+                                background: `linear-gradient(90deg, ${barColor}, ${barColor}cc)`,
+                              }}
+                              title={`${node.nodeName} — ${formatDuration(node.resolvedDurationMs)}`}
+                            />
+                          </div>
+                        </div>
+                        <div className="trc-wf-col-duration">
+                          <span className="trc-wf-dur">{formatDuration(node.resolvedDurationMs)}</span>
+                          <span className="trc-wf-offset">@{formatDuration(node.offsetMs)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

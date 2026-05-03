@@ -87,7 +87,7 @@ public class QueryRewriteAndSplitService {
             return fastPathFallback(userQuery, 0L);
         }
 
-        // 词项归一化（对齐 ragent QueryTermMappingService）：在 LLM 改写前先做同义词映射
+        // 词项归一化：在 LLM 改写前先做同义词映射
         String normalizedQuery = queryTermMappingService.normalize(normalizeQuery(userQuery));
         if (shouldUseFastPath(normalizedQuery, conversationHistory)) {
             long start = System.nanoTime();

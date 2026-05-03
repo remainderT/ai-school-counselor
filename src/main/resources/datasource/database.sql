@@ -67,6 +67,7 @@ CREATE TABLE chunk (
                         encoding_model  VARCHAR(32)      COMMENT 'chunk编码模型版本',
                         md5_hash         VARCHAR(32)     COMMENT 'chunk文本MD5哈希值',
                         token_estimate   INT             COMMENT 'chunk token 估算值',
+                        enabled          TINYINT(1)      DEFAULT 1 COMMENT '是否启用 1：启用 0：禁用',
                         `del_flag`       tinyint(1)      DEFAULT 0 COMMENT '删除标识 0：未删除 1：已删除',
                         PRIMARY KEY (id),
                         INDEX idx_document_id (document_id) COMMENT '文档ID索引',
@@ -162,13 +163,13 @@ CREATE TABLE message_summary (
                         INDEX idx_summary_session_msg (session_id, last_message_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话摘要表';
 
-DROP TABLE IF EXISTS rag_trace_node;
-DROP TABLE IF EXISTS rag_trace_run;
+DROP TABLE IF EXISTS counselor_trace_step;
+DROP TABLE IF EXISTS counselor_trace_record;
 
-CREATE TABLE rag_trace_run (
+CREATE TABLE counselor_trace_record (
                         id              BIGINT(20)    NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-                        trace_id        VARCHAR(64)   NOT NULL COMMENT '全局链路ID（雪花ID）',
-                        trace_name      VARCHAR(128)  DEFAULT NULL COMMENT '链路名称（来自@RagTraceRoot.name）',
+                        trace_id        VARCHAR(64)   NOT NULL COMMENT '全局链路ID（UUID）',
+                        trace_name      VARCHAR(128)  DEFAULT NULL COMMENT '链路名称',
                         entry_method    VARCHAR(256)  DEFAULT NULL COMMENT '入口方法（类名#方法名）',
                         conversation_id VARCHAR(64)   DEFAULT NULL COMMENT '会话ID',
                         task_id         VARCHAR(64)   DEFAULT NULL COMMENT '任务ID（SSE taskId）',
@@ -188,16 +189,16 @@ CREATE TABLE rag_trace_run (
                         KEY idx_user_id (user_id),
                         KEY idx_conversation_id (conversation_id),
                         KEY idx_start_time (start_time)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='RAG 链路运行记录表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='辅导员系统链路追踪记录表';
 
-CREATE TABLE rag_trace_node (
+CREATE TABLE counselor_trace_step (
                         id              BIGINT(20)    NOT NULL AUTO_INCREMENT COMMENT '主键ID',
                         trace_id        VARCHAR(64)   NOT NULL COMMENT '所属链路ID',
-                        node_id         VARCHAR(64)   NOT NULL COMMENT '节点唯一ID',
-                        parent_node_id  VARCHAR(64)   DEFAULT NULL COMMENT '父节点ID（null表示根直接子节点）',
-                        depth           INT(11)       DEFAULT 0 COMMENT '节点深度（0=根直接子节点）',
-                        node_type       VARCHAR(64)   DEFAULT NULL COMMENT '节点类型（REWRITE/INTENT/RETRIEVE/LLM_ROUTING等）',
-                        node_name       VARCHAR(128)  DEFAULT NULL COMMENT '节点名称（来自@RagTraceNode.name）',
+                        node_id         VARCHAR(64)   NOT NULL COMMENT '步骤唯一ID',
+                        parent_node_id  VARCHAR(64)   DEFAULT NULL COMMENT '父步骤ID（null表示根直接子步骤）',
+                        depth           INT(11)       DEFAULT 0 COMMENT '步骤深度（0=根直接子步骤）',
+                        node_type       VARCHAR(64)   DEFAULT NULL COMMENT '步骤类型（REWRITE/INTENT/RETRIEVE/CRAG_EVAL/LLM_CHAT等）',
+                        node_name       VARCHAR(128)  DEFAULT NULL COMMENT '步骤名称',
                         class_name      VARCHAR(256)  DEFAULT NULL COMMENT '完整类名',
                         method_name     VARCHAR(128)  DEFAULT NULL COMMENT '方法名',
                         status          VARCHAR(16)   NOT NULL DEFAULT 'RUNNING' COMMENT '状态：RUNNING/SUCCESS/ERROR',
@@ -210,9 +211,9 @@ CREATE TABLE rag_trace_node (
                         update_time     DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                         deleted         TINYINT(1)    DEFAULT 0,
                         PRIMARY KEY (id),
-                        UNIQUE KEY uk_trace_node (trace_id, node_id),
-                        KEY idx_node_trace_id (trace_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='RAG 链路节点记录表';
+                        UNIQUE KEY uk_trace_step (trace_id, node_id),
+                        KEY idx_step_trace_id (trace_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='辅导员系统链路追踪步骤表';
 
 INSERT INTO `user` (`id`, `username`, `password`, `mail`, `salt`, `is_admin`, `avatar`, `create_time`, `update_time`, `del_flag`)
 VALUES (1, 'admin', 'b9d11b3be25f5a1a7dc8ca04cd310b28', 'admin@example.com', 'admin', 1, NULL, NOW(), NOW(), 0);

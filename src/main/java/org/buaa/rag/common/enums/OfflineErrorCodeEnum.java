@@ -39,7 +39,9 @@ public enum OfflineErrorCodeEnum implements IErrorCode {
 
     KNOWLEDGE_NAME_DUPLICATE("C000205", "知识库名称已存在"),
 
-    KNOWLEDGE_HAS_DOCUMENTS("C000206", "知识库下仍有文档，无法删除");
+    KNOWLEDGE_HAS_DOCUMENTS("C000206", "知识库下仍有文档，无法删除"),
+
+    CHUNK_NOT_EXISTS("C000301", "Chunk 不存在");
 
     private final String code;
 

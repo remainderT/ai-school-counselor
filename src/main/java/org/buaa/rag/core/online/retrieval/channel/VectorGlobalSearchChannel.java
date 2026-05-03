@@ -28,17 +28,22 @@ public class VectorGlobalSearchChannel implements SearchChannel {
     private final SearchChannelProperties properties;
 
     @Override
-    public String getName() {
+    public String channelId() {
         return "vector-global";
     }
 
     @Override
-    public int getPriority() {
+    public String description() {
+        return "全局向量兜底检索通道（低置信或无意图时激活）";
+    }
+
+    @Override
+    public int dispatchOrder() {
         return 10;
     }
 
     @Override
-    public boolean canActivate(SearchContext context) {
+    public boolean isApplicable(SearchContext context) {
         if (!properties.getChannels().getVectorGlobal().isEnabled()) {
             return false;
         }
@@ -62,46 +67,44 @@ public class VectorGlobalSearchChannel implements SearchChannel {
     }
 
     @Override
-    public SearchChannelResult execute(SearchContext context) {
-        long t0 = System.currentTimeMillis();
+    public SearchChannelResult fetch(SearchContext context) {
+        long t0 = System.nanoTime();
         try {
             int multiplier = Math.max(1, properties.getChannels().getVectorGlobal().getTopKMultiplier());
             int effectiveTopK = Math.max(1, context.getTopK() * multiplier);
+
+            // 先尝试纯向量检索，无结果时降级为混合检索
             List<RetrievalMatch> hits = smartRetrieverService.retrieveVectorOnly(
-                context.effectiveQuery(), effectiveTopK, context.getUserId());
+                    context.resolvedQuery(), effectiveTopK, context.getUserId());
             if (hits.isEmpty()) {
-                hits = smartRetrieverService.retrieve(context.effectiveQuery(), effectiveTopK, context.getUserId());
+                hits = smartRetrieverService.retrieve(
+                        context.resolvedQuery(), effectiveTopK, context.getUserId());
             }
-            double conf = computeConfidence(context.getIntentDecision());
-            return SearchChannelResult.builder()
-                .channelType(SearchChannelType.VECTOR_GLOBAL)
-                .channelName(getName())
-                .matches(hits)
-                .confidence(conf)
-                .elapsedMs(System.currentTimeMillis() - t0)
-                .metadata(Map.of("topK", effectiveTopK))
-                .build();
+
+            // 标记来源通道
+            hits.forEach(h -> h.setChannelType(SearchChannelType.VECTOR_GLOBAL));
+
+            double topScore = hits.stream()
+                    .mapToDouble(h -> h.getRelevanceScore() != null ? h.getRelevanceScore() : 0.0)
+                    .max().orElse(0.0);
+
+            return SearchChannelResult.of(
+                    SearchChannelType.VECTOR_GLOBAL, channelId(),
+                    hits, topScore, nanosToMs(t0));
         } catch (Exception ex) {
             log.warn("全局向量检索失败", ex);
-            return SearchChannelResult.builder()
-                .channelType(SearchChannelType.VECTOR_GLOBAL)
-                .channelName(getName())
-                .matches(List.of())
-                .confidence(0.0)
-                .elapsedMs(System.currentTimeMillis() - t0)
-                .build();
+            return SearchChannelResult.empty(SearchChannelType.VECTOR_GLOBAL, channelId());
         }
     }
 
     @Override
-    public SearchChannelType getType() {
+    public SearchChannelType channelType() {
         return SearchChannelType.VECTOR_GLOBAL;
     }
 
-    private double computeConfidence(IntentDecision decision) {
-        if (decision == null || decision.getConfidence() == null) {
-            return properties.getChannels().getVectorGlobal().getDefaultConfidence();
-        }
-        return Math.max(0.2, 1.0 - decision.getConfidence());
+    private long nanosToMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
+
+
 }

@@ -17,6 +17,8 @@ import org.buaa.rag.core.online.retrieval.SubQueryRetrievalService;
 import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorServiceImpl;
 import org.buaa.rag.core.online.tool.ToolService;
 import org.buaa.rag.properties.RagProperties;
+import org.buaa.rag.core.trace.RagTraceContext;
+import org.buaa.rag.core.trace.RagTraceNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -56,6 +58,7 @@ public class RouteExecutionCoordinator {
         this.chatStreamExecutor = chatStreamExecutor;
     }
 
+    @RagTraceNode(name = "route-execution", type = "ROUTE_EXECUTE")
     public ExecutionResult execute(String userId,
                                    String userMessage,
                                    List<Map<String, String>> conversationHistory,
@@ -109,9 +112,19 @@ public class RouteExecutionCoordinator {
                 List.of(), conversationHistory, chunkHandler, cancelHandle);
         }
 
+        // 捕获父线程 Trace 上下文，跨线程传播到子任务
+        RagTraceContext.Snapshot traceSnapshot = RagTraceContext.capture();
+
         List<CompletableFuture<SubQueryRetrievalResult>> futures = validSubQueries.stream()
             .map(subQueryIntent -> CompletableFuture.supplyAsync(
-                () -> executeSubQueryTask(userId, subQueryIntent, conversationHistory),
+                () -> {
+                    RagTraceContext.restore(traceSnapshot);
+                    try {
+                        return executeSubQueryTask(userId, subQueryIntent, conversationHistory);
+                    } finally {
+                        RagTraceContext.clear();
+                    }
+                },
                 subQueryContextExecutor
             ))
             .toList();

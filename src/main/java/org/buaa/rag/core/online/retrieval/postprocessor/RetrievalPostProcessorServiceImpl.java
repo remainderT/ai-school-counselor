@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.extern.slf4j.Slf4j;
+import org.buaa.rag.core.trace.RagTraceNode;
 
 /**
  * 检索后处理服务实现。
@@ -49,6 +50,7 @@ public class RetrievalPostProcessorServiceImpl {
         this.objectMapper = objectMapper;
     }
 
+    @RagTraceNode(name = "crag-quality-evaluate", type = "CRAG_EVAL")
     public CragDecision evaluate(String query, List<RetrievalMatch> matches) {
         long start = System.nanoTime();
         RagProperties.Crag config = ragProperties.getCrag();

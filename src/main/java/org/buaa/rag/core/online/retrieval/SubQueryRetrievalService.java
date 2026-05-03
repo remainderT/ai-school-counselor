@@ -10,6 +10,7 @@ import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.online.intent.IntentResolutionService;
 import org.buaa.rag.core.online.intent.SubQueryIntent;
+import java.util.Objects;
 import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorServiceImpl;
 import org.buaa.rag.properties.RagProperties;
 import org.springframework.stereotype.Service;
@@ -17,6 +18,7 @@ import org.springframework.util.StringUtils;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.buaa.rag.core.trace.RagTraceNode;
 
 /**
  * 子问题检索服务：封装单个子问题的完整检索流程。
@@ -39,6 +41,7 @@ public class SubQueryRetrievalService {
      * 单个子问题的完整检索流程：topK计算 → 检索 → CRAG评估 → fallback。
      * 使用子问题已解析的候选意图，避免二次LLM调用。
      */
+    @RagTraceNode(name = "sub-query-retrieval", type = "SUB_QUERY_RETRIEVAL")
     public SubQueryRetrievalResult retrieveForSubQuery(String userId, SubQueryIntent subQueryIntent) {
         long start = System.nanoTime();
         String query = subQueryIntent.subQuery();
@@ -46,7 +49,7 @@ public class SubQueryRetrievalService {
         List<IntentDecision> preResolvedCandidates = subQueryIntent.candidates() != null
                 ? subQueryIntent.candidates()
                 : List.of();
-        int topK = determineTopK(query);
+        int topK = resolveSubQuestionTopK(subQueryIntent);
         long retrieveStart = System.nanoTime();
         List<RetrievalMatch> results = retrieveByStrategy(userId, query, topK, primaryIntent, preResolvedCandidates);
         long retrieveElapsed = elapsedMs(retrieveStart);
@@ -130,6 +133,25 @@ public class SubQueryRetrievalService {
                                                    int topK,
                                                    IntentDecision intent) {
         return retrieveByStrategy(userId, query, topK, intent, null);
+    }
+
+    /**
+     * 子问题实际 TopK 计算规则（参考 ragent 的 resolveSubQuestionTopK 设计）：
+     * 优先取意图节点配置的 topK，否则退回到基于文本特征的动态计算。
+     */
+    public int resolveSubQuestionTopK(SubQueryIntent subQueryIntent) {
+        if (subQueryIntent != null && subQueryIntent.candidates() != null) {
+            // 取候选意图中最大的节点级 topK（如果配置了的话）
+            Integer intentTopK = subQueryIntent.candidates().stream()
+                    .filter(d -> d != null && d.getTopK() != null && d.getTopK() > 0)
+                    .map(IntentDecision::getTopK)
+                    .max(Integer::compareTo)
+                    .orElse(null);
+            if (intentTopK != null) {
+                return Math.min(intentTopK, ragProperties.getRetrieval().getMaxTopK());
+            }
+        }
+        return determineTopK(subQueryIntent != null ? subQueryIntent.subQuery() : "");
     }
 
     /**

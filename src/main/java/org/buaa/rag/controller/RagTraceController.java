@@ -1,6 +1,8 @@
 package org.buaa.rag.controller;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.buaa.rag.common.convention.result.Result;
 import org.buaa.rag.common.convention.result.Results;
@@ -18,12 +20,12 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import lombok.RequiredArgsConstructor;
 
 /**
- * RAG 全链路 Trace 查询接口
+ * 辅导员系统全链路追踪查询接口
  *
  * <p>接口列表：
  * <ul>
  *   <li>GET /api/rag/traces/runs — 分页查询链路运行记录</li>
- *   <li>GET /api/rag/traces/runs/{traceId}/nodes — 查询链路节点列表</li>
+ *   <li>GET /api/rag/traces/runs/{traceId}/nodes — 查询链路详情（run + nodes）</li>
  * </ul>
  */
 @RestController
@@ -35,13 +37,6 @@ public class RagTraceController {
 
     /**
      * 分页查询链路运行记录列表
-     *
-     * @param current        当前页（默认 1）
-     * @param size           每页条数（默认 20，最大 100）
-     * @param traceId        链路 ID 精确过滤
-     * @param conversationId 会话 ID 过滤
-     * @param taskId         任务 ID 过滤
-     * @param status         状态过滤（RUNNING/SUCCESS/ERROR）
      */
     @GetMapping("/runs")
     public Result<IPage<RagTraceRunVO>> pageRuns(
@@ -57,12 +52,17 @@ public class RagTraceController {
     }
 
     /**
-     * 查询指定链路的所有节点（按 startTime 升序，用于前端瀑布图渲染）
+     * 查询指定链路的详情，包含 run 元信息和全部 nodes（用于前端瀑布图渲染）
      *
      * @param traceId 链路 ID
      */
     @GetMapping("/runs/{traceId}/nodes")
-    public Result<List<RagTraceNodeVO>> listNodes(@PathVariable String traceId) {
-        return Results.success(ragTraceQueryService.listNodes(traceId));
+    public Result<Map<String, Object>> traceDetail(@PathVariable String traceId) {
+        RagTraceRunVO run = ragTraceQueryService.getRunByTraceId(traceId);
+        List<RagTraceNodeVO> nodes = ragTraceQueryService.listNodes(traceId);
+        Map<String, Object> detail = new HashMap<>();
+        detail.put("run", run);
+        detail.put("nodes", nodes);
+        return Results.success(detail);
     }
 }
