@@ -7,7 +7,7 @@ spring:
       add-mappings: true
 
   datasource:
-    url: jdbc:mysql://localhost:3306/ai_school_conselor?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://47.93.153.14:3306/ai_school_conselor?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -20,7 +20,7 @@ spring:
 
   data:
     redis:
-      host: localhost
+      host: 47.93.153.14
       port: 6379
 
   servlet:
@@ -57,7 +57,7 @@ spring:
       mail.smtp.socketFactoryClass: javax.net.ssl.SSLSocketFactory
 
 milvus:
-  uri: http://localhost:19530
+  uri: http://47.93.153.14:19530
   token:
   metric-type: COSINE
   index-m: 48
@@ -66,7 +66,7 @@ milvus:
   max-text-length: 65535
 
 storage:
-  service-endpoint: http://localhost:9000
+  service-endpoint: http://47.93.153.14:9000
   access-key-id: rustfsadmin
   secret-access-key: rustfsadmin
   region: cn-beijing
@@ -93,7 +93,7 @@ document:
     min-interval-seconds: 60
 
 elasticsearch:
-  host: localhost
+  host: 47.93.153.14
   port: 9200
   scheme: http
   index: knowledge
