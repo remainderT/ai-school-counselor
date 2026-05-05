@@ -1,13 +1,15 @@
 package org.buaa.rag.core.online.intent;
 
+import static org.buaa.rag.tool.TextUtils.compact;
+import static org.buaa.rag.tool.TimingUtils.elapsedMs;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
 import org.buaa.rag.core.model.IntentDecision;
-import org.buaa.rag.core.trace.RagTraceNode;
-import org.buaa.rag.properties.IntentRoutingProperties;
+import org.buaa.rag.core.online.trace.RagTraceNode;
 import org.buaa.rag.properties.IntentResolutionProperties;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -21,20 +23,14 @@ public class IntentResolutionService {
     private static final Logger log = LoggerFactory.getLogger(IntentResolutionService.class);
 
     private final IntentRouterService intentRouterService;
-    private final IntentPatternService intentPatternService;
     private final IntentResolutionProperties properties;
-    private final IntentRoutingProperties intentRoutingProperties;
     private final Executor intentResolutionExecutor;
 
     public IntentResolutionService(IntentRouterService intentRouterService,
-                                   IntentPatternService intentPatternService,
                                    IntentResolutionProperties properties,
-                                   IntentRoutingProperties intentRoutingProperties,
                                    @Qualifier("intentResolutionExecutor") Executor intentResolutionExecutor) {
         this.intentRouterService = intentRouterService;
-        this.intentPatternService = intentPatternService;
         this.properties = properties;
-        this.intentRoutingProperties = intentRoutingProperties;
         this.intentResolutionExecutor = intentResolutionExecutor;
     }
 
@@ -75,20 +71,9 @@ public class IntentResolutionService {
         if (!StringUtils.hasText(query)) {
             return List.of();
         }
-        var semanticHit = intentPatternService.semanticRoute(query);
-        if (semanticHit.isPresent()) {
-            IntentDecision decision = semanticHit.get();
-            Double confidence = decision.getConfidence();
-            if (confidence != null && confidence >= intentRoutingProperties.getSemanticDirectThreshold()) {
-                return List.of(decision);
-            }
-        }
         int perQueryMax = Math.max(1, properties.getPerQueryMaxCandidates());
         double minScore = Math.max(0.0, properties.getMinScore());
         List<IntentDecision> ranked = intentRouterService.rankIntentCandidates(userId, query, perQueryMax, minScore);
-        if (semanticHit.isPresent()) {
-            ranked = mergeSemanticHit(semanticHit.get(), ranked, perQueryMax);
-        }
         if (!ranked.isEmpty()) {
             return ranked;
         }
@@ -103,45 +88,6 @@ public class IntentResolutionService {
         log.info("子问题意图命中 | query='{}' | candidates={}",
             compact(subQuery), summarizeCandidates(candidates));
         return new SubQueryIntent(subQuery, candidates);
-    }
-
-    private List<IntentDecision> mergeSemanticHit(IntentDecision semanticHit,
-                                                  List<IntentDecision> ranked,
-                                                  int perQueryMax) {
-        if (semanticHit == null) {
-            return ranked;
-        }
-        List<IntentDecision> merged = new ArrayList<>();
-        merged.add(semanticHit);
-        if (ranked != null) {
-            for (IntentDecision candidate : ranked) {
-                if (candidate == null) {
-                    continue;
-                }
-                if (sameIntent(semanticHit, candidate)) {
-                    continue;
-                }
-                merged.add(candidate);
-                if (merged.size() >= perQueryMax) {
-                    break;
-                }
-            }
-        }
-        return merged;
-    }
-
-    private boolean sameIntent(IntentDecision left, IntentDecision right) {
-        if (left == null || right == null) {
-            return false;
-        }
-        return safeEquals(left.getAction(), right.getAction())
-            && safeEquals(left.getLevel1(), right.getLevel1())
-            && safeEquals(left.getLevel2(), right.getLevel2())
-            && safeEquals(left.getToolName(), right.getToolName());
-    }
-
-    private boolean safeEquals(Object left, Object right) {
-        return left == null ? right == null : left.equals(right);
     }
 
     /**
@@ -257,15 +203,4 @@ public class IntentResolutionService {
             + "}";
     }
 
-    private String compact(String text) {
-        if (text == null) {
-            return "";
-        }
-        String normalized = text.replaceAll("\\s+", " ").trim();
-        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
-    }
-
-    private long elapsedMs(long startNanos) {
-        return (System.nanoTime() - startNanos) / 1_000_000L;
-    }
 }

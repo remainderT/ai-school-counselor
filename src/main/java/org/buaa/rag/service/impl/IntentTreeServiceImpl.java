@@ -36,7 +36,7 @@ import lombok.RequiredArgsConstructor;
 public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentNodeDO> implements IntentTreeService {
 
     private final IntentNodeMapper intentNodeMapper;
-    private final org.buaa.rag.core.online.intent.IntentTreeService onlineIntentTreeService;
+    private final org.buaa.rag.core.online.intent.IntentTreeSnapshotService intentTreeSnapshotService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -86,7 +86,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
             .enabled(requestParam.getEnabled() == null ? 1 : normalizeEnabled(requestParam.getEnabled()))
             .build();
         intentNodeMapper.insert(entity);
-        onlineIntentTreeService.refreshTreeSnapshot();
+        intentTreeSnapshotService.refreshTreeSnapshot();
         return entity.getId();
     }
 
@@ -157,7 +157,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
             existing.setEnabled(normalizeEnabled(requestParam.getEnabled()));
         }
         intentNodeMapper.updateById(existing);
-        onlineIntentTreeService.refreshTreeSnapshot();
+        intentTreeSnapshotService.refreshTreeSnapshot();
     }
 
     @Override
@@ -171,7 +171,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
             .collect(Collectors.toCollection(ArrayList::new));
         deleteIds.add(existing.getId());
         intentNodeMapper.deleteBatchIds(deleteIds);
-        onlineIntentTreeService.refreshTreeSnapshot();
+        intentTreeSnapshotService.refreshTreeSnapshot();
     }
 
     @Override
@@ -201,7 +201,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
             }
         }
         intentNodeMapper.deleteBatchIds(allIds);
-        onlineIntentTreeService.refreshTreeSnapshot();
+        intentTreeSnapshotService.refreshTreeSnapshot();
     }
 
     private void batchSetEnabled(List<Long> ids, int enabled) {
@@ -214,7 +214,7 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
                 .eq(IntentNodeDO::getDelFlag, 0)
                 .set(IntentNodeDO::getEnabled, enabled)
         );
-        onlineIntentTreeService.refreshTreeSnapshot();
+        intentTreeSnapshotService.refreshTreeSnapshot();
     }
 
     private IntentNodeDO getActiveById(Long id) {

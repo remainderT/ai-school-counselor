@@ -27,8 +27,7 @@ import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.MessageMapper;
 import org.buaa.rag.dao.mapper.MessageSourceMapper;
 import org.buaa.rag.dao.mapper.MessageSummaryMapper;
-import org.buaa.rag.core.online.memory.ConversationMemoryServiceImpl;
-// TODO: ConversationMemoryServiceImpl 应抽取接口以支持面向接口编程
+import org.buaa.rag.core.online.memory.ConversationMemoryService;
 import org.buaa.rag.dto.resp.ConversationMessageRespDTO;
 import org.buaa.rag.dto.resp.ConversationSessionRespDTO;
 import org.buaa.rag.service.ConversationService;
@@ -64,7 +63,7 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
     private final DocumentMapper documentMapper;
     private final MessageSourceMapper sourceRepository;
     private final MessageSummaryMapper messageSummaryMapper;
-    private final ConversationMemoryServiceImpl conversationMemoryService;
+    private final ConversationMemoryService conversationMemoryService;
     private final LlmChat llmChat;
 
     // ------------------------------------------------------------------ //

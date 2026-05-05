@@ -1,19 +1,16 @@
 package org.buaa.rag.core.online.intent;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.core.model.IntentClassifyResult;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.IntentNode;
 import org.buaa.rag.tool.LlmChat;
 import org.buaa.rag.properties.IntentGuidanceProperties;
-import org.buaa.rag.properties.IntentRoutingProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -26,28 +23,24 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class IntentRouterService {
 
-    private static final String INTENT_PROMPT = PromptTemplateLoader.load("intent-router.st");
     private static final String TREE_CLASSIFIER_PROMPT = PromptTemplateLoader.load("intent-tree-classifier.st");
     private static final String GUIDANCE_PROMPT_FILE = "guidance-prompt.st";
     private static final double CLASSIFY_TEMPERATURE = 0.1D;
     private static final double CLASSIFY_TOP_P = 0.3D;
     private final LlmChat llmChat;
-    private final IntentTreeService intentTreeService;
+    private final IntentTreeSnapshotService intentTreeService;
     private final IntentGuidanceProperties intentGuidanceProperties;
-    private final IntentRoutingProperties intentRoutingProperties;
     private final AmbiguityLLMChecker ambiguityLLMChecker;
     private final ObjectMapper objectMapper;
 
     public IntentRouterService(LlmChat llmChat,
-                               IntentTreeService intentTreeService,
+                               IntentTreeSnapshotService intentTreeService,
                                IntentGuidanceProperties intentGuidanceProperties,
-                               IntentRoutingProperties intentRoutingProperties,
                                AmbiguityLLMChecker ambiguityLLMChecker,
                                ObjectMapper objectMapper) {
         this.llmChat = llmChat;
         this.intentTreeService = intentTreeService;
         this.intentGuidanceProperties = intentGuidanceProperties;
-        this.intentRoutingProperties = intentRoutingProperties;
         this.ambiguityLLMChecker = ambiguityLLMChecker;
         this.objectMapper = objectMapper;
     }
@@ -60,34 +53,17 @@ public class IntentRouterService {
                 .build();
         }
 
-        // 1) 关键词轻量工具路由
-        IntentDecision keywordDecision = buildKeywordToolDecision(query);
-        if (keywordDecision != null) {
-            return keywordDecision;
-        }
-
-        // 2) 意图树候选打分 + 歧义引导
+        // 意图树候选打分 + 歧义引导
         IntentDecision treeDecision = routeByTree(query);
-        if (treeDecision != null
-            && treeDecision.getConfidence() != null
-            && treeDecision.getConfidence() >= intentGuidanceProperties.getHitThreshold()) {
+        if (treeDecision != null) {
             return treeDecision;
         }
 
-        // 3) LLM 分类兜底
-        IntentDecision llmDecision = classifyWithLlm(query);
-        if (llmDecision.getAction() == IntentDecision.Action.ROUTE_TOOL
-            || llmDecision.getAction() == IntentDecision.Action.ROUTE_CHAT
-            || (llmDecision.getConfidence() != null && llmDecision.getConfidence() >= intentRoutingProperties.getLlmRagThreshold())) {
-            return llmDecision;
-        }
-
-        // 4) 低置信度 -> 澄清
+        // 意图树无法匹配 -> 兜底走 RAG
         return IntentDecision.builder()
-            .action(IntentDecision.Action.CLARIFY)
-            .clarifyQuestion(llmDecision.getClarifyQuestion() != null
-                ? llmDecision.getClarifyQuestion() : "想了解的具体场景是？")
-            .strategy(IntentDecision.Strategy.CLARIFY_ONLY)
+            .action(IntentDecision.Action.ROUTE_RAG)
+            .strategy(IntentDecision.Strategy.HYBRID)
+            .confidence(0.0)
             .build();
     }
 
@@ -97,10 +73,6 @@ public class IntentRouterService {
     public List<IntentDecision> rankIntentCandidates(String userId, String query, int topN, double minScore) {
         if (!StringUtils.hasText(query)) {
             return List.of();
-        }
-        IntentDecision keywordDecision = buildKeywordToolDecision(query);
-        if (keywordDecision != null) {
-            return List.of(keywordDecision);
         }
         intentTreeService.loadTree();
         List<IntentNode> leaves = intentTreeService.leaves();
@@ -130,34 +102,6 @@ public class IntentRouterService {
             }
         }
         return decisions;
-    }
-
-    private IntentDecision classifyWithLlm(String query) {
-        String output = llmChat.generateCompletion(
-            INTENT_PROMPT,
-            query,
-            256,
-            CLASSIFY_TEMPERATURE,
-            CLASSIFY_TOP_P
-        );
-        if (output == null || output.isBlank()) {
-            return IntentDecision.builder()
-                .action(IntentDecision.Action.ROUTE_RAG)
-                .confidence(0.0)
-                .build();
-        }
-
-        try {
-            IntentClassifyResult result = objectMapper.readValue(output.trim(), IntentClassifyResult.class);
-            return toDecision(result);
-        } catch (Exception e) {
-            log.debug("LLM意图解析失败: {}", e.getMessage());
-            return IntentDecision.builder()
-                .action(IntentDecision.Action.ROUTE_RAG)
-                .confidence(0.0)
-                .strategy(IntentDecision.Strategy.HYBRID)
-                .build();
-        }
     }
 
     private IntentDecision.Strategy pickStrategy(String level2, String toolName) {
@@ -472,35 +416,6 @@ public class IntentRouterService {
             .build();
     }
 
-    private String matchToolByKeyword(String query) {
-        if (!StringUtils.hasText(query) || intentRoutingProperties.getToolKeywords() == null
-            || intentRoutingProperties.getToolKeywords().isEmpty()) {
-            return null;
-        }
-        return intentRoutingProperties.getToolKeywords().entrySet().stream()
-            .filter(entry -> StringUtils.hasText(entry.getKey()) && query.contains(entry.getKey()))
-            .sorted(Comparator.comparingInt((Map.Entry<String, String> entry) -> entry.getKey().length()).reversed())
-            .map(Map.Entry::getValue)
-            .filter(StringUtils::hasText)
-            .findFirst()
-            .orElse(null);
-    }
-
-    private IntentDecision buildKeywordToolDecision(String query) {
-        String toolName = matchToolByKeyword(query);
-        if (!StringUtils.hasText(toolName)) {
-            return null;
-        }
-        return IntentDecision.builder()
-            .action(IntentDecision.Action.ROUTE_TOOL)
-            .toolName(toolName)
-            .level1("办事指南")
-            .level2(toolName)
-            .confidence(0.92)
-            .strategy(IntentDecision.Strategy.PRECISION)
-            .build();
-    }
-
     private String normalizeText(String text) {
         if (text == null || text.isBlank()) {
             return null;
@@ -591,41 +506,6 @@ public class IntentRouterService {
             return null;
         }
         return normalized;
-    }
-
-    private IntentDecision toDecision(IntentClassifyResult result) {
-        String level1 = normalizeText(result.getLevel1());
-        String level2 = normalizeText(result.getLevel2());
-        double confidence = result.getConfidence() == null ? 0.0 : result.getConfidence();
-        String toolName = normalizeToolName(result.getToolName());
-        String clarify = normalizeText(result.getClarify());
-
-        IntentDecision.Action action;
-        if (toolName != null) {
-            action = IntentDecision.Action.ROUTE_TOOL;
-        } else if (isChitchatIntent(level1, level2)) {
-            action = IntentDecision.Action.ROUTE_CHAT;
-        } else if (confidence >= intentRoutingProperties.getLlmRagThreshold()) {
-            action = IntentDecision.Action.ROUTE_RAG;
-        } else {
-            action = IntentDecision.Action.CLARIFY;
-        }
-        IntentDecision.Strategy strategy = action == IntentDecision.Action.CLARIFY
-            ? IntentDecision.Strategy.CLARIFY_ONLY
-            : pickStrategy(level2, toolName);
-        String clarifyQuestion = action == IntentDecision.Action.CLARIFY
-            ? (StringUtils.hasText(clarify) ? clarify : "你想咨询哪一类具体事项？")
-            : null;
-
-        return IntentDecision.builder()
-            .level1(level1)
-            .level2(level2)
-            .confidence(confidence)
-            .toolName(toolName)
-            .clarifyQuestion(clarifyQuestion)
-            .action(action)
-            .strategy(strategy)
-            .build();
     }
 
     private boolean isChitchatIntent(String level1, String level2) {

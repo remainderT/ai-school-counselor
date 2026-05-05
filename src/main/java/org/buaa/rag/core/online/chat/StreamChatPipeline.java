@@ -3,7 +3,8 @@ package org.buaa.rag.core.online.chat;
 import java.util.List;
 import java.util.Map;
 
-import org.buaa.rag.common.prompt.PromptTemplateLoader;
+import static org.buaa.rag.tool.TextUtils.compact;
+
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.online.intent.IntentResolutionService;
 import org.buaa.rag.core.online.intent.SubQueryIntent;
@@ -295,14 +296,6 @@ public class StreamChatPipeline {
             }
         }
         return null;
-    }
-
-    private String compact(String text) {
-        if (text == null) {
-            return "";
-        }
-        String normalized = text.replaceAll("\\s+", " ").trim();
-        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
     }
 
     @Getter

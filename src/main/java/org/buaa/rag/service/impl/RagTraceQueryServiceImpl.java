@@ -2,6 +2,7 @@ package org.buaa.rag.service.impl;
 
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Date;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -124,7 +125,7 @@ public class RagTraceQueryServiceImpl implements RagTraceQueryService {
         return vo;
     }
 
-    private String formatDate(java.util.Date date) {
+    private String formatDate(Date date) {
         if (date == null) {
             return null;
         }

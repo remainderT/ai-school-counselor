@@ -21,12 +21,6 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * 辅导员系统全链路追踪查询接口
- *
- * <p>接口列表：
- * <ul>
- *   <li>GET /api/rag/traces/runs — 分页查询链路运行记录</li>
- *   <li>GET /api/rag/traces/runs/{traceId}/nodes — 查询链路详情（run + nodes）</li>
- * </ul>
  */
 @RestController
 @RequestMapping("/api/rag/traces")

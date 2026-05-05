@@ -48,15 +48,6 @@ public class RagProperties {
     @Data
     public static class Rerank {
         private boolean enabled = true;
-        private int maxCandidates = 8;
-        private int snippetLength = 200;
-
-        /**
-         * Rerank 提供商优先级列表，按顺序依次尝试，失败自动降级。
-         * 可选值：dashscope, llm, noop
-         * 默认：dashscope → llm → noop
-         */
-        private List<String> providerOrder;
 
         /**
          * 百炼 Rerank 模型配置
@@ -155,7 +146,7 @@ public class RagProperties {
         /**
          * 低质量判定阈值（top-1 分数低于此值视为低质量）
          */
-        private double minAcceptableScore = 0.25;
+        private double minAcceptableScore = 0.4;
     }
 
     @Data

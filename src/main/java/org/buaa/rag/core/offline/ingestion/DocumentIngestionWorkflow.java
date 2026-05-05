@@ -6,7 +6,7 @@ import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.KnowledgeDO;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
 import org.buaa.rag.core.model.ContentFragment;
-import org.buaa.rag.tool.BucketManager;
+import org.buaa.rag.tool.KnowledgeNameConverter;
 import org.springframework.stereotype.Component;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -19,8 +19,8 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * 仅负责编排生命周期、内容提取与产物写入，具体实现下沉到专门组件。
  * <ul>
- *   <li>RustFS Bucket 名：{@link BucketManager#toBucketName}(knowledge.name)，下划线转连字符</li>
- *   <li>Milvus Collection 名：knowledge.name 原始值（仅允许字母/数字/下划线）</li>
+ *   <li>RustFS Bucket 名：{@link KnowledgeNameConverter#toBucketName}(knowledge.name)，下划线转连字符</li>
+ *   <li>Milvus Collection 名：{@link KnowledgeNameConverter#toCollectionName}(knowledge.name)，连字符转下划线</li>
  * </ul>
  */
 @Slf4j
@@ -99,7 +99,7 @@ public class DocumentIngestionWorkflow {
      */
     private record StorageNames(String bucketName, String collectionName) {
         static StorageNames of(String kbName) {
-            return new StorageNames(BucketManager.toBucketName(kbName), kbName);
+            return new StorageNames(KnowledgeNameConverter.toBucketName(kbName), KnowledgeNameConverter.toCollectionName(kbName));
         }
         static StorageNames empty() {
             return new StorageNames("", "");

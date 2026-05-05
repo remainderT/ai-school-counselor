@@ -27,7 +27,7 @@ public class AdminOnlyFilter implements Filter {
             "/api/rag/knowledge",
             "/api/rag/document",
             "/api/rag/intent-tree",
-            "/api/rag/chat/search"
+            "/api/rag/conversations/search"
     );
 
     private boolean requireAdmin(String requestUri) {

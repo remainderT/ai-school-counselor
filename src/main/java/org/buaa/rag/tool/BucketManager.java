@@ -33,19 +33,23 @@ public class BucketManager {
     private final S3Client s3Client;
 
     /**
-     * 将知识库 name 转换为合法的 RustFS/S3 Bucket 名称：下划线替换为连字符。
-     * <p>
-     * RustFS 不允许 Bucket 名称含下划线，因此统一在此做规范化处理，
-     * 调用方只需传入 knowledge.name 即可，无需自行转换。
+     * 将知识库 name 转换为合法的 RustFS/S3 Bucket 名称。
      *
-     * @param knowledgeName 知识库 name（如 academic-kb）
-     * @return 合法 Bucket 名称（如 academic-kb）
+     * @deprecated 请使用 {@link KnowledgeNameConverter#toBucketName(String)}
      */
+    @Deprecated
     public static String toBucketName(String knowledgeName) {
-        if (knowledgeName == null) {
-            return "";
-        }
-        return knowledgeName.replace('_', '-');
+        return KnowledgeNameConverter.toBucketName(knowledgeName);
+    }
+
+    /**
+     * 将知识库 name 转换为合法的 Milvus Collection 名称。
+     *
+     * @deprecated 请使用 {@link KnowledgeNameConverter#toCollectionName(String)}
+     */
+    @Deprecated
+    public static String toCollectionName(String knowledgeName) {
+        return KnowledgeNameConverter.toCollectionName(knowledgeName);
     }
 
     /**

@@ -23,6 +23,7 @@ import org.buaa.rag.dao.mapper.DocumentMapper;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.offline.index.VectorEncoding;
+import org.buaa.rag.tool.KnowledgeNameConverter;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
@@ -35,12 +36,12 @@ import co.elastic.clients.elasticsearch.core.SearchResponse;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 智能检索服务实现
+ * 智能检索服务
  * 结合向量检索和文本匹配的混合搜索策略
  */
 @Slf4j
 @Service
-public class SmartRetrieverServiceImpl {
+public class SmartRetrieverService {
 
     private static final int MAX_RECALL_SIZE = 300;
     private static final long PARALLEL_SEARCH_TIMEOUT_SECONDS = 30L;
@@ -54,14 +55,14 @@ public class SmartRetrieverServiceImpl {
     private final MilvusRetrieverService milvusRetrieverService;
     private final Executor retrievalExecutor;
 
-    public SmartRetrieverServiceImpl(ElasticsearchClient esClient,
-                                     VectorEncoding encodingService,
-                                     DocumentMapper documentMapper,
-                                     KnowledgeMapper knowledgeMapper,
-                                     RagProperties ragProperties,
-                                     EsProperties esProperties,
-                                     MilvusRetrieverService milvusRetrieverService,
-                                     @Qualifier("retrievalChannelExecutor") Executor retrievalExecutor) {
+    public SmartRetrieverService(ElasticsearchClient esClient,
+                                 VectorEncoding encodingService,
+                                 DocumentMapper documentMapper,
+                                 KnowledgeMapper knowledgeMapper,
+                                 RagProperties ragProperties,
+                                 EsProperties esProperties,
+                                 MilvusRetrieverService milvusRetrieverService,
+                                 @Qualifier("retrievalChannelExecutor") Executor retrievalExecutor) {
         this.esClient = esClient;
         this.encodingService = encodingService;
         this.documentMapper = documentMapper;
@@ -230,7 +231,7 @@ public class SmartRetrieverServiceImpl {
         List<CompletableFuture<List<RetrievalMatch>>> futures = knowledgeList.stream()
             .map(kb -> CompletableFuture.supplyAsync(() -> {
                 try {
-                    return milvusRetrieverService.search(kb.getName(), vector, topK);
+                    return milvusRetrieverService.search(KnowledgeNameConverter.toCollectionName(kb.getName()), vector, topK);
                 } catch (Exception e) {
                     log.warn("向量检索失败: collection={}, error={}", kb.getName(), e.getMessage());
                     return Collections.<RetrievalMatch>emptyList();
@@ -243,11 +244,18 @@ public class SmartRetrieverServiceImpl {
                 .get(PARALLEL_SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (java.util.concurrent.TimeoutException e) {
             log.warn("并行向量检索超时({}s), 使用已完成的部分结果", PARALLEL_SEARCH_TIMEOUT_SECONDS);
+            // 取消仍在运行的任务，释放线程池资源
+            for (CompletableFuture<List<RetrievalMatch>> f : futures) {
+                if (!f.isDone()) {
+                    f.cancel(true);
+                }
+            }
         } catch (Exception e) {
             log.warn("并行向量检索异常: {}", e.getMessage());
         }
 
         return futures.stream()
+            .filter(f -> f.isDone() && !f.isCancelled() && !f.isCompletedExceptionally())
             .map(f -> f.getNow(Collections.<RetrievalMatch>emptyList()))
             .flatMap(List::stream)
             .collect(Collectors.toList());
@@ -413,6 +421,7 @@ public class SmartRetrieverServiceImpl {
             return Map.of();
         }
         LambdaQueryWrapper<DocumentDO> queryWrapper = Wrappers.lambdaQuery(DocumentDO.class)
+                .eq(DocumentDO::getDelFlag, 0)
                 .in(DocumentDO::getMd5Hash, md5Set);
         List<DocumentDO> documentDOS = documentMapper.selectList(queryWrapper);
         if (documentDOS == null || documentDOS.isEmpty()) {

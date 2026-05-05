@@ -425,7 +425,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
     const prev = feedbackState[messageId];
     const newVal: "up" | "down" = score > 3 ? "up" : "down";
     setFeedbackState((s) => ({ ...s, [messageId]: prev === newVal ? undefined as unknown as "up" : newVal }));
-    await feedbackReq.runAction(() => apiPost("/api/rag/chat/feedback", payload), {
+    await feedbackReq.runAction(() => apiPost("/api/rag/conversations/feedback", payload), {
       successToast: score > 3 ? "感谢好评 👍" : "感谢反馈",
       errorFallback: "反馈失败",
       onError: setNotice
@@ -759,6 +759,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
                             <div className="msg-bubble assistant">
                               <MarkdownMessage
                                 content={linkedDisplayText || "..."}
+                                isStreaming={isStreaming}
                                 onSourceCitationClick={(sourceIndex) => {
                                   const nextIndex = sourceIndex - 1;
                                   setActiveSourceMap((current) => ({ ...current, [messageKey]: nextIndex }));

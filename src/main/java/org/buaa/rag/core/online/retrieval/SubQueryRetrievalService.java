@@ -1,5 +1,8 @@
 package org.buaa.rag.core.online.retrieval;
 
+import static org.buaa.rag.tool.TextUtils.compact;
+import static org.buaa.rag.tool.TimingUtils.elapsedMs;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -10,15 +13,14 @@ import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.online.intent.IntentResolutionService;
 import org.buaa.rag.core.online.intent.SubQueryIntent;
-import java.util.Objects;
-import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorServiceImpl;
+import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorService;
 import org.buaa.rag.properties.RagProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.buaa.rag.core.trace.RagTraceNode;
+import org.buaa.rag.core.online.trace.RagTraceNode;
 
 /**
  * 子问题检索服务：封装单个子问题的完整检索流程。
@@ -32,8 +34,8 @@ import org.buaa.rag.core.trace.RagTraceNode;
 public class SubQueryRetrievalService {
 
     private final MultiChannelRetrievalEngine multiChannelRetrievalEngine;
-    private final SmartRetrieverServiceImpl smartRetrieverService;
-    private final RetrievalPostProcessorServiceImpl postProcessorService;
+    private final SmartRetrieverService smartRetrieverService;
+    private final RetrievalPostProcessorService postProcessorService;
     private final IntentResolutionService intentResolutionService;
     private final RagProperties ragProperties;
 
@@ -285,18 +287,6 @@ public class SubQueryRetrievalService {
             compact(query), topK, intentCandidates == null ? 0 : intentCandidates.size(),
             results == null ? 0 : results.size(), elapsedMs(start));
         return results;
-    }
-
-    private String compact(String text) {
-        if (text == null) {
-            return "";
-        }
-        String normalized = text.replaceAll("\\s+", " ").trim();
-        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
-    }
-
-    private long elapsedMs(long startNanos) {
-        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
     /** Reciprocal Rank Fusion */

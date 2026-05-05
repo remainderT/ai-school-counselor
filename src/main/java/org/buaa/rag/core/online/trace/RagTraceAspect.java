@@ -1,4 +1,4 @@
-package org.buaa.rag.core.trace;
+package org.buaa.rag.core.online.trace;
 
 import java.lang.reflect.Method;
 import java.util.Date;

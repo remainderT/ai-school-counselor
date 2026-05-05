@@ -64,6 +64,8 @@ milvus:
   ef-construction: 200
   search-ef: 128
   max-text-length: 65535
+  connect-timeout-ms: 5000
+  search-timeout-seconds: 15
 
 storage:
   service-endpoint: http://localhost:9000
@@ -137,13 +139,6 @@ rag:
     rrf-k: 60
   rerank:
     enabled: true
-    max-candidates: 8
-    snippet-length: 200
-    # 提供商优先级：dashscope(独立Rerank模型) → llm(LLM文本打分降级) → noop(直接截断兜底)
-    provider-order:
-      - dashscopec d
-      - llm
-      - noop
     dashscope:
       base-url: https://dashscope.aliyuncs.com
       api-key:
@@ -182,7 +177,7 @@ rag:
   retrieval:
     default-top-k: 5
     max-top-k: 10
-    min-acceptable-score: 0.25
+    min-acceptable-score: 0.4
   prompt:
     max-reference-length: 300
     max-source-reference-count: 5
@@ -202,10 +197,7 @@ rag:
     post-processor:
       deduplicate: true
       rerank: true
-  intent-routing:
-    semantic-direct-threshold: 0.9
-    llm-rag-threshold: 0.5
-    semantic-min-score: 0.7
+  intent-routing: {}
   intent-guidance:
     enabled: true
     hit-threshold: 0.58
@@ -222,3 +214,4 @@ rag:
     max-error-length: 800
 
 # nohup java -jar rag.jar > app.log 2>&1 & sleep 2; tail -f app.log
+# cd frontend && npm install && npm run build:static && cd .. && mvn clean package -DskipTests

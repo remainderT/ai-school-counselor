@@ -1,5 +1,8 @@
 package org.buaa.rag.core.online.retrieval.postprocessor;
 
+import static org.buaa.rag.tool.TextUtils.compact;
+import static org.buaa.rag.tool.TimingUtils.elapsedMs;
+
 import java.util.List;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
@@ -15,16 +18,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.extern.slf4j.Slf4j;
-import org.buaa.rag.core.trace.RagTraceNode;
+import org.buaa.rag.core.online.trace.RagTraceNode;
 
 /**
- * 检索后处理服务实现。
+ * 检索后处理服务。
  * <p>
  * 包含 CRAG 检索质量评估；rerank 委托给 {@link RerankService}（路由式，支持独立模型 + LLM 降级）。
  */
 @Slf4j
 @Service
-public class RetrievalPostProcessorServiceImpl {
+public class RetrievalPostProcessorService {
 
     private static final String DEFAULT_CRAG_PROMPT = PromptTemplateLoader.load("retrieval-crag.st");
 
@@ -38,11 +41,11 @@ public class RetrievalPostProcessorServiceImpl {
     private final RoutingRerankService rerankService;
     private final ObjectMapper objectMapper;
 
-    public RetrievalPostProcessorServiceImpl(LlmChat llmChat,
-                                             RagProperties ragProperties,
-                                             LlmProperties llmProperties,
-                                             RoutingRerankService rerankService,
-                                             ObjectMapper objectMapper) {
+    public RetrievalPostProcessorService(LlmChat llmChat,
+                                         RagProperties ragProperties,
+                                         LlmProperties llmProperties,
+                                         RoutingRerankService rerankService,
+                                         ObjectMapper objectMapper) {
         this.llmChat = llmChat;
         this.ragProperties = ragProperties;
         this.llmProperties = llmProperties;
@@ -240,15 +243,4 @@ public class RetrievalPostProcessorServiceImpl {
         return text.substring(0, maxLength) + "...";
     }
 
-    private String compact(String text) {
-        if (text == null) {
-            return "";
-        }
-        String normalized = text.replaceAll("\\s+", " ").trim();
-        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
-    }
-
-    private long elapsedMs(long startNanos) {
-        return (System.nanoTime() - startNanos) / 1_000_000L;
-    }
 }

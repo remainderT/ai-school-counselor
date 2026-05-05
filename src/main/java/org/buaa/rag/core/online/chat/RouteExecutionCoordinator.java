@@ -1,5 +1,9 @@
 package org.buaa.rag.core.online.chat;
 
+import static org.buaa.rag.tool.TextUtils.compact;
+import static org.buaa.rag.tool.TextUtils.isBlank;
+import static org.buaa.rag.tool.TimingUtils.elapsedMs;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -10,15 +14,14 @@ import java.util.function.Consumer;
 import org.buaa.rag.core.model.CragDecision;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
-import org.buaa.rag.core.online.intent.IntentPatternService;
 import org.buaa.rag.core.online.intent.SubQueryIntent;
 import org.buaa.rag.core.online.retrieval.SubQueryRetrievalResult;
 import org.buaa.rag.core.online.retrieval.SubQueryRetrievalService;
-import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorServiceImpl;
+import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorService;
 import org.buaa.rag.core.online.tool.ToolService;
 import org.buaa.rag.properties.RagProperties;
-import org.buaa.rag.core.trace.RagTraceContext;
-import org.buaa.rag.core.trace.RagTraceNode;
+import org.buaa.rag.core.online.trace.RagTraceContext;
+import org.buaa.rag.core.online.trace.RagTraceNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -32,30 +35,24 @@ public class RouteExecutionCoordinator {
         "你是高校智能助手。对于问候或闲聊请简短友好回应；若用户尚未给出具体诉求，礼貌引导其说明想咨询的事项。";
 
     private final SubQueryRetrievalService subQueryRetrievalService;
-    private final RetrievalPostProcessorServiceImpl postProcessorService;
+    private final RetrievalPostProcessorService postProcessorService;
     private final RagPromptService ragPromptService;
     private final ToolService toolService;
-    private final IntentPatternService intentPatternService;
     private final RagProperties ragProperties;
     private final Executor subQueryContextExecutor;
-    private final Executor chatStreamExecutor;
 
     public RouteExecutionCoordinator(SubQueryRetrievalService subQueryRetrievalService,
-                                     RetrievalPostProcessorServiceImpl postProcessorService,
+                                     RetrievalPostProcessorService postProcessorService,
                                      RagPromptService ragPromptService,
                                      ToolService toolService,
-                                     IntentPatternService intentPatternService,
                                      RagProperties ragProperties,
-                                     @Qualifier("subQueryContextExecutor") Executor subQueryContextExecutor,
-                                     @Qualifier("chatStreamExecutor") Executor chatStreamExecutor) {
+                                     @Qualifier("subQueryContextExecutor") Executor subQueryContextExecutor) {
         this.subQueryRetrievalService = subQueryRetrievalService;
         this.postProcessorService = postProcessorService;
         this.ragPromptService = ragPromptService;
         this.toolService = toolService;
-        this.intentPatternService = intentPatternService;
         this.ragProperties = ragProperties;
         this.subQueryContextExecutor = subQueryContextExecutor;
-        this.chatStreamExecutor = chatStreamExecutor;
     }
 
     @RagTraceNode(name = "route-execution", type = "ROUTE_EXECUTE")
@@ -81,7 +78,6 @@ public class RouteExecutionCoordinator {
                 : resolvedSubQueries.get(0).candidates();
             executionResult = executeSingleIntentRoute(
                 userId, rewrittenQuery, primaryIntent, candidates, conversationHistory, chunkHandler, cancelHandle);
-            recordHighConfidencePattern(primaryIntent, rewrittenQuery);
         }
 
         return new ExecutionResult(
@@ -298,7 +294,6 @@ public class RouteExecutionCoordinator {
                                                         List<Map<String, String>> conversationHistory) {
         long start = System.nanoTime();
         IntentDecision primary = subQueryRetrievalService.selectPrimaryIntent(subQueryIntent);
-        recordHighConfidencePattern(primary, subQueryIntent.subQuery());
 
         if (primary != null && primary.getAction() == IntentDecision.Action.ROUTE_TOOL) {
             String toolResponse = toolService.execute(userId, subQueryIntent.subQuery(), primary);
@@ -335,25 +330,6 @@ public class RouteExecutionCoordinator {
         log.info("子问题RAG执行完成 | query='{}' | results={} | topK={} | 耗时={}ms",
             compact(subQueryIntent.subQuery()), result.retrievedCount(), result.retrievalTopK(), elapsedMs(start));
         return result;
-    }
-
-    private void recordHighConfidencePattern(IntentDecision intent, String query) {
-        if (intent == null || isBlank(query)) {
-            return;
-        }
-        if (intent.getConfidence() != null
-            && intent.getConfidence() >= 0.9
-            && (intent.getAction() == IntentDecision.Action.ROUTE_RAG
-            || intent.getAction() == IntentDecision.Action.ROUTE_TOOL)) {
-            CompletableFuture.runAsync(
-                () -> intentPatternService.recordPattern(
-                    intent.getLevel1(), intent.getLevel2(), query, intent.getConfidence()),
-                chatStreamExecutor
-            ).exceptionally(ex -> {
-                log.debug("异步写回意图样本失败: {}", ex.getMessage());
-                return null;
-            });
-        }
     }
 
     private String generateChatDirectResponse(String query,
@@ -484,14 +460,6 @@ public class RouteExecutionCoordinator {
         }
     }
 
-    private String compact(String text) {
-        if (text == null) {
-            return "";
-        }
-        String normalized = text.replaceAll("\\s+", " ").trim();
-        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
-    }
-
     private String describeIntent(IntentDecision intent) {
         if (intent == null) {
             return "null";
@@ -504,10 +472,6 @@ public class RouteExecutionCoordinator {
             + "}";
     }
 
-    private boolean isBlank(String str) {
-        return str == null || str.isBlank();
-    }
-
     private boolean hasUsableEvidence(SubQueryRetrievalResult result) {
         if (result == null) {
             return false;
@@ -516,10 +480,6 @@ public class RouteExecutionCoordinator {
             return true;
         }
         return result.sources() != null && !result.sources().isEmpty();
-    }
-
-    private long elapsedMs(long startNanos) {
-        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
     private record StreamResult(String response,

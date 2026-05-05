@@ -24,7 +24,7 @@ import org.buaa.rag.core.mq.IngestionProducer;
 import org.buaa.rag.properties.FileParseProperties;
 import org.buaa.rag.tool.RemoteURLFetcher;
 import org.buaa.rag.tool.RemoteURLFetcher.FetchedRemoteDocument;
-import org.buaa.rag.tool.BucketManager;
+import org.buaa.rag.tool.KnowledgeNameConverter;
 import org.buaa.rag.tool.RustfsStorage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
@@ -196,7 +196,7 @@ public class DocumentRefreshScheduler {
             log.warn("知识库未找到: knowledgeId={}", knowledgeId);
             return "";
         }
-        return BucketManager.toBucketName(knowledge.getName());
+        return KnowledgeNameConverter.toBucketName(knowledge.getName());
     }
 
     private LocalDateTime resolveNextRun(String cron, LocalDateTime now) {

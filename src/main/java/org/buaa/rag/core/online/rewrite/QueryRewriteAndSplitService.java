@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
-import org.buaa.rag.core.trace.RagTraceNode;
+import org.buaa.rag.core.online.trace.RagTraceNode;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.tool.LlmChat;
 import org.springframework.stereotype.Service;
@@ -20,17 +20,6 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * 查询预处理服务：单次 LLM 调用同时完成「改写」和「拆分」。
- *
- * <p>LLM 返回格式：
- * <pre>
- * {
- *   "rewrite": "改写后的主问题",
- *   "sub_questions": ["子问题1", "子问题2"]
- * }
- * </pre>
- *
- * <p>对比旧架构的两次串行调用（{@code QueryRewriteService} + {@code QueryDecomposer}），
- * 此服务节省一次 LLM 网络往返，同时让改写上下文与拆分逻辑共享同一次推理。
  */
 @Slf4j
 @Service
