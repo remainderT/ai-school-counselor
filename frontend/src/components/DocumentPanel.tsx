@@ -408,28 +408,70 @@ export function DocumentPanel({ selectedKnowledgeId, onOpenDocumentDetail }: Doc
   knowledgeItems.forEach((item) => knowledgeNameMap.set(item.id, item.name));
 
   const safePage = Math.min(page, totalPages);
+  const hasActiveFilters = Boolean(filterKnowledgeId || searchName);
 
   return (
-    <div className="admin-page">
-      <div className="admin-page-header">
-        <div>
-          <h1 className="admin-page-title">文档管理</h1>
-          <p className="admin-page-desc">上传与维护文档，系统将用于分段、索引与召回</p>
+    <div className="admin-page admin-page-shell">
+      <section className="admin-page-hero admin-page-hero-docs">
+        <div className="admin-page-header">
+          <div>
+            <h1 className="admin-page-title">文档管理</h1>
+            <p className="admin-page-desc">上传与维护文档，系统将用于分段、索引与召回</p>
+          </div>
+          <div className="admin-page-actions">
+            <button
+              className="admin-btn admin-btn-ghost"
+              onClick={handleFullImport}
+              disabled={actionReq.loading || importing}
+            >
+              {importing ? "导入中..." : "全量导入"}
+            </button>
+            <button className="admin-btn admin-btn-primary" onClick={() => setShowUpload(true)}>
+              <UploadIcon /> 上传文档
+            </button>
+          </div>
         </div>
-        <div className="admin-page-actions">
-          <button
-            className="admin-btn admin-btn-ghost"
-            style={{ marginRight: 8 }}
-            onClick={handleFullImport}
-            disabled={actionReq.loading || importing}
-          >
-            {importing ? "导入中..." : "全量导入"}
-          </button>
-          <button className="admin-btn admin-btn-primary" onClick={() => setShowUpload(true)}>
-            <UploadIcon /> 上传文档
-          </button>
+        <div className="doc-hero-toolbar">
+          <div className="doc-toolbar-head">
+            <div>
+              <h3 className="admin-card-title">筛选与检索</h3>
+              <p className="admin-card-desc">按知识库或文档名称快速定位目标文档</p>
+            </div>
+            <div className="doc-toolbar-meta">
+              {polling && <span className="admin-tag admin-tag-success">自动刷新处理中</span>}
+              {hasActiveFilters && <span className="admin-tag admin-tag-outline">已应用筛选</span>}
+            </div>
+          </div>
+          <div className="doc-filter-bar">
+            <div className="doc-filter-select">
+              <CustomSelect
+                value={filterKnowledgeId}
+                options={filterKnowledgeOptions}
+                onChange={handleFilterChange}
+                placeholder="全部知识库"
+              />
+            </div>
+            <div className="doc-search-box">
+              <SearchIcon />
+              <input
+                className="doc-search-input"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                placeholder="搜索文档名称..."
+              />
+              {searchInput && (
+                <button className="doc-search-clear" onClick={handleClearSearch} title="清除搜索">
+                  <ClearIcon />
+                </button>
+              )}
+              <button className="doc-search-btn" onClick={handleSearch} disabled={listReq.loading}>
+                搜索
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
 
       {/* Upload Dialog */}
       {showUpload && (
@@ -554,44 +596,18 @@ export function DocumentPanel({ selectedKnowledgeId, onOpenDocumentDetail }: Doc
       {msg && <div className={`admin-alert ${msg.includes("成功") ? "admin-alert-success" : "admin-alert-error"}`}>{msg}</div>}
       {!msg && listReq.error && <div className="admin-alert admin-alert-error">{listReq.error}</div>}
 
-      {/* Filter Bar */}
-      <div className="doc-filter-bar">
-        <div className="doc-filter-select">
-          <CustomSelect
-            value={filterKnowledgeId}
-            options={filterKnowledgeOptions}
-            onChange={handleFilterChange}
-            placeholder="全部知识库"
-          />
-        </div>
-        <div className="doc-search-box">
-          <SearchIcon />
-          <input
-            className="doc-search-input"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            placeholder="搜索文档名称..."
-          />
-          {searchInput && (
-            <button className="doc-search-clear" onClick={handleClearSearch} title="清除搜索">
-              <ClearIcon />
-            </button>
-          )}
-          <button className="doc-search-btn" onClick={handleSearch} disabled={listReq.loading}>
-            搜索
-          </button>
-        </div>
-      </div>
 
       {/* Document List */}
       {items.length > 0 ? (
-        <div className="admin-card">
-          <div className="admin-card-header">
-            <h3 className="admin-card-title">文档列表</h3>
+        <div className="admin-card admin-list-card">
+          <div className="admin-card-header admin-card-header-rich">
+            <div>
+              <h3 className="admin-card-title">文档列表</h3>
+              <p className="admin-card-desc">支持查看文档详情、下载原文件和删除失效文档</p>
+            </div>
             <span className="admin-badge">共 {total} 条 · 第 {safePage}/{totalPages} 页</span>
           </div>
-          <div className="admin-card-body" style={{ padding: 0 }}>
+          <div className="admin-table-wrap">
             <table className="admin-table">
               <thead>
                 <tr>
@@ -680,9 +696,25 @@ export function DocumentPanel({ selectedKnowledgeId, onOpenDocumentDetail }: Doc
         </div>
       ) : (
         !listReq.loading && (
-          <div className="admin-empty">
-            <div className="admin-empty-icon">📄</div>
-            <p>{searchName || filterKnowledgeId ? "未找到匹配的文档" : "暂无文档，点击上方按钮上传"}</p>
+          <div className="admin-card admin-empty-card">
+            <div className="admin-empty">
+              <div className="admin-empty-icon">📄</div>
+              <h3 className="admin-empty-title">{hasActiveFilters ? "未找到匹配的文档" : "当前还没有文档"}</h3>
+              <p className="admin-empty-desc">
+                {hasActiveFilters ? "可以调整筛选条件后重新搜索。" : "可以先上传文件或执行全量导入，系统会自动分段并建立索引。"}
+              </p>
+              <div className="admin-empty-actions">
+                {hasActiveFilters ? (
+                  <button className="admin-btn admin-btn-ghost" onClick={handleClearSearch}>
+                    清空搜索条件
+                  </button>
+                ) : (
+                  <button className="admin-btn admin-btn-primary" onClick={() => setShowUpload(true)}>
+                    <UploadIcon /> 上传首个文档
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         )
       )}

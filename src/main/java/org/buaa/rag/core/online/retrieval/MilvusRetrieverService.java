@@ -6,6 +6,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 import org.buaa.rag.common.convention.exception.ServiceException;
@@ -83,7 +86,18 @@ public class MilvusRetrieverService {
                 .outputFields(List.of("source_md5", "segment_number", "text_payload"))
                 .build();
 
-            SearchResp response = milvusClient.search(request);
+            long timeoutSec = milvusProperties.getSearchTimeoutSeconds();
+            SearchResp response;
+            try {
+                response = CompletableFuture.supplyAsync(() -> milvusClient.search(request))
+                        .get(timeoutSec, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                log.warn("Milvus search 超时({}s): collection={}", timeoutSec, collectionName);
+                return Collections.emptyList();
+            } catch (Exception asyncEx) {
+                Throwable cause = asyncEx.getCause() != null ? asyncEx.getCause() : asyncEx;
+                throw new ServiceException("Milvus 向量检索异步异常: " + cause.getMessage(), cause, SEARCH_SERVICE_ERROR);
+            }
             List<List<SearchResp.SearchResult>> results = response.getSearchResults();
             if (results == null || results.isEmpty()) {
                 return Collections.emptyList();

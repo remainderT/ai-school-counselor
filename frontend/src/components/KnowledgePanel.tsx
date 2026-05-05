@@ -103,7 +103,7 @@ export function KnowledgePanel({ onOpenKnowledgeDocuments }: KnowledgePanelProps
   };
 
   return (
-    <div className="admin-page">
+    <div className="admin-page admin-page-shell">
       <div className="admin-page-header">
         <div>
           <h1 className="admin-page-title">知识库管理</h1>
@@ -189,12 +189,15 @@ export function KnowledgePanel({ onOpenKnowledgeDocuments }: KnowledgePanelProps
 
       {/* Knowledge List */}
       {items.length > 0 ? (
-        <div className="admin-card">
-          <div className="admin-card-header">
-            <h3 className="admin-card-title">知识库列表</h3>
+        <div className="admin-card admin-list-card">
+          <div className="admin-card-header admin-card-header-rich">
+            <div>
+              <h3 className="admin-card-title">知识库列表</h3>
+              <p className="admin-card-desc">点击知识库名称可直接跳转查看关联文档，支持行内编辑与删除</p>
+            </div>
             <span className="admin-badge">共 {items.length} 个</span>
           </div>
-          <div className="admin-card-body" style={{ padding: 0 }}>
+          <div className="admin-table-wrap">
             <table className="admin-table">
               <thead>
                 <tr>
@@ -249,9 +252,17 @@ export function KnowledgePanel({ onOpenKnowledgeDocuments }: KnowledgePanelProps
         </div>
       ) : (
         !listReq.loading && (
-          <div className="admin-empty">
-            <div className="admin-empty-icon">📚</div>
-            <p>暂无知识库，点击上方按钮创建</p>
+          <div className="admin-card admin-empty-card">
+            <div className="admin-empty">
+              <div className="admin-empty-icon">📚</div>
+              <h3 className="admin-empty-title">还没有知识库</h3>
+              <p className="admin-empty-desc">先创建一个知识库，再把文档导入进去，这样后续检索和问答才能正确命中对应内容。</p>
+              <div className="admin-empty-actions">
+                <button className="admin-btn admin-btn-primary" onClick={() => setShowCreate(true)}>
+                  + 创建知识库
+                </button>
+              </div>
+            </div>
           </div>
         )
       )}

@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import org.buaa.rag.core.model.IntentDecision;
-import org.buaa.rag.core.trace.RagTraceNode;
+import org.buaa.rag.core.online.trace.RagTraceNode;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.online.retrieval.channel.SearchChannel;
 import org.buaa.rag.core.online.retrieval.channel.SearchChannelResult;

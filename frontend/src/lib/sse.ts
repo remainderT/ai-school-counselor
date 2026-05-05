@@ -102,7 +102,7 @@ function hasReceivedEventFlag(error: unknown): boolean {
 export function createChatStream(message: string, handlers: StreamHandlers) {
   const abortCtl = new AbortController();
   const query = new URLSearchParams({ message }).toString();
-  const endpoint = apiUrl(`/api/rag/chat/stream?${query}`);
+  const endpoint = apiUrl(`/api/rag/conversations/stream?${query}`);
 
   const attempt = async () => {
     const auth = loadAuth();

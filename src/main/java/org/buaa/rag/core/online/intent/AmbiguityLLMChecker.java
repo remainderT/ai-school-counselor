@@ -1,5 +1,7 @@
 package org.buaa.rag.core.online.intent;
 
+import static org.buaa.rag.tool.TextUtils.compact;
+
 import java.util.List;
 
 import org.buaa.rag.properties.IntentGuidanceProperties;
@@ -119,7 +121,7 @@ public class AmbiguityLLMChecker {
             String answer = raw.trim().toUpperCase();
             boolean ambiguous = answer.startsWith("Y");
             log.debug("歧义LLM二次确认 | query='{}' | optionA='{}' | optionB='{}' | result={}",
-                compact(query), optionA, optionB, ambiguous ? "歧义" : "不歧义");
+                compact(query, 60), optionA, optionB, ambiguous ? "歧义" : "不歧义");
             return ambiguous;
         } catch (Exception e) {
             log.debug("歧义LLM二次确认异常，降级为不歧义: {}", e.getMessage());
@@ -127,9 +129,4 @@ public class AmbiguityLLMChecker {
         }
     }
 
-    private String compact(String text) {
-        if (text == null) return "";
-        String s = text.replaceAll("\\s+", " ").trim();
-        return s.length() > 60 ? s.substring(0, 60) + "..." : s;
-    }
 }

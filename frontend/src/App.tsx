@@ -137,6 +137,12 @@ export default function App() {
     { key: "document" as const, label: "文档管理", icon: "document" },
     { key: "trace" as const, label: "链路可观测", icon: "trace" },
   ], []);
+  const currentAdminTabLabel =
+    tab === "document-detail"
+      ? "文档详情"
+      : tab === "trace-detail"
+        ? "链路详情"
+        : adminTabs.find((item) => item.key === tab)?.label || "管理后台";
 
   useEffect(() => {
     // restoring 期间 isAdmin 尚未确定，不应重置路由
@@ -381,8 +387,10 @@ export default function App() {
           <div className="admin-topbar-left">
             <div className="admin-topbar-brand">
               <div className="admin-topbar-logo">B</div>
-              <span className="admin-topbar-title">{BRAND_NAME}</span>
-              <span className="admin-topbar-badge">管理后台</span>
+              <div className="admin-topbar-brand-text">
+                <span className="admin-topbar-title">{BRAND_NAME}</span>
+                <span className="admin-topbar-badge">管理后台</span>
+              </div>
             </div>
           </div>
 

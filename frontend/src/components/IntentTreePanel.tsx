@@ -327,7 +327,7 @@ export function IntentTreePanel() {
   };
 
   return (
-    <div className="admin-page">
+    <div className="admin-page admin-page-shell">
       <div className="admin-page-header">
         <div>
           <h1 className="admin-page-title">意图树管理</h1>
@@ -336,7 +336,7 @@ export function IntentTreePanel() {
       </div>
 
       {/* Toolbar */}
-      <div className="admin-card">
+      <div className="admin-card admin-toolbar-card intent-toolbar-card">
         <div className="admin-card-body">
           <div className="intent-toolbar">
             <div className="intent-toolbar-search">
@@ -377,15 +377,18 @@ export function IntentTreePanel() {
       {/* Main Content: Tree + Detail */}
       <div className="intent-layout">
         {/* Tree Panel */}
-        <div className="admin-card intent-tree-card">
-          <div className="admin-card-header">
-            <h3 className="admin-card-title">意图树结构</h3>
-            <p className="admin-card-desc">点击节点查看详情或进行编辑</p>
+        <div className="admin-card admin-list-card intent-tree-card">
+          <div className="admin-card-header admin-card-header-rich">
+            <div>
+              <h3 className="admin-card-title">意图树结构</h3>
+              <p className="admin-card-desc">点击节点查看详情或进行编辑</p>
+            </div>
           </div>
           <div className="intent-tree-body">
             {filteredTree.length === 0 ? (
-              <div className="admin-empty" style={{ padding: "40px 0" }}>
-                <p className="admin-muted">暂无匹配节点</p>
+              <div className="admin-empty intent-inline-empty">
+                <h3 className="admin-empty-title">暂无匹配节点</h3>
+                <p className="admin-empty-desc">可以调整搜索关键字，或展开全部后重新查看树结构。</p>
               </div>
             ) : (
               filteredTree.map((item) => renderNode(item, 0))
@@ -394,10 +397,13 @@ export function IntentTreePanel() {
         </div>
 
         {/* Detail / Edit Panel */}
-        <div className="admin-card intent-detail-card">
-          <div className="admin-card-header">
-            <h3 className="admin-card-title">{creating ? "创建节点" : activeNode ? "节点详情" : "节点详情"}</h3>
-            <p className="admin-card-desc">{creating ? "填写信息创建新节点" : "查看并管理当前选择的节点"}</p>
+        <div className="admin-card admin-list-card intent-detail-card">
+          <div className="admin-card-header admin-card-header-rich">
+            <div>
+              <h3 className="admin-card-title">{creating ? "创建节点" : activeNode ? "节点详情" : "节点详情"}</h3>
+              <p className="admin-card-desc">{creating ? "填写信息创建新节点" : "查看并管理当前选择的节点"}</p>
+            </div>
+            {activeNode && !creating && <span className="admin-badge">ID: {activeNode.nodeId}</span>}
           </div>
           <div className="admin-card-body">
             {/* Node header info */}
@@ -451,9 +457,10 @@ export function IntentTreePanel() {
             {(creating || !activeNode) && (
               <div className="intent-edit-form">
                 {!creating && !activeNode && (
-                  <div className="admin-empty" style={{ padding: "40px 0" }}>
+                  <div className="admin-empty intent-inline-empty">
                     <div className="admin-empty-icon">🌳</div>
-                    <p>选择左侧节点查看详情，或点击"新建节点"创建</p>
+                    <h3 className="admin-empty-title">请选择一个节点</h3>
+                    <p className="admin-empty-desc">你可以先从左侧树中选择节点查看详情，或者直接点击“新建节点”开始创建。</p>
                   </div>
                 )}
                 {creating && (

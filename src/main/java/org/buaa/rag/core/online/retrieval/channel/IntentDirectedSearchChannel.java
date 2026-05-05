@@ -8,7 +8,7 @@ import java.util.stream.Collectors;
 import org.buaa.rag.common.enums.SearchChannelType;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
-import org.buaa.rag.core.online.retrieval.SmartRetrieverServiceImpl;
+import org.buaa.rag.core.online.retrieval.SmartRetrieverService;
 import org.buaa.rag.properties.SearchChannelProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -24,9 +24,9 @@ import lombok.extern.slf4j.Slf4j;
 @Component
 public class IntentDirectedSearchChannel implements SearchChannel {
 
-    private final SmartRetrieverServiceImpl smartRetrieverService;
+    private final SmartRetrieverService smartRetrieverService;
     private final SearchChannelProperties properties;
-    public IntentDirectedSearchChannel(SmartRetrieverServiceImpl smartRetrieverService,
+    public IntentDirectedSearchChannel(SmartRetrieverService smartRetrieverService,
                                        SearchChannelProperties properties) {
         this.smartRetrieverService = smartRetrieverService;
         this.properties = properties;

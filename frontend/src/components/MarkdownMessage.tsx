@@ -1,12 +1,21 @@
+import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { closeOpenMarkdown } from "../lib/markdown-stream";
 
 interface MarkdownMessageProps {
   content: string;
+  isStreaming?: boolean;
   onSourceCitationClick?: (index: number) => void;
 }
 
-export function MarkdownMessage({ content, onSourceCitationClick }: MarkdownMessageProps) {
+export function MarkdownMessage({ content, isStreaming, onSourceCitationClick }: MarkdownMessageProps) {
+  // 流式输出时，补全不完整的 markdown 标记以保证渲染正确
+  const displayContent = useMemo(() => {
+    if (!content) return "";
+    return isStreaming ? closeOpenMarkdown(content) : content;
+  }, [content, isStreaming]);
+
   return (
     <div className="md-content">
       <ReactMarkdown
@@ -69,7 +78,7 @@ export function MarkdownMessage({ content, onSourceCitationClick }: MarkdownMess
           }
         }}
       >
-        {content || ""}
+        {displayContent}
       </ReactMarkdown>
     </div>
   );

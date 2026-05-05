@@ -38,7 +38,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
  * </ul>
  */
 @Service
-public class ConversationMemoryServiceImpl {
+public class ConversationMemoryServiceImpl implements ConversationMemoryService {
 
     private static final Logger log = LoggerFactory.getLogger(ConversationMemoryServiceImpl.class);
 
@@ -81,6 +81,7 @@ public class ConversationMemoryServiceImpl {
      *
      * <p><b>注意：</b>本方法不触发摘要压缩，压缩由 {@link #scheduleSummary} 在 assistant 写完后调用。
      */
+    @Override
     public List<Map<String, String>> loadContextParallel(String sessionId, Long userId, int maxHistory) {
         RagProperties.Memory memoryConfig = ragProperties.getMemory();
         int limit = maxHistory > 0 ? maxHistory : memoryConfig.getDefaultMaxHistory();
@@ -159,6 +160,7 @@ public class ConversationMemoryServiceImpl {
      * @param sessionId 会话 ID
      * @param userId    用户 ID
      */
+    @Override
     public void scheduleSummary(String sessionId, Long userId) {
         RagProperties.Memory memoryConfig = ragProperties.getMemory();
         if (memoryConfig == null || !memoryConfig.isSummaryEnabled()) {

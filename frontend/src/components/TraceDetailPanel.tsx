@@ -280,13 +280,19 @@ export function TraceDetailPanel({ traceId, onBack }: TraceDetailPanelProps) {
   const statusCls = runStatus === "success" ? "trc-tag-success" : runStatus === "failed" ? "trc-tag-failed" : runStatus === "running" ? "trc-tag-running" : "trc-tag-default";
 
   return (
-    <div className="admin-page trc-detail-page">
+    <div className="admin-page admin-page-shell trc-detail-page">
       {/* 顶部导航 */}
       <div className="trc-detail-nav">
-        <button className="trc-back-link" onClick={onBack}>
-          <ArrowLeftIcon />
-          返回列表
-        </button>
+        <div>
+          <button className="trc-back-link" onClick={onBack}>
+            <ArrowLeftIcon />
+            返回列表
+          </button>
+          <div className="trc-detail-nav-meta">
+            <h1 className="trc-detail-title">链路详情</h1>
+            <p className="trc-detail-subtitle">查看单次链路执行的节点时序、状态分布和异常信息</p>
+          </div>
+        </div>
         <div className="trc-detail-actions">
           <button className="trc-refresh-btn" onClick={() => void loadDetail(traceId)} disabled={loading} title="刷新">
             <RefreshIcon />

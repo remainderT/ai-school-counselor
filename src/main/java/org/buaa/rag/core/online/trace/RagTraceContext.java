@@ -1,4 +1,4 @@
-package org.buaa.rag.core.trace;
+package org.buaa.rag.core.online.trace;
 
 import java.util.ArrayDeque;
 import java.util.Deque;

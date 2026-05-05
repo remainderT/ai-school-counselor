@@ -21,7 +21,6 @@ public class LlmProperties {
      */
     @Data
     public static class PromptTemplate {
-        // rules 已迁移到 prompts/system-rules.st
         /** 参考资料开始标记 */
         private String refStart;
         /** 参考资料结束标记 */

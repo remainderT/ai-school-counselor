@@ -6,6 +6,7 @@ import org.buaa.rag.core.offline.index.MilvusCollectionManager;
 import org.buaa.rag.dao.entity.KnowledgeDO;
 import org.buaa.rag.dao.mapper.KnowledgeMapper;
 import org.buaa.rag.tool.BucketManager;
+import org.buaa.rag.tool.KnowledgeNameConverter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -49,8 +50,9 @@ class KnowledgeStorageMigrationTest {
 
         for (KnowledgeDO kb : allKnowledge) {
             String kbName = kb.getName();                        // 下划线，如 academic_kb
-            String bucketName = BucketManager.toBucketName(kbName); // 连字符，如 academic-kb
-            log.info("处理知识库: id={}, name={}, bucket={}", kb.getId(), kbName, bucketName);
+            String bucketName = KnowledgeNameConverter.toBucketName(kbName); // 连字符，如 academic-kb
+            String collectionName = KnowledgeNameConverter.toCollectionName(kbName); // 下划线，如 academic_kb
+            log.info("处理知识库: id={}, name={}, bucket={}, collection={}", kb.getId(), kbName, bucketName, collectionName);
 
             // 1. 创建 RustFS Bucket（连字符格式）
             try {
@@ -62,13 +64,13 @@ class KnowledgeStorageMigrationTest {
                 failCount++;
             }
 
-            // 2. 创建 Milvus Collection（下划线格式，即 knowledge.name 原值）
+            // 2. 创建 Milvus Collection（下划线格式）
             try {
-                collectionManager.ensureCollection(kbName);
-                log.info("  [Milvus] Collection 就绪: {}", kbName);
+                collectionManager.ensureCollection(collectionName);
+                log.info("  [Milvus] Collection 就绪: {}", collectionName);
                 successCollection++;
             } catch (Exception e) {
-                log.error("  [Milvus] Collection 创建失败: {}, error={}", kbName, e.getMessage());
+                log.error("  [Milvus] Collection 创建失败: {}, error={}", collectionName, e.getMessage());
                 failCount++;
             }
         }

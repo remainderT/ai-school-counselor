@@ -47,4 +47,14 @@ public class MilvusProperties {
      * 文本字段最大长度
      */
     private int maxTextLength = 65535;
+
+    /**
+     * Milvus 连接超时（毫秒）
+     */
+    private long connectTimeoutMs = 5000;
+
+    /**
+     * 单次 search 请求超时（秒），超时后抛出异常防止线程长时间阻塞
+     */
+    private long searchTimeoutSeconds = 15;
 }

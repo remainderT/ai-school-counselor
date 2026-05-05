@@ -31,7 +31,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Component
-public class DashScopeRerankClient implements RerankClient {
+public class DashScopeRerankClient {
 
     private static final String RERANK_API_PATH = "/api/v1/services/rerank/text-rerank/text-rerank";
 
@@ -49,12 +49,6 @@ public class DashScopeRerankClient implements RerankClient {
         this.fallbackApiKey = globalApiKey;
     }
 
-    @Override
-    public String provider() {
-        return "dashscope";
-    }
-
-    @Override
     public List<RetrievalMatch> rerank(String query, List<RetrievalMatch> candidates, int topN) {
         if (candidates == null || candidates.isEmpty()) {
             return List.of();

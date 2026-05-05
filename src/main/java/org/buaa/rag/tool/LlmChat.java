@@ -9,7 +9,7 @@ import java.util.regex.Pattern;
 
 import org.buaa.rag.common.prompt.PromptTemplateLoader;
 import org.buaa.rag.core.online.chat.StreamCancellationHandle;
-import org.buaa.rag.core.trace.RagTraceNode;
+import org.buaa.rag.core.online.trace.RagTraceNode;
 import org.buaa.rag.properties.LlmProperties;
 import org.springframework.stereotype.Service;
 

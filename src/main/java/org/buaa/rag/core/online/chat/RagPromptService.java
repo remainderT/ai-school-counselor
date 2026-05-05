@@ -1,5 +1,9 @@
 package org.buaa.rag.core.online.chat;
 
+import static org.buaa.rag.tool.TextUtils.compact;
+import static org.buaa.rag.tool.TextUtils.isBlank;
+import static org.buaa.rag.tool.TimingUtils.elapsedMs;
+
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
@@ -121,13 +125,6 @@ public class RagPromptService {
     public String generateMultiIntentAnswer(String originalQuery,
                                            List<Map<String, String>> conversationHistory,
                                            List<SubQueryRetrievalResult> subQueryResults,
-                                           Consumer<String> chunkHandler) {
-        return generateMultiIntentAnswer(originalQuery, conversationHistory, subQueryResults, chunkHandler, null);
-    }
-
-    public String generateMultiIntentAnswer(String originalQuery,
-                                           List<Map<String, String>> conversationHistory,
-                                           List<SubQueryRetrievalResult> subQueryResults,
                                            Consumer<String> chunkHandler,
                                            @Nullable StreamCancellationHandle cancelHandle) {
         long start = System.nanoTime();
@@ -152,16 +149,6 @@ public class RagPromptService {
         log.info("多意图综合答案生成完成 | query='{}' | subQueries={} | refs={} | responseChars={} | 耗时={}ms",
             compact(originalQuery), subQueryResults.size(), mergedReferences, answer.length(), elapsedMs(start));
         return answer;
-    }
-
-    public String generateSingleIntentStructuredAnswer(String query,
-                                                       List<Map<String, String>> conversationHistory,
-                                                       List<RetrievalMatch> retrievalResults,
-                                                       IntentPromptDescriptor intentPrompt,
-                                                       Consumer<String> chunkHandler,
-                                                       boolean hasToolContext) {
-        return generateSingleIntentStructuredAnswer(
-            query, conversationHistory, retrievalResults, intentPrompt, chunkHandler, hasToolContext, null);
     }
 
     public String generateSingleIntentStructuredAnswer(String query,
@@ -334,9 +321,6 @@ public class RagPromptService {
         return prompt.toString().trim();
     }
 
-    private String buildSingleIntentDocumentBlock(List<RetrievalMatch> retrievalResults) {
-        return buildSingleIntentDocumentBlock(retrievalResults, null);
-    }
 
     private String buildSingleIntentDocumentBlock(List<RetrievalMatch> retrievalResults, String question) {
         if (retrievalResults == null || retrievalResults.isEmpty()) {
@@ -486,22 +470,6 @@ public class RagPromptService {
         return responseBuilder.toString();
     }
 
-    private String compact(String text) {
-        if (text == null) {
-            return "";
-        }
-        String normalized = text.replaceAll("\\s+", " ").trim();
-        return normalized.length() > 120 ? normalized.substring(0, 120) + "..." : normalized;
-    }
-
-    private long elapsedMs(long startNanos) {
-        return (System.nanoTime() - startNanos) / 1_000_000L;
-    }
-
-    private boolean isBlank(String text) {
-        return text == null || text.isBlank();
-    }
-
     private String extractIntentRule(SubQueryRetrievalResult result) {
         if (result == null || result.intent() == null) {
             return "";
@@ -538,10 +506,6 @@ public class RagPromptService {
 
         private boolean hasTool() {
             return toolContext != null && !toolContext.isBlank();
-        }
-
-        private boolean isMultiIntent() {
-            return subQuestions != null && subQuestions.size() > 1;
         }
     }
 }

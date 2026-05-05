@@ -17,7 +17,7 @@ export function SearchPanel() {
       topK: String(topK),
       userId: userId.trim() || "anonymous"
     });
-    const result = await req.runAction(() => apiGet<RetrievalMatch[]>(`/api/rag/chat/search?${q.toString()}`), {
+    const result = await req.runAction(() => apiGet<RetrievalMatch[]>(`/api/rag/conversations/search?${q.toString()}`), {
       errorFallback: "检索失败"
     });
     if (result.ok) {
@@ -33,7 +33,7 @@ export function SearchPanel() {
   };
 
   return (
-    <div className="admin-page">
+    <div className="admin-page admin-page-shell">
       <div className="admin-page-header">
         <div>
           <h1 className="admin-page-title">问答检索调试</h1>
@@ -41,11 +41,13 @@ export function SearchPanel() {
         </div>
       </div>
 
-      {/* Search Form Card */}
-      <div className="admin-card">
-        <div className="admin-card-header">
-          <h3 className="admin-card-title">检索参数</h3>
-          <p className="admin-card-desc">输入查询内容，调整参数后执行检索</p>
+      <div className="admin-card admin-toolbar-card search-toolbar-card">
+        <div className="admin-card-header admin-card-header-rich">
+          <div>
+            <h3 className="admin-card-title">检索参数</h3>
+            <p className="admin-card-desc">输入查询内容，调整参数后执行检索</p>
+          </div>
+          <span className="admin-badge">适合验证召回质量与分数分布</span>
         </div>
         <div className="admin-card-body">
           <div className="admin-form-grid admin-form-grid-3">
@@ -90,14 +92,16 @@ export function SearchPanel() {
 
       {req.error && <div className="admin-alert admin-alert-error">{req.error}</div>}
 
-      {/* Results */}
       {items.length > 0 && (
-        <div className="admin-card">
-          <div className="admin-card-header">
-            <h3 className="admin-card-title">检索结果</h3>
+        <div className="admin-card admin-list-card">
+          <div className="admin-card-header admin-card-header-rich">
+            <div>
+              <h3 className="admin-card-title">检索结果</h3>
+              <p className="admin-card-desc">按照相关度展示候选文本片段，便于观察召回来源与排序</p>
+            </div>
             <span className="admin-badge">共 {items.length} 条</span>
           </div>
-          <div className="admin-card-body" style={{ padding: 0 }}>
+          <div className="admin-table-wrap">
             <table className="admin-table">
               <thead>
                 <tr>
@@ -127,9 +131,12 @@ export function SearchPanel() {
       )}
 
       {items.length === 0 && !req.loading && !req.error && (
-        <div className="admin-empty">
-          <div className="admin-empty-icon">🔍</div>
-          <p>输入查询内容并执行检索，结果将在此展示</p>
+        <div className="admin-card admin-empty-card">
+          <div className="admin-empty">
+            <div className="admin-empty-icon">🔍</div>
+            <h3 className="admin-empty-title">还没有检索结果</h3>
+            <p className="admin-empty-desc">输入查询内容并执行检索后，结果会展示在这里，方便你观察召回来源与相关度分布。</p>
+          </div>
         </div>
       )}
     </div>

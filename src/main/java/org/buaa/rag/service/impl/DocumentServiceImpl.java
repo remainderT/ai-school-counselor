@@ -14,16 +14,13 @@ import static org.buaa.rag.common.enums.OfflineErrorCodeEnum.KNOWLEDGE_NOT_EXIST
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.time.LocalDateTime;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.apache.commons.codec.digest.DigestUtils;
@@ -31,6 +28,7 @@ import org.buaa.rag.common.convention.exception.ClientException;
 import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.common.enums.UploadStatusEnum;
 import org.buaa.rag.common.user.UserContext;
+import org.buaa.rag.core.offline.ingestion.IngestionFacade;
 import org.buaa.rag.dao.entity.ChunkDO;
 import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.dao.entity.KnowledgeDO;
@@ -45,18 +43,14 @@ import org.buaa.rag.dto.resp.DocumentDetailRespDTO;
 import org.buaa.rag.dto.resp.DocumentPageRespDTO;
 import org.buaa.rag.dto.resp.PageResponseDTO;
 import org.buaa.rag.core.model.UploadPayload;
-import org.buaa.rag.core.offline.ingestion.DocumentArtifactService;
-import org.buaa.rag.core.offline.ingestion.DocumentLifecycleService;
 import org.buaa.rag.core.offline.ingestion.DocumentIngestionTask;
+import org.buaa.rag.core.offline.parser.FileTypeValidate.InspectedFile;
 import org.buaa.rag.core.offline.schedule.CronScheduleHelper;
 import org.buaa.rag.tool.RemoteURLFetcher;
 import org.buaa.rag.tool.RemoteURLFetcher.FetchedRemoteDocument;
-import org.buaa.rag.core.mq.IngestionProducer;
 import org.buaa.rag.properties.FileParseProperties;
 import org.buaa.rag.service.DocumentService;
-import org.buaa.rag.core.offline.parser.FileTypeValidate;
-import org.buaa.rag.core.offline.parser.FileTypeValidate.InspectedFile;
-import org.buaa.rag.tool.BucketManager;
+import org.buaa.rag.tool.KnowledgeNameConverter;
 import org.buaa.rag.tool.RustfsStorage;
 import org.springframework.core.io.ByteArrayResource;
 
@@ -90,9 +84,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final KnowledgeMapper knowledgeMapper;
     private final ChunkMapper chunkMapper;
     private final FileParseProperties fileParseProperties;
-    private final IngestionProducer ingestionProducer;
-    private final DocumentLifecycleService lifecycleService;
-    private final DocumentArtifactService artifactService;
+    private final IngestionFacade ingestionFacade;
     private final RemoteURLFetcher remoteURLFetcher;
 
     private static final String BASE_PATH = "/Users/yushuhao/Graduation/doc/Classification";
@@ -282,8 +274,9 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         }
 
         String bucketName = resolveKnowledgeBucketName(document.getKnowledgeId());
+        String collectionName = resolveKnowledgeCollectionName(document.getKnowledgeId());
         rustfsStorage.delete(bucketName, document.getMd5Hash(), document.getOriginalFileName());
-        artifactService.cleanup(bucketName, document);
+        ingestionFacade.cleanupArtifacts(collectionName, document);
         baseMapper.update(
             null,
             Wrappers.lambdaUpdate(DocumentDO.class)
@@ -309,8 +302,8 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             .set(ChunkDO::getMd5Hash, org.apache.commons.codec.digest.DigestUtils.md5Hex(newText))
         );
         // 2. 同步更新 ES 索引 + Milvus 向量
-        String collectionName = resolveKnowledgeBucketName(document.getKnowledgeId());
-        artifactService.updateSingleChunkIndex(collectionName, document, chunk.getFragmentIndex(), newText);
+        String collectionName = resolveKnowledgeCollectionName(document.getKnowledgeId());
+        ingestionFacade.updateSingleChunkIndex(collectionName, document, chunk.getFragmentIndex(), newText);
     }
 
     @Override
@@ -323,8 +316,8 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             .set(ChunkDO::getDelFlag, 1)
         );
         // 2. 同步删除 ES 索引 + Milvus 向量
-        String collectionName = resolveKnowledgeBucketName(document.getKnowledgeId());
-        artifactService.deleteSingleChunkIndex(collectionName, document, chunk.getFragmentIndex());
+        String collectionName = resolveKnowledgeCollectionName(document.getKnowledgeId());
+        ingestionFacade.deleteSingleChunkIndex(collectionName, document, chunk.getFragmentIndex());
     }
 
     @Override
@@ -337,11 +330,11 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             .set(ChunkDO::getEnabled, enabled ? 1 : 0)
         );
         // 2. 同步 ES 和 Milvus：禁用时删除索引/向量，启用时重新写入
-        String collectionName = resolveKnowledgeBucketName(document.getKnowledgeId());
+        String collectionName = resolveKnowledgeCollectionName(document.getKnowledgeId());
         if (enabled) {
-            artifactService.updateSingleChunkIndex(collectionName, document, chunk.getFragmentIndex(), chunk.getTextData());
+            ingestionFacade.updateSingleChunkIndex(collectionName, document, chunk.getFragmentIndex(), chunk.getTextData());
         } else {
-            artifactService.deleteSingleChunkIndex(collectionName, document, chunk.getFragmentIndex());
+            ingestionFacade.deleteSingleChunkIndex(collectionName, document, chunk.getFragmentIndex());
         }
     }
 
@@ -384,7 +377,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw new ServiceException("文档解析失败: " + e.getMessage(), e, DOCUMENT_PARSE_FAILED);
         }
 
-        InspectedFile inspectedFile = FileTypeValidate.inspectLocal(file);
+        InspectedFile inspectedFile = ingestionFacade.inspectLocalFile(file);
         return new UploadPayload(inspectedFile.fileName(), inspectedFile.mimeType(), file.getSize(), md5, file);
     }
 
@@ -481,7 +474,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             throw new ClientException(DOCUMENT_UPLOAD_NULL);
         }
         ByteArrayResource source = new ByteArrayResource(body);
-        InspectedFile inspectedFile = FileTypeValidate.inspectRemote(
+        InspectedFile inspectedFile = ingestionFacade.inspectRemoteFile(
             source,
             remoteDocument.fileName(),
             remoteDocument.contentType(),
@@ -540,14 +533,14 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
                                       boolean scheduleEnabled,
                                       String scheduleCron,
                                       LocalDateTime nextRefreshAt) {
-        DocumentDO document = lifecycleService.findDocumentByMd5AndUserId(payload.md5(), UserContext.getUserId());
+        DocumentDO document = ingestionFacade.findDocumentByMd5AndUserId(payload.md5(), UserContext.getUserId());
         if (document != null) {
             throw new ClientException(DOCUMENT_EXISTS);
         }
-        String bucketName = BucketManager.toBucketName(knowledge.getName());
+        String bucketName = KnowledgeNameConverter.toBucketName(knowledge.getName());
         try {
             rustfsStorage.upload(bucketName, payload);
-            document = lifecycleService.createPendingDocument(
+            document = ingestionFacade.createPendingDocument(
                 payload,
                 knowledge.getId(),
                 sourceUrl,
@@ -557,7 +550,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
                 chunkMode);
             // 通过任务消息触发离线摄取，接口可快速返回。
             DocumentIngestionTask task = DocumentIngestionTask.initial(document.getId(), chunkMode);
-            ingestionProducer.enqueue(task);
+            ingestionFacade.enqueueIngestionTask(task);
         } catch (Exception e) {
             // 文档记录尚未落库时，尝试清理已上传的对象存储文件，避免孤儿文件。
             if (document == null) {
@@ -604,7 +597,27 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
             log.warn("知识库未找到: knowledgeId={}", knowledgeId);
             return "";
         }
-        return BucketManager.toBucketName(knowledge.getName());
+        return KnowledgeNameConverter.toBucketName(knowledge.getName());
+    }
+
+    /**
+     * 根据知识库 ID 查询对应的 Milvus collectionName，找不到时返回空字符串并打印告警。
+     * collectionName 由 knowledge.name 规范化（连字符转下划线），不存入数据库。
+     */
+    private String resolveKnowledgeCollectionName(Long knowledgeId) {
+        if (knowledgeId == null) {
+            return "";
+        }
+        KnowledgeDO knowledge = knowledgeMapper.selectOne(
+            Wrappers.lambdaQuery(KnowledgeDO.class)
+                .eq(KnowledgeDO::getId, knowledgeId)
+                .eq(KnowledgeDO::getDelFlag, 0)
+        );
+        if (knowledge == null) {
+            log.warn("知识库未找到: knowledgeId={}", knowledgeId);
+            return "";
+        }
+        return KnowledgeNameConverter.toCollectionName(knowledge.getName());
     }
 
     private void markUploadFailure(DocumentDO document, Exception error) {
@@ -614,7 +627,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
         }
         // 有文档记录时统一落失败态，便于前端和运维定位失败原因。
         log.error("文件上传失败: documentId={}", document.getId(), error);
-        lifecycleService.markFailed(document.getId(), error);
+        ingestionFacade.markDocumentFailed(document.getId(), error);
     }
 
     private String normalizeChunkMode(String chunkMode) {
