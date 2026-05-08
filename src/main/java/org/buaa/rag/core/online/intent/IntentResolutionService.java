@@ -21,15 +21,21 @@ import org.slf4j.LoggerFactory;
 public class IntentResolutionService {
 
     private static final Logger log = LoggerFactory.getLogger(IntentResolutionService.class);
+    private static final String INTEGRATED_INTENT_NODE_ID = "kb_integrated";
+    private static final long INTEGRATED_KNOWLEDGE_BASE_ID = 108L;
+    private static final String INTEGRATED_INTENT_NAME = "综合规章";
 
     private final IntentRouterService intentRouterService;
+    private final IntentTreeSnapshotService intentTreeSnapshotService;
     private final IntentResolutionProperties properties;
     private final Executor intentResolutionExecutor;
 
     public IntentResolutionService(IntentRouterService intentRouterService,
+                                   IntentTreeSnapshotService intentTreeSnapshotService,
                                    IntentResolutionProperties properties,
                                    @Qualifier("intentResolutionExecutor") Executor intentResolutionExecutor) {
         this.intentRouterService = intentRouterService;
+        this.intentTreeSnapshotService = intentTreeSnapshotService;
         this.properties = properties;
         this.intentResolutionExecutor = intentResolutionExecutor;
     }
@@ -74,13 +80,7 @@ public class IntentResolutionService {
         int perQueryMax = Math.max(1, properties.getPerQueryMaxCandidates());
         double minScore = Math.max(0.0, properties.getMinScore());
         List<IntentDecision> ranked = intentRouterService.rankIntentCandidates(userId, query, perQueryMax, minScore);
-        if (!ranked.isEmpty()) {
-            return ranked;
-        }
-        return List.of(IntentDecision.builder()
-            .action(IntentDecision.Action.ROUTE_RAG)
-            .strategy(IntentDecision.Strategy.HYBRID)
-            .build());
+        return ensureIntegratedFallback(ranked);
     }
 
     private SubQueryIntent classifySingle(String userId, String subQuery) {
@@ -106,20 +106,23 @@ public class IntentResolutionService {
      * 避免某个高置信子查询独占全部配额导致其他子查询失去表达。
      */
     private List<SubQueryIntent> capTotalCandidates(List<SubQueryIntent> resolved, int budget) {
-        long totalCount = resolved.stream()
+        List<IntentDecision> integratedFallbacks = new ArrayList<>(resolved.size());
+        List<SubQueryIntent> regularResolved = stripIntegratedFallbacks(resolved, integratedFallbacks);
+
+        long totalCount = regularResolved.stream()
                 .mapToLong(sq -> sq.candidates() == null ? 0 : sq.candidates().size())
                 .sum();
         if (totalCount <= budget) {
-            return resolved;
+            return appendIntegratedFallbacks(regularResolved, integratedFallbacks);
         }
 
-        int queryCount = resolved.size();
+        int queryCount = regularResolved.size();
         // ---- 第一步：计算各子查询的质量分（候选置信度之和）用于按比例分配 ----
         double[] qualityScores = new double[queryCount];
         int[] originalSizes = new int[queryCount];
         double totalQuality = 0.0;
         for (int i = 0; i < queryCount; i++) {
-            List<IntentDecision> c = resolved.get(i).candidates();
+            List<IntentDecision> c = regularResolved.get(i).candidates();
             originalSizes[i] = (c == null) ? 0 : c.size();
             if (c != null) {
                 for (IntentDecision d : c) {
@@ -170,15 +173,141 @@ public class IntentResolutionService {
         // ---- 重建结果（各子查询按配额截取前 N 个） ----
         List<SubQueryIntent> trimmed = new ArrayList<>(queryCount);
         for (int i = 0; i < queryCount; i++) {
-            List<IntentDecision> c = resolved.get(i).candidates();
+            List<IntentDecision> c = regularResolved.get(i).candidates();
             if (c == null || c.isEmpty() || quotas[i] == 0) {
-                trimmed.add(new SubQueryIntent(resolved.get(i).subQuery(), List.of()));
+                trimmed.add(new SubQueryIntent(regularResolved.get(i).subQuery(), List.of()));
             } else {
                 List<IntentDecision> kept = List.copyOf(c.subList(0, Math.min(quotas[i], c.size())));
-                trimmed.add(new SubQueryIntent(resolved.get(i).subQuery(), kept));
+                trimmed.add(new SubQueryIntent(regularResolved.get(i).subQuery(), kept));
             }
         }
-        return trimmed;
+        return appendIntegratedFallbacks(trimmed, integratedFallbacks);
+    }
+
+    private List<IntentDecision> ensureIntegratedFallback(List<IntentDecision> ranked) {
+        if (ranked == null || ranked.isEmpty()) {
+            IntentDecision fallback = buildIntegratedFallbackDecision();
+            return fallback != null ? List.of(fallback) : List.of(defaultRagFallback());
+        }
+        if (isPureChat(ranked) || containsIntegratedFallback(ranked)) {
+            return ranked;
+        }
+        IntentDecision fallback = buildIntegratedFallbackDecision();
+        if (fallback == null) {
+            return ranked;
+        }
+        List<IntentDecision> merged = new ArrayList<>(ranked.size() + 1);
+        merged.addAll(ranked);
+        merged.add(fallback);
+        return List.copyOf(merged);
+    }
+
+    private IntentDecision buildIntegratedFallbackDecision() {
+        intentTreeSnapshotService.loadTree();
+        return intentTreeSnapshotService.getById(INTEGRATED_INTENT_NODE_ID)
+            .map(node -> IntentDecision.builder()
+                .level1(StringUtils.hasText(node.getNodeName()) ? node.getNodeName().trim() : INTEGRATED_INTENT_NAME)
+                .level2(StringUtils.hasText(node.getNodeName()) ? node.getNodeName().trim() : INTEGRATED_INTENT_NAME)
+                .knowledgeBaseId(node.getKnowledgeBaseId() != null ? node.getKnowledgeBaseId() : INTEGRATED_KNOWLEDGE_BASE_ID)
+                .promptTemplate(node.getPromptTemplate())
+                .promptSnippet(node.getPromptSnippet())
+                .topK(node.getTopK())
+                .action(IntentDecision.Action.ROUTE_RAG)
+                .strategy(IntentDecision.Strategy.HYBRID)
+                .confidence(0.01D)
+                .build())
+            .orElseGet(() -> IntentDecision.builder()
+                .level1(INTEGRATED_INTENT_NAME)
+                .level2(INTEGRATED_INTENT_NAME)
+                .knowledgeBaseId(INTEGRATED_KNOWLEDGE_BASE_ID)
+                .action(IntentDecision.Action.ROUTE_RAG)
+                .strategy(IntentDecision.Strategy.HYBRID)
+                .confidence(0.01D)
+                .build());
+    }
+
+    private IntentDecision defaultRagFallback() {
+        return IntentDecision.builder()
+            .action(IntentDecision.Action.ROUTE_RAG)
+            .strategy(IntentDecision.Strategy.HYBRID)
+            .build();
+    }
+
+    private boolean isPureChat(List<IntentDecision> candidates) {
+        boolean hasCandidate = false;
+        for (IntentDecision candidate : candidates) {
+            if (candidate == null) {
+                continue;
+            }
+            hasCandidate = true;
+            if (candidate.getAction() != IntentDecision.Action.ROUTE_CHAT) {
+                return false;
+            }
+        }
+        return hasCandidate;
+    }
+
+    private boolean containsIntegratedFallback(List<IntentDecision> candidates) {
+        for (IntentDecision candidate : candidates) {
+            if (isIntegratedFallback(candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isIntegratedFallback(IntentDecision candidate) {
+        if (candidate == null || candidate.getAction() != IntentDecision.Action.ROUTE_RAG) {
+            return false;
+        }
+        if (Long.valueOf(INTEGRATED_KNOWLEDGE_BASE_ID).equals(candidate.getKnowledgeBaseId())) {
+            return true;
+        }
+        return INTEGRATED_INTENT_NAME.equals(candidate.getLevel1())
+            && INTEGRATED_INTENT_NAME.equals(candidate.getLevel2());
+    }
+
+    private List<SubQueryIntent> stripIntegratedFallbacks(List<SubQueryIntent> resolved,
+                                                          List<IntentDecision> integratedFallbacks) {
+        List<SubQueryIntent> regularResolved = new ArrayList<>(resolved.size());
+        for (SubQueryIntent subQueryIntent : resolved) {
+            List<IntentDecision> candidates = subQueryIntent.candidates();
+            IntentDecision integrated = null;
+            List<IntentDecision> regular = new ArrayList<>();
+            if (candidates != null) {
+                for (IntentDecision candidate : candidates) {
+                    if (integrated == null && isIntegratedFallback(candidate)) {
+                        integrated = candidate;
+                        continue;
+                    }
+                    regular.add(candidate);
+                }
+            }
+            integratedFallbacks.add(integrated);
+            regularResolved.add(new SubQueryIntent(subQueryIntent.subQuery(), List.copyOf(regular)));
+        }
+        return regularResolved;
+    }
+
+    private List<SubQueryIntent> appendIntegratedFallbacks(List<SubQueryIntent> resolved,
+                                                           List<IntentDecision> integratedFallbacks) {
+        List<SubQueryIntent> merged = new ArrayList<>(resolved.size());
+        for (int i = 0; i < resolved.size(); i++) {
+            SubQueryIntent subQueryIntent = resolved.get(i);
+            IntentDecision integrated = i < integratedFallbacks.size() ? integratedFallbacks.get(i) : null;
+            List<IntentDecision> candidates = subQueryIntent.candidates();
+            if (integrated == null) {
+                merged.add(subQueryIntent);
+                continue;
+            }
+            List<IntentDecision> rebuilt = new ArrayList<>(candidates == null ? 1 : candidates.size() + 1);
+            if (candidates != null && !candidates.isEmpty()) {
+                rebuilt.addAll(candidates);
+            }
+            rebuilt.add(integrated);
+            merged.add(new SubQueryIntent(subQueryIntent.subQuery(), List.copyOf(rebuilt)));
+        }
+        return merged;
     }
 
     private String summarizeCandidates(List<IntentDecision> candidates) {
