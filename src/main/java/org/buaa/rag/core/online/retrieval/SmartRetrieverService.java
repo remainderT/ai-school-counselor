@@ -9,8 +9,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionService;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -43,8 +45,8 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class SmartRetrieverService {
 
-    private static final int MAX_RECALL_SIZE = 300;
-    private static final long PARALLEL_SEARCH_TIMEOUT_SECONDS = 30L;
+    private static final int MAX_RECALL_SIZE = 36;
+    private static final long PARALLEL_SEARCH_TIMEOUT_SECONDS = 20L;
 
     private final ElasticsearchClient esClient;
     private final VectorEncoding encodingService;
@@ -53,7 +55,7 @@ public class SmartRetrieverService {
     private final RagProperties ragProperties;
     private final EsProperties esProperties;
     private final MilvusRetrieverService milvusRetrieverService;
-    private final Executor retrievalExecutor;
+    private final Executor milvusSearchExecutor;
 
     public SmartRetrieverService(ElasticsearchClient esClient,
                                  VectorEncoding encodingService,
@@ -62,7 +64,7 @@ public class SmartRetrieverService {
                                  RagProperties ragProperties,
                                  EsProperties esProperties,
                                  MilvusRetrieverService milvusRetrieverService,
-                                 @Qualifier("retrievalChannelExecutor") Executor retrievalExecutor) {
+                                 @Qualifier("milvusSearchExecutor") Executor milvusSearchExecutor) {
         this.esClient = esClient;
         this.encodingService = encodingService;
         this.documentMapper = documentMapper;
@@ -70,7 +72,7 @@ public class SmartRetrieverService {
         this.ragProperties = ragProperties;
         this.esProperties = esProperties;
         this.milvusRetrieverService = milvusRetrieverService;
-        this.retrievalExecutor = retrievalExecutor;
+        this.milvusSearchExecutor = milvusSearchExecutor;
     }
 
     public List<RetrievalMatch> retrieve(String queryText, int topK, String userId) {
@@ -228,43 +230,59 @@ public class SmartRetrieverService {
             return Collections.emptyList();
         }
 
-        List<CompletableFuture<List<RetrievalMatch>>> futures = knowledgeList.stream()
-            .map(kb -> CompletableFuture.supplyAsync(() -> {
+        CompletionService<List<RetrievalMatch>> completionService = new ExecutorCompletionService<>(milvusSearchExecutor);
+        List<Future<List<RetrievalMatch>>> futures = new ArrayList<>(knowledgeList.size());
+        for (KnowledgeDO kb : knowledgeList) {
+            futures.add(completionService.submit(() -> {
                 try {
                     return milvusRetrieverService.search(KnowledgeNameConverter.toCollectionName(kb.getName()), vector, topK);
                 } catch (Exception e) {
                     log.warn("向量检索失败: collection={}, error={}", kb.getName(), e.getMessage());
                     return Collections.<RetrievalMatch>emptyList();
                 }
-            }, retrievalExecutor))
-            .collect(Collectors.toList());
-
-        try {
-            CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
-                .get(PARALLEL_SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (java.util.concurrent.TimeoutException e) {
-            log.warn("并行向量检索超时({}s), 使用已完成的部分结果", PARALLEL_SEARCH_TIMEOUT_SECONDS);
-            // 取消仍在运行的任务，释放线程池资源
-            for (CompletableFuture<List<RetrievalMatch>> f : futures) {
-                if (!f.isDone()) {
-                    f.cancel(true);
-                }
-            }
-        } catch (Exception e) {
-            log.warn("并行向量检索异常: {}", e.getMessage());
+            }));
         }
 
-        return futures.stream()
-            .filter(f -> f.isDone() && !f.isCancelled() && !f.isCompletedExceptionally())
-            .map(f -> f.getNow(Collections.<RetrievalMatch>emptyList()))
-            .flatMap(List::stream)
-            .collect(Collectors.toList());
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(PARALLEL_SEARCH_TIMEOUT_SECONDS);
+        List<RetrievalMatch> merged = new ArrayList<>();
+        int completed = 0;
+        while (completed < futures.size()) {
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                break;
+            }
+            try {
+                Future<List<RetrievalMatch>> future = completionService.poll(remainingNanos, TimeUnit.NANOSECONDS);
+                if (future == null) {
+                    break;
+                }
+                completed++;
+                merged.addAll(future.get());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                log.warn("并行向量检索结果收集异常: {}", e.getMessage());
+            }
+        }
+
+        if (completed < futures.size()) {
+            log.warn("并行向量检索超时({}s), completed={}/{}, 使用已完成的部分结果",
+                PARALLEL_SEARCH_TIMEOUT_SECONDS, completed, futures.size());
+            for (Future<List<RetrievalMatch>> future : futures) {
+                if (!future.isDone()) {
+                    future.cancel(true);
+                }
+            }
+        }
+
+        return merged;
     }
 
     private int calculateRecallSize(String query, int topK) {
-        int factor = isShortQuery(query) ? 50 : 30;
-        int recall = topK * factor;
-        return Math.min(recall, MAX_RECALL_SIZE);
+        int requested = Math.max(1, topK);
+        int recall = requested <= 5 ? 20 : requested * 3;
+        return Math.min(Math.max(recall, requested), MAX_RECALL_SIZE);
     }
 
     private boolean isShortQuery(String query) {

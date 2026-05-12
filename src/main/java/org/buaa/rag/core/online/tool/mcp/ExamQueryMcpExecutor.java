@@ -11,9 +11,9 @@ import lombok.RequiredArgsConstructor;
 
 @Component
 @RequiredArgsConstructor
-public class ScheduleQueryMcpExecutor implements LocalMcpToolExecutor {
+public class ExamQueryMcpExecutor implements LocalMcpToolExecutor {
 
-    public static final String TOOL_ID = "academic_schedule_query";
+    public static final String TOOL_ID = "academic_exam_query";
 
     private final AcademicAffairsTools academicAffairsTools;
 
@@ -27,28 +27,30 @@ public class ScheduleQueryMcpExecutor implements LocalMcpToolExecutor {
         Map<String, LocalMcpToolDefinition.ParameterSpec> parameters = new LinkedHashMap<>();
         parameters.put("termCode", new LocalMcpToolDefinition.ParameterSpec(
             "string",
-            "学期编码，例如 2022-2023-2。用户也可能说“2023学年春季”“这学期”“本学期”“当前学期”“上学期”“下学期”。若为空，则默认查询当前选中学期。",
+            "学期编码，例如 2024-2025-1。用户也可能说“这学期”“上学期”“2024学年秋季”。若为空，则自动遍历全部学期查询。",
             false,
             null,
             List.of()
         ));
-        parameters.put("week", new LocalMcpToolDefinition.ParameterSpec(
-            "integer",
-            "周次，默认第 1 周",
+        parameters.put("courseName", new LocalMcpToolDefinition.ParameterSpec(
+            "string",
+            "课程名关键字，例如 编译技术、数学分析。若为空，则返回对应学期全部考试安排。",
             false,
-            1,
+            null,
             List.of()
         ));
         return new LocalMcpToolDefinition(
             TOOL_ID,
-            "查询课表；可按指定学期和周次查，也可在未指定学期时默认查询当前选中学期",
+            "查询考试安排；可按单学期查，也可在未指定学期时自动遍历全部学期，并支持按课程名筛选",
             parameters
         );
     }
 
     @Override
     public String execute(Map<String, Object> parameters) {
-        Integer week = parameters.get("week") instanceof Number number ? number.intValue() : null;
-        return academicAffairsTools.queryScheduleByWeek((String) parameters.get("termCode"), week);
+        return academicAffairsTools.queryExams(
+            (String) parameters.get("termCode"),
+            (String) parameters.get("courseName")
+        );
     }
 }

@@ -37,6 +37,18 @@ public class BuaaJwClient {
         return send(request);
     }
 
+    public JsonNode queryExams(String termCode) {
+        ensureCookieConfigured();
+        String uri = properties.getBaseUrl() + properties.getExamPath() + "?termCode="
+            + URLEncoder.encode(termCode, StandardCharsets.UTF_8);
+        HttpRequest request = baseRequest(uri)
+            .header("accept", "*/*")
+            .header("fetch-api", "true")
+            .GET()
+            .build();
+        return send(request);
+    }
+
     public JsonNode querySchedule(String termCode, int week) {
         ensureCookieConfigured();
         String body = "termCode=" + URLEncoder.encode(termCode, StandardCharsets.UTF_8)
@@ -47,6 +59,16 @@ public class BuaaJwClient {
             .header("origin", properties.getBaseUrl())
             .header("fetch-api", "true")
             .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build();
+        return send(request);
+    }
+
+    public JsonNode querySchoolCalendars() {
+        ensureCookieConfigured();
+        HttpRequest request = baseRequest(properties.getBaseUrl() + properties.getSchoolCalendarsPath())
+            .header("accept", "*/*")
+            .header("fetch-api", "true")
+            .GET()
             .build();
         return send(request);
     }
@@ -68,7 +90,11 @@ public class BuaaJwClient {
         try {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() != 200) {
-                throw new IllegalStateException("教务接口响应异常，HTTP " + response.statusCode());
+                String location = response.headers()
+                    .firstValue("location")
+                    .map(value -> "，Location=" + value)
+                    .orElse("");
+                throw new IllegalStateException("教务接口响应异常，HTTP " + response.statusCode() + location);
             }
             JsonNode root = objectMapper.readTree(response.body());
             if (!"0".equals(root.path("code").asText())) {

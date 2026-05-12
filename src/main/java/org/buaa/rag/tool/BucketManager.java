@@ -111,8 +111,16 @@ public class BucketManager {
     }
 
     private void createBucket(String bucketName) {
-        s3Client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
-        log.info("成功创建存储桶: {}", bucketName);
+        try {
+            s3Client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());
+            log.info("成功创建存储桶: {}", bucketName);
+        } catch (S3Exception e) {
+            if (e.statusCode() == 409) {
+                log.info("存储桶已被并发创建: {}", bucketName);
+                return;
+            }
+            throw e;
+        }
     }
 
     private void deleteAllObjects(String bucketName) {

@@ -53,7 +53,11 @@ public class SearchChannelProperties {
          * 当定向检索最终得分低于该阈值时，补充执行一次全局向量检索。
          * 仅在原本不会激活 vector-global 通道时生效。
          */
-        private double supplementScoreThreshold = 0.52;
+        private double supplementScoreThreshold = 0.3;
+        /**
+         * 单意图置信度低于该阈值时，并行启用全局检索作为安全网。
+         */
+        private double singleIntentSupplementThreshold = 0.8;
         /**
          * 当意图置信度低于该值，启用向量全局检索
          */

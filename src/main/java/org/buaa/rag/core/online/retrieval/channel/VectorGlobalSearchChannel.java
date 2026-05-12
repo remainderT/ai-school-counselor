@@ -52,13 +52,16 @@ public class VectorGlobalSearchChannel implements SearchChannel {
         }
         double threshold = properties.getChannels().getVectorGlobal().getConfidenceThreshold();
         if (context.getIntentDecisions() != null && !context.getIntentDecisions().isEmpty()) {
-            double peak = context.getIntentDecisions().stream()
+            List<Double> routeScores = context.getIntentDecisions().stream()
                 .filter(d -> d != null && d.getAction() == IntentDecision.Action.ROUTE_RAG)
                 .map(IntentDecision::getConfidence)
                 .filter(c -> c != null)
-                .mapToDouble(Double::doubleValue)
-                .max()
-                .orElse(0.0);
+                .toList();
+            double peak = routeScores.stream().mapToDouble(Double::doubleValue).max().orElse(0.0);
+            if (routeScores.size() == 1
+                && peak < properties.getChannels().getVectorGlobal().getSingleIntentSupplementThreshold()) {
+                return true;
+            }
             return peak < threshold;
         }
         IntentDecision single = context.getIntentDecision();
@@ -66,7 +69,8 @@ public class VectorGlobalSearchChannel implements SearchChannel {
             return true;
         }
         double conf = single.getConfidence() == null ? 0.0 : single.getConfidence();
-        return conf < threshold;
+        return conf < threshold
+            || conf < properties.getChannels().getVectorGlobal().getSingleIntentSupplementThreshold();
     }
 
     @Override
@@ -76,13 +80,10 @@ public class VectorGlobalSearchChannel implements SearchChannel {
             int multiplier = Math.max(1, properties.getChannels().getVectorGlobal().getTopKMultiplier());
             int effectiveTopK = Math.max(1, context.getTopK() * multiplier);
 
-            // 先尝试纯向量检索，无结果时降级为混合检索
-            List<RetrievalMatch> hits = smartRetrieverService.retrieveVectorOnly(
+            // 全局兜底通道优先使用混合检索。这里保留“全局”语义，但不只依赖向量：
+            // 向量对语义泛化友好，BM25 对人名、数字、简称、发票抬头等精确字段更稳。
+            List<RetrievalMatch> hits = smartRetrieverService.retrieve(
                     context.resolvedQuery(), effectiveTopK, context.getUserId());
-            if (hits.isEmpty()) {
-                hits = smartRetrieverService.retrieve(
-                        context.resolvedQuery(), effectiveTopK, context.getUserId());
-            }
 
             // 标记来源通道
             hits.forEach(h -> h.setChannelType(SearchChannelType.VECTOR_GLOBAL));

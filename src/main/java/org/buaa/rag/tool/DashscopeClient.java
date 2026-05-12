@@ -33,11 +33,17 @@ import lombok.extern.slf4j.Slf4j;
 public class DashscopeClient {
 
     private static final String DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com";
+    private static final int POST_MAX_ATTEMPTS = 3;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
         .build();
+    private final DashscopeCallLimiter callLimiter;
+
+    public DashscopeClient(DashscopeCallLimiter callLimiter) {
+        this.callLimiter = callLimiter;
+    }
 
     @Value("${spring.ai.dashscope.api-key:}")
     private String apiKey;
@@ -125,7 +131,8 @@ public class DashscopeClient {
             .POST(HttpRequest.BodyPublishers.ofString(payload.toString()))
             .build();
 
-        HttpResponse<java.io.InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        HttpResponse<java.io.InputStream> response = callLimiter.call(
+            () -> httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream()));
         ensureStreamSuccess(response);
         consumeStream(response, chunkHandler, cancelHandle);
     }
@@ -148,7 +155,7 @@ public class DashscopeClient {
                 textArray.add(text == null ? "" : text);
             }
 
-            String responseBody = post("/api/v1/services/embeddings/text-embedding/text-embedding", payload.toString());
+            String responseBody = postWithRetry("/api/v1/services/embeddings/text-embedding/text-embedding", payload.toString());
             if (!StringUtils.hasText(responseBody)) {
                 return List.of();
             }
@@ -186,12 +193,39 @@ public class DashscopeClient {
             .POST(HttpRequest.BodyPublishers.ofString(body))
             .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = callLimiter.call(
+            () -> httpClient.send(request, HttpResponse.BodyHandlers.ofString()));
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             log.warn("DashScope 请求失败, status={}, body={}", response.statusCode(), response.body());
             return "";
         }
         return response.body();
+    }
+
+    private String postWithRetry(String apiPath, String body) throws Exception {
+        Exception last = null;
+        for (int attempt = 1; attempt <= POST_MAX_ATTEMPTS; attempt++) {
+            try {
+                return post(apiPath, body);
+            } catch (Exception ex) {
+                last = ex;
+                log.warn("DashScope 请求异常, attempt={}/{}, error={}",
+                    attempt, POST_MAX_ATTEMPTS, ex.getMessage());
+                if (attempt < POST_MAX_ATTEMPTS) {
+                    sleepQuietly(500L * attempt);
+                }
+            }
+        }
+        throw last == null ? new IllegalStateException("DashScope 请求失败") : last;
+    }
+
+    private void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("DashScope 请求被中断", ex);
+        }
     }
 
     private void ensureStreamSuccess(HttpResponse<java.io.InputStream> response) throws Exception {
@@ -204,7 +238,7 @@ public class DashscopeClient {
     private void consumeStream(HttpResponse<java.io.InputStream> response,
                                Consumer<String> chunkHandler,
                                StreamCancellationHandle cancelHandle) throws Exception {
-        String previousText = "";
+        StringBuilder emittedText = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -226,20 +260,48 @@ public class DashscopeClient {
 
                 JsonNode root = objectMapper.readTree(data);
                 String currentText = extractText(root);
-                if (!StringUtils.hasText(currentText)) {
+                if (currentText == null || currentText.isEmpty()) {
                     continue;
                 }
 
-                String delta = currentText;
-                if (StringUtils.hasText(previousText) && currentText.startsWith(previousText)) {
-                    delta = currentText.substring(previousText.length());
-                }
-                previousText = currentText;
-                if (StringUtils.hasText(delta) && chunkHandler != null) {
+                String delta = resolveDelta(emittedText, currentText);
+                if (delta != null && !delta.isEmpty() && chunkHandler != null) {
+                    emittedText.append(delta);
                     chunkHandler.accept(delta);
                 }
             }
         }
+    }
+
+    static String resolveDelta(CharSequence emittedText, String currentText) {
+        if (currentText == null || currentText.isEmpty()) {
+            return "";
+        }
+        if (emittedText == null || emittedText.isEmpty()) {
+            return currentText;
+        }
+
+        String emitted = emittedText.toString();
+        if (currentText.startsWith(emitted)) {
+            return currentText.substring(emitted.length());
+        }
+
+        int maxOverlap = Math.min(emitted.length(), currentText.length());
+        for (int overlap = maxOverlap; overlap > 0; overlap--) {
+            if (regionMatches(emitted, emitted.length() - overlap, currentText, 0, overlap)) {
+                return overlap < currentText.length() ? currentText.substring(overlap) : currentText;
+            }
+        }
+        return currentText;
+    }
+
+    private static boolean regionMatches(String left, int leftOffset, String right, int rightOffset, int length) {
+        for (int i = 0; i < length; i++) {
+            if (left.charAt(leftOffset + i) != right.charAt(rightOffset + i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private ObjectNode buildChatPayload(String systemPrompt,

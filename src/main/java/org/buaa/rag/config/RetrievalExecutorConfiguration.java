@@ -15,6 +15,11 @@ public class RetrievalExecutorConfiguration {
         return buildExecutor(4, 8, 200, "retrieval-channel-");
     }
 
+    @Bean("milvusSearchExecutor")
+    public Executor milvusSearchExecutor() {
+        return buildExecutor(24, 32, 32, "milvus-search-");
+    }
+
     @Bean("memorySummaryExecutor")
     public Executor memorySummaryExecutor() {
         return buildExecutor(1, 2, 100, "memory-summary-");

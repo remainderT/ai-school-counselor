@@ -4,6 +4,7 @@ import java.util.Map;
 
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.online.tool.mcp.AcademicMcpParameterExtractor;
+import org.buaa.rag.core.online.tool.mcp.ExamQueryMcpExecutor;
 import org.buaa.rag.core.online.tool.mcp.LocalMcpToolExecutor;
 import org.buaa.rag.core.online.tool.mcp.LocalMcpToolRegistry;
 import org.buaa.rag.core.online.tool.mcp.ScheduleQueryMcpExecutor;
@@ -48,6 +49,8 @@ public class ToolService {
                     userQuery, ScoreQueryMcpExecutor.TOOL_ID, decision == null ? null : decision.getParamPromptTemplate());
                 case "schedule", ScheduleQueryMcpExecutor.TOOL_ID -> executeMcpTool(
                     userQuery, ScheduleQueryMcpExecutor.TOOL_ID, decision == null ? null : decision.getParamPromptTemplate());
+                case "exam", ExamQueryMcpExecutor.TOOL_ID -> executeMcpTool(
+                    userQuery, ExamQueryMcpExecutor.TOOL_ID, decision == null ? null : decision.getParamPromptTemplate());
                 case "leave" -> executeLeave(userId, userQuery);
                 case "repair" -> executeRepair(userId, userQuery);
                 default -> {

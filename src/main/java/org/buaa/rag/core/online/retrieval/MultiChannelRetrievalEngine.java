@@ -147,7 +147,7 @@ public class MultiChannelRetrievalEngine {
 
         if (!vectorAlreadyApplicable
             && intentDirectedApplicable
-            && shouldSupplementGlobal(result)
+            && shouldSupplementGlobal(result, ctx)
             && vectorGlobalChannel != null) {
             SearchChannelResult fallbackOutput = invokeChannel(vectorGlobalChannel, ctx);
             if (fallbackOutput != null && fallbackOutput.hasHits()) {
@@ -226,7 +226,7 @@ public class MultiChannelRetrievalEngine {
         return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
-    private boolean shouldSupplementGlobal(List<RetrievalMatch> result) {
+    private boolean shouldSupplementGlobal(List<RetrievalMatch> result, SearchContext ctx) {
         SearchChannelProperties.VectorGlobal config = searchChannelProperties.getChannels().getVectorGlobal();
         if (config == null || !config.isEnabled()) {
             return false;
@@ -234,9 +234,17 @@ public class MultiChannelRetrievalEngine {
         if (result == null || result.isEmpty()) {
             return true;
         }
+        int requestedTopK = ctx == null ? 0 : Math.max(1, ctx.getTopK());
+        int minimumUsefulHits = requestedTopK <= 0 ? 3 : Math.min(requestedTopK, Math.max(3, requestedTopK / 2));
+        if (result.size() < minimumUsefulHits) {
+            return true;
+        }
         Double topScore = result.get(0).getRelevanceScore();
         if (topScore == null) {
             return true;
+        }
+        if (topScore > 0.0 && topScore < 0.05) {
+            return false;
         }
         return topScore < config.getSupplementScoreThreshold();
     }

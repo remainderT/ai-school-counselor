@@ -6,9 +6,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 import org.buaa.rag.common.convention.exception.ServiceException;
@@ -22,7 +19,6 @@ import io.milvus.v2.service.vector.request.SearchReq;
 import io.milvus.v2.service.vector.request.data.BaseVector;
 import io.milvus.v2.service.vector.request.data.FloatVec;
 import io.milvus.v2.service.vector.response.SearchResp;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -32,7 +28,6 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MilvusRetrieverService {
 
     private static final int MIN_EF = 8;
@@ -41,6 +36,14 @@ public class MilvusRetrieverService {
     private final MilvusClientV2 milvusClient;
     private final MilvusCollectionManager collectionManager;
     private final MilvusProperties milvusProperties;
+
+    public MilvusRetrieverService(MilvusClientV2 milvusClient,
+                                  MilvusCollectionManager collectionManager,
+                                  MilvusProperties milvusProperties) {
+        this.milvusClient = milvusClient;
+        this.collectionManager = collectionManager;
+        this.milvusProperties = milvusProperties;
+    }
 
     /**
      * 在指定 Collection 中执行向量相似度检索。
@@ -86,18 +89,7 @@ public class MilvusRetrieverService {
                 .outputFields(List.of("source_md5", "segment_number", "text_payload"))
                 .build();
 
-            long timeoutSec = milvusProperties.getSearchTimeoutSeconds();
-            SearchResp response;
-            try {
-                response = CompletableFuture.supplyAsync(() -> milvusClient.search(request))
-                        .get(timeoutSec, TimeUnit.SECONDS);
-            } catch (TimeoutException te) {
-                log.warn("Milvus search 超时({}s): collection={}", timeoutSec, collectionName);
-                return Collections.emptyList();
-            } catch (Exception asyncEx) {
-                Throwable cause = asyncEx.getCause() != null ? asyncEx.getCause() : asyncEx;
-                throw new ServiceException("Milvus 向量检索异步异常: " + cause.getMessage(), cause, SEARCH_SERVICE_ERROR);
-            }
+            SearchResp response = milvusClient.search(request);
             List<List<SearchResp.SearchResult>> results = response.getSearchResults();
             if (results == null || results.isEmpty()) {
                 return Collections.emptyList();

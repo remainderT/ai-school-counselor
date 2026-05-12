@@ -174,6 +174,28 @@ public class RagPromptService {
         return answer;
     }
 
+    public String generateSingleIntentToolAnswer(String query,
+                                                 String toolResponse,
+                                                 List<Map<String, String>> conversationHistory,
+                                                 IntentPromptDescriptor intentPrompt,
+                                                 Consumer<String> chunkHandler,
+                                                 @Nullable StreamCancellationHandle cancelHandle) {
+        long start = System.nanoTime();
+        PromptContext promptContext = PromptContext.builder()
+            .question(query)
+            .toolContext(buildSingleIntentToolBlock(query, toolResponse))
+            .preferredPrompt(intentPrompt != null ? intentPrompt.promptTemplate() : null)
+            .promptSnippet(intentPrompt != null ? intentPrompt.promptSnippet() : null)
+            .subQuestions(List.of(query))
+            .build();
+        List<Map<String, String>> messages = buildSingleIntentMessages(
+            promptContext, conversationHistory, intentPrompt);
+        String answer = streamStructuredAnswer(messages, chunkHandler, true, cancelHandle);
+        log.info("单意图工具答案生成完成 | query='{}' | responseChars={} | 耗时={}ms",
+            compact(query), answer.length(), elapsedMs(start));
+        return answer;
+    }
+
     public List<RetrievalMatch> collectDisplayedMultiIntentSources(List<SubQueryRetrievalResult> subQueryResults) {
         if (subQueryResults == null || subQueryResults.isEmpty()) {
             return List.of();
@@ -248,6 +270,9 @@ public class RagPromptService {
         if (promptContext.hasKb()) {
             messages.add(Map.of("role", "user", "content", promptContext.getKbContext()));
         }
+        if (promptContext.hasTool()) {
+            messages.add(Map.of("role", "system", "content", promptContext.getToolContext()));
+        }
 
         messages.addAll(llmService.toStructuredHistory(conversationHistory));
         if (!isBlank(promptContext.getQuestion())) {
@@ -318,6 +343,17 @@ public class RagPromptService {
         if (!hasContent) {
             return "";
         }
+        return prompt.toString().trim();
+    }
+
+    private String buildSingleIntentToolBlock(String query, String toolResponse) {
+        if (isBlank(toolResponse)) {
+            return "";
+        }
+        StringBuilder prompt = new StringBuilder();
+        prompt.append(TOOL_CONTEXT_HEADER).append("\n");
+        prompt.append("### 1. ").append(isBlank(query) ? "用户问题" : query.trim()).append("\n");
+        prompt.append(toolResponse.trim()).append("\n");
         return prompt.toString().trim();
     }
 

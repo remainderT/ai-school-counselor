@@ -27,6 +27,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 public class RustfsStorage {
 
     private final S3Client s3Client;
+    private final BucketManager bucketManager;
 
     /**
      * 上传文件到指定 Bucket。
@@ -36,6 +37,8 @@ public class RustfsStorage {
      */
     public void upload(String bucketName, UploadPayload payload) throws Exception {
         Assert.hasText(bucketName, "bucketName 不能为空");
+        bucketManager.ensureBucket(bucketName);
+
         String objectPath = buildPrimaryPath(payload.md5(), payload.originalFilename());
         InputStream data = payload.source().getInputStream();
         String contentType = StringUtils.hasText(payload.mimeType()) ? payload.mimeType() : null;

@@ -3,6 +3,7 @@ package org.buaa.rag.config;
 import org.buaa.rag.properties.MilvusProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 
 import io.milvus.v2.client.ConnectConfig;
 import io.milvus.v2.client.MilvusClientV2;
@@ -18,6 +19,7 @@ public class MilvusConfiguration {
     private final MilvusProperties milvusProperties;
 
     @Bean(destroyMethod = "close")
+    @Lazy
     public MilvusClientV2 milvusClient() {
         ConnectConfig.ConnectConfigBuilder builder = ConnectConfig.builder()
                 .uri(milvusProperties.getUri())

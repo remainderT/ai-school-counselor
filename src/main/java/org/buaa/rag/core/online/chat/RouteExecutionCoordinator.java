@@ -183,13 +183,8 @@ public class RouteExecutionCoordinator {
                     compact(originalQuery), results.size(), deduplicated.size(), elapsedMs(routeStart));
                 return new StreamResult(stitched, deduplicated, clarifyTriggered, retrievedCount, retrievalTopK);
             }
-            if (fastPathMode == FastPathMode.ALL_DIRECT_TEMPLATE) {
-                log.info("多意图全直返模板完成 | query='{}' | 子问题数={} | 总耗时={}ms",
-                    compact(originalQuery), results.size(), elapsedMs(routeStart));
-            } else {
-                log.info("多意图直接拼接完成 | query='{}' | 子问题数={} | 总耗时={}ms",
-                    compact(originalQuery), results.size(), elapsedMs(routeStart));
-            }
+            log.info("多意图直接拼接完成 | query='{}' | 子问题数={} | 总耗时={}ms",
+                compact(originalQuery), results.size(), elapsedMs(routeStart));
             return new StreamResult(stitched, List.of(), clarifyTriggered, retrievedCount, retrievalTopK);
         }
 
@@ -223,10 +218,21 @@ public class RouteExecutionCoordinator {
 
         if (resolved.getAction() == IntentDecision.Action.ROUTE_TOOL) {
             long toolStart = System.nanoTime();
-            String response = toolService.execute(userId, query, resolved);
-            emit(chunkHandler, response);
-            log.info("单问题工具路由完成 | query='{}' | tool={} | 耗时={}ms",
-                compact(query), resolved.getToolName(), elapsedMs(toolStart));
+            String toolResponse = toolService.execute(userId, query, resolved);
+            String response = ragPromptService.generateSingleIntentToolAnswer(
+                query,
+                toolResponse,
+                conversationHistory,
+                new RagPromptService.IntentPromptDescriptor(
+                    resolved.getLevel2(),
+                    resolved.getPromptTemplate(),
+                    resolved.getPromptSnippet()
+                ),
+                chunkHandler,
+                cancelHandle
+            );
+            log.info("单问题工具路由完成 | query='{}' | tool={} | 工具耗时={}ms | 总耗时={}ms",
+                compact(query), resolved.getToolName(), elapsedMs(toolStart), elapsedMs(routeStart));
             return new StreamResult(response, List.of(), false, 0, 0);
         }
 
@@ -362,23 +368,6 @@ public class RouteExecutionCoordinator {
             return FastPathMode.NONE;
         }
         RagProperties.Prompt promptConfig = ragProperties.getPrompt();
-        if (promptConfig != null && promptConfig.isMultiIntentAllDirectTemplateEnabled()) {
-            boolean allToolOrClarify = true;
-            for (SubQueryRetrievalResult result : results) {
-                if (result == null || result.intent() == null || isBlank(result.directResponse())) {
-                    allToolOrClarify = false;
-                    break;
-                }
-                IntentDecision.Action action = result.intent().getAction();
-                if (action != IntentDecision.Action.ROUTE_TOOL && action != IntentDecision.Action.CLARIFY) {
-                    allToolOrClarify = false;
-                    break;
-                }
-            }
-            if (allToolOrClarify) {
-                return FastPathMode.ALL_DIRECT_TEMPLATE;
-            }
-        }
         if (allDirect) {
             return FastPathMode.DIRECT;
         }
@@ -404,19 +393,12 @@ public class RouteExecutionCoordinator {
 
     private String stitchFastPathResponse(List<SubQueryRetrievalResult> results, FastPathMode mode) {
         StringBuilder builder = new StringBuilder();
-        builder.append(mode == FastPathMode.ALL_DIRECT_TEMPLATE
-            ? "结合你的问题，当前可直接确认的信息如下：\n"
-            : "根据你的问题，整理如下：\n");
+        builder.append("根据你的问题，整理如下：\n");
         for (int i = 0; i < results.size(); i++) {
             SubQueryRetrievalResult result = results.get(i);
             builder.append(i + 1).append(". ").append(result.query()).append("\n");
 
             if (!isBlank(result.directResponse())) {
-                if (mode == FastPathMode.ALL_DIRECT_TEMPLATE) {
-                    builder.append(result.intent() != null && result.intent().getAction() == IntentDecision.Action.CLARIFY
-                        ? "需要补充："
-                        : "处理结果：");
-                }
                 builder.append(result.directResponse()).append("\n");
                 continue;
             }
@@ -496,8 +478,7 @@ public class RouteExecutionCoordinator {
     private enum FastPathMode {
         NONE,
         DIRECT,
-        STRUCTURED,
-        ALL_DIRECT_TEMPLATE
+        STRUCTURED
     }
 
     public record ExecutionResult(String response,

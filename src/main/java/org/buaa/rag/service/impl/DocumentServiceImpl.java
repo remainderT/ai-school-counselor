@@ -87,7 +87,7 @@ public class DocumentServiceImpl extends ServiceImpl<DocumentMapper, DocumentDO>
     private final IngestionFacade ingestionFacade;
     private final RemoteURLFetcher remoteURLFetcher;
 
-    private static final String BASE_PATH = "/Users/yushuhao/Graduation/doc/Classification";
+    private static final String BASE_PATH = "/Users/yushuhao/Graduation/Classification";
     private static final Map<String, String> DIR_TO_KB_NAME = Map.of(
         "教务教学", "academic_kb",
         "学生事务与奖助", "affairs_kb",

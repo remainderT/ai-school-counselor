@@ -27,20 +27,30 @@ public class ScoreQueryMcpExecutor implements LocalMcpToolExecutor {
         Map<String, LocalMcpToolDefinition.ParameterSpec> parameters = new LinkedHashMap<>();
         parameters.put("termCode", new LocalMcpToolDefinition.ParameterSpec(
             "string",
-            "学期编码，例如 2021-2022-1。用户也可能说“2022学年春季”“这学期”“本学期”“当前学期”“上学期”“下学期”，需要结合当前日期换算成标准 termCode。",
-            true,
+            "学期编码，例如 2021-2022-1。用户也可能说“2022学年春季”“这学期”“本学期”“当前学期”“上学期”“下学期”。若为空，则自动遍历全部学期查询。",
+            false,
+            null,
+            List.of()
+        ));
+        parameters.put("courseName", new LocalMcpToolDefinition.ParameterSpec(
+            "string",
+            "课程名关键字，例如 数学分析、编译技术。若为空，则返回对应学期全部成绩。",
+            false,
             null,
             List.of()
         ));
         return new LocalMcpToolDefinition(
             TOOL_ID,
-            "查询指定学期的成绩明细、通过情况、均分和学分加权结果",
+            "查询成绩；可按单学期查，也可在未指定学期时自动遍历全部学期，并支持按课程名筛选",
             parameters
         );
     }
 
     @Override
     public String execute(Map<String, Object> parameters) {
-        return academicAffairsTools.queryScoresByTerm((String) parameters.get("termCode"));
+        return academicAffairsTools.queryScores(
+            (String) parameters.get("termCode"),
+            (String) parameters.get("courseName")
+        );
     }
 }

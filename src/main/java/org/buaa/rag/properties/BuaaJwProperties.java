@@ -16,9 +16,15 @@ public class BuaaJwProperties {
 
     private String schedulePath = "/jwapp/sys/homeapp/api/home/student/getMyScheduleDetail.do";
 
+    private String examPath = "/jwapp/sys/homeapp/api/home/student/exams.do";
+
+    private String schoolCalendarsPath = "/jwapp/sys/homeapp/api/home/student/schoolCalendars.do";
+
     private String cookie;
 
-    private String referer = "https://byxt.buaa.edu.cn/jwapp/sys/homeapp/home/index.html?contextPath=/jwapp";
+    private String referer = "https://byxt.buaa.edu.cn/jwapp/sys/homeapp/home/index.html?#/";
+
+    private String portalUrl = "https://byxt.buaa.edu.cn/jwapp/sys/homeapp/home/index.html?#/";
 
     private String userAgent = "Mozilla/5.0";
 

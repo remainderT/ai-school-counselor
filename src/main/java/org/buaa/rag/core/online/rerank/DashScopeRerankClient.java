@@ -13,6 +13,7 @@ import java.util.Set;
 
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.properties.RagProperties;
+import org.buaa.rag.tool.DashscopeCallLimiter;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -34,6 +35,7 @@ import lombok.extern.slf4j.Slf4j;
 public class DashScopeRerankClient {
 
     private static final String RERANK_API_PATH = "/api/v1/services/rerank/text-rerank/text-rerank";
+    private static final int MAX_ATTEMPTS = 3;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -42,11 +44,14 @@ public class DashScopeRerankClient {
 
     private final RagProperties.RerankProvider config;
     private final String fallbackApiKey;
+    private final DashscopeCallLimiter callLimiter;
 
     public DashScopeRerankClient(RagProperties ragProperties,
-                                 @org.springframework.beans.factory.annotation.Value("${spring.ai.dashscope.api-key:}") String globalApiKey) {
+                                 @org.springframework.beans.factory.annotation.Value("${spring.ai.dashscope.api-key:}") String globalApiKey,
+                                 DashscopeCallLimiter callLimiter) {
         this.config = ragProperties.getRerank().getDashscope();
         this.fallbackApiKey = globalApiKey;
+        this.callLimiter = callLimiter;
     }
 
     public List<RetrievalMatch> rerank(String query, List<RetrievalMatch> candidates, int topN) {
@@ -100,12 +105,7 @@ public class DashScopeRerankClient {
                 .POST(HttpRequest.BodyPublishers.ofString(reqBody.toString()))
                 .build();
 
-        HttpResponse<String> response;
-        try {
-            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        } catch (Exception e) {
-            throw new RuntimeException("百炼 Rerank 请求异常: " + e.getMessage(), e);
-        }
+        HttpResponse<String> response = sendWithRetry(request);
 
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new RuntimeException("百炼 Rerank 请求失败: HTTP " + response.statusCode()
@@ -114,6 +114,31 @@ public class DashScopeRerankClient {
 
         // 解析响应
         return parseResponse(response.body(), candidates, topN);
+    }
+
+    private HttpResponse<String> sendWithRetry(HttpRequest request) {
+        Exception last = null;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                return callLimiter.call(() -> httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)));
+            } catch (Exception e) {
+                last = e;
+                log.warn("百炼 Rerank 请求异常, attempt={}/{}, error={}", attempt, MAX_ATTEMPTS, e.getMessage());
+                if (attempt < MAX_ATTEMPTS) {
+                    sleepQuietly(500L * attempt);
+                }
+            }
+        }
+        throw new RuntimeException("百炼 Rerank 请求异常: " + (last == null ? "unknown" : last.getMessage()), last);
+    }
+
+    private void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("百炼 Rerank 请求被中断", ex);
+        }
     }
 
     private List<RetrievalMatch> parseResponse(String responseBody,

@@ -9,7 +9,7 @@ spring:
   datasource:
     url: jdbc:mysql://47.93.153.14:3306/ai_school_conselor?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
-    password: root
+    password: 5f9a2b8e-3c7d-41a6-b5e2-9d8f4c1a7b3d
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       connection-test-query: select 1
@@ -64,8 +64,7 @@ milvus:
   ef-construction: 200
   search-ef: 128
   max-text-length: 65535
-  connect-timeout-ms: 5000
-  search-timeout-seconds: 15
+  connect-timeout-ms: 3000
 
 storage:
   service-endpoint: http://47.93.153.14:9000
@@ -78,8 +77,11 @@ buaa:
     base-url: https://byxt.buaa.edu.cn
     score-path: /jwapp/sys/homeapp/api/home/student/scores.do
     schedule-path: /jwapp/sys/homeapp/api/home/student/getMyScheduleDetail.do
-    cookie: ${BUAA_JW_COOKIE:}
-    referer: https://byxt.buaa.edu.cn/jwapp/sys/homeapp/home/index.html?av=1778312943233&contextPath=/jwapp
+    exam-path: /jwapp/sys/homeapp/api/home/student/exams.do
+    school-calendars-path: /jwapp/sys/homeapp/api/home/student/schoolCalendars.do
+    cookie: 'GS_SESSIONID=3a8bd2ae49addeb0ab3c53de49768c49; _WEU=CcmFQSG_3chPWLVe*jnplHGdpYizU_AIsQ2sxnA1i6*lIWbPevAgWD4VvIGLTFZWK_bPILTUDY7ZzYpFBULlFiyiW3fPY1q7t*ElGnvwy6m_GrDlTEWhCfp9ip1lFPnYzrC2ysbLrdLFY34TOGLqJC2q9SrRYnVXfsHblj5ismzSoxoz*I8ZXlHkNK2BdQiFppEsuQY_YZPwVHWkrrTYBvtbWu4Lhl1KoRLRMJFhAikjhWEw5GgD*TaQ86Z8lOw14C31vj4*SlID12sIvf5rTJJbFV8IHQVHb3lz0OTHNvNDxlotKJ7Hqj..; _zte_cid_=9f25c032-8c8b-ba99-1cb7-96f5b7cf5dfb; _zte_sid_=83107932-f4af-d15c-c7e1-7dff93e803b2; route=813e86bf74a7ec475ff64500d3b2649a'
+    referer: https://byxt.buaa.edu.cn/jwapp/sys/homeapp/home/index.html?av=1778735891007&contextPath=/jwapp
+    portal-url: https://byxt.buaa.edu.cn/jwapp/sys/homeapp/home/index.html?#/
     user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36
     connect-timeout-seconds: 5
     request-timeout-seconds: 20
@@ -158,9 +160,9 @@ rag:
   crag:
     enabled: true
     use-llm: true
-    min-score: 0.2
-    review-top-k: 3
-    fallback-multiplier: 2
+    min-score: 0.3
+    review-top-k: 5
+    fallback-multiplier: 3
     ambiguity-words:
       - 这个
       - 那个
@@ -186,12 +188,12 @@ rag:
     min-delta-messages: 4
     default-max-history: 60
   retrieval:
-    default-top-k: 5
-    max-top-k: 10
-    min-acceptable-score: 0.28
+    default-top-k: 8
+    max-top-k: 12
+    min-acceptable-score: 0.22
   prompt:
-    max-reference-length: 800
-    max-source-reference-count: 6
+    max-reference-length: 1000
+    max-source-reference-count: 8
     temperature-kb: 0.0
     temperature-tool: 0.3
   search:
@@ -199,13 +201,14 @@ rag:
       intent-directed:
         enabled: true
         min-intent-score: 0.55
-        top-k-multiplier: 2
+        top-k-multiplier: 3
       vector-global:
         enabled: true
         supplement-high-confidence-intent: false
-        supplement-score-threshold: 0.52
+        supplement-score-threshold: 0.3
+        single-intent-supplement-threshold: 0.8
         confidence-threshold: 0.65
-        top-k-multiplier: 2
+        top-k-multiplier: 3
         default-confidence: 0.7
     post-processor:
       deduplicate: true
@@ -219,9 +222,9 @@ rag:
     max-options: 3
     llm-min-score: 0.45
   intent-resolution:
-    per-query-max-candidates: 3
-    max-total-candidates: 6
-    min-score: 0.5
+    per-query-max-candidates: 4
+    max-total-candidates: 8
+    min-score: 0.45
   trace:
     enabled: true
     max-error-length: 800

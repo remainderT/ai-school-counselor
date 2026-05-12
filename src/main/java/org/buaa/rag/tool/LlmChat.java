@@ -64,7 +64,7 @@ public class LlmChat {
                         return;
                     }
                     String cleaned = sanitizeChunk(chunk);
-                    if (hasMeaningfulText(cleaned)) {
+                    if (!cleaned.isEmpty()) {
                         chunkHandler.accept(cleaned);
                     }
                 }
@@ -123,7 +123,7 @@ public class LlmChat {
                         return;
                     }
                     String cleaned = sanitizeChunk(chunk);
-                    if (hasMeaningfulText(cleaned)) {
+                    if (!cleaned.isEmpty()) {
                         chunkHandler.accept(cleaned);
                     }
                 }
@@ -179,7 +179,7 @@ public class LlmChat {
                         return;
                     }
                     String cleaned = sanitizeChunk(chunk);
-                    if (hasMeaningfulText(cleaned)) {
+                    if (!cleaned.isEmpty()) {
                         chunkHandler.accept(cleaned);
                     }
                 },
@@ -306,7 +306,7 @@ public class LlmChat {
     }
 
     private static String sanitizeChunk(String rawChunk) {
-        if (rawChunk == null || rawChunk.isBlank()) {
+        if (rawChunk == null || rawChunk.isEmpty()) {
             return "";
         }
         return rawChunk

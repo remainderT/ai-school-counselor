@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, type KeyboardEventHandler, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { apiAuthHeaders, apiPost, apiUrl, toErrorMessage } from "../lib/api";
-import { formatSourceScore, normalizeSources, stripLegacyReferenceSection } from "../lib/chat-message";
+import { appendStreamDelta, formatSourceScore, normalizeSources, stripLegacyReferenceSection } from "../lib/chat-message";
 import { createChatStream } from "../lib/sse";
 import { pushToast } from "../lib/toast";
 import type { FeedbackPayload, RetrievalMatch } from "../types";
@@ -417,7 +417,7 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
           const messages = [...item.messages];
           const last = messages[messages.length - 1];
           if (last && last.role === "assistant") {
-            last.text += chunk;
+            last.text = appendStreamDelta(last.text, chunk);
             last.text = stripLegacyReferenceSection(last.text);
           }
           return { ...item, updatedAt: Date.now(), messages, persisted: true, userId: usingUserId };

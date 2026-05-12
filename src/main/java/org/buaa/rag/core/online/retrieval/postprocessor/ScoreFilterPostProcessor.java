@@ -45,6 +45,17 @@ public class ScoreFilterPostProcessor implements SearchResultPostProcessor {
         }
 
         double threshold = ragProperties.getRetrieval().getMinAcceptableScore();
+        double topScore = candidates.stream()
+            .map(RetrievalMatch::getRelevanceScore)
+            .filter(score -> score != null)
+            .mapToDouble(Double::doubleValue)
+            .max()
+            .orElse(0.0);
+        if (topScore > 0.0 && topScore < threshold) {
+            log.info("低分过滤跳过: 分数疑似为RRF融合尺度 | query='{}' | topScore={} | threshold={} | candidates={}",
+                ctx == null ? "" : ctx.getOriginalQuery(), topScore, threshold, candidates.size());
+            return candidates;
+        }
 
         List<RetrievalMatch> filtered = candidates.stream()
                 .filter(match -> {
