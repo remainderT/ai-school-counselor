@@ -145,7 +145,7 @@ public class AcademicAffairsTools {
 
     private String missingTermMessage(String scene) {
         return "请补充要查询的学期，例如 `2021-2022-1`（2021学年秋季）或 `2022-2023-2`（2023学年春季）。"
-            + " 如果你说“2022学年春季”，系统会自动换算成 `2021-2022-2` 后查询" + scene + "。";
+            + " 也可以直接说“这学期”“上学期”“下学期”或“2022学年春季”，系统会先换算成标准学期编码后查询" + scene + "。";
     }
 
     private String trimDecimal(double value) {
