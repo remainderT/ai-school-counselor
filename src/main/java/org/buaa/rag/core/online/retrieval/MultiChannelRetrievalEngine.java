@@ -12,6 +12,7 @@ import java.util.stream.Stream;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.online.trace.RagTraceNode;
 import org.buaa.rag.core.model.RetrievalMatch;
+import org.buaa.rag.properties.SearchChannelProperties;
 import org.buaa.rag.core.online.retrieval.channel.SearchChannel;
 import org.buaa.rag.core.online.retrieval.channel.SearchChannelResult;
 import org.buaa.rag.core.online.retrieval.channel.SearchContext;
@@ -40,13 +41,16 @@ public class MultiChannelRetrievalEngine {
     private final List<SearchChannel> channels;
     private final List<SearchResultPostProcessor> processors;
     private final Executor executor;
+    private final SearchChannelProperties searchChannelProperties;
 
     public MultiChannelRetrievalEngine(List<SearchChannel> channels,
                                        List<SearchResultPostProcessor> processors,
-                                       @Qualifier("retrievalChannelExecutor") Executor executor) {
+                                       @Qualifier("retrievalChannelExecutor") Executor executor,
+                                       SearchChannelProperties searchChannelProperties) {
         this.channels = channels;
         this.processors = processors;
         this.executor = executor;
+        this.searchChannelProperties = searchChannelProperties;
     }
 
     /** 便捷入口（单意图场景） */
@@ -90,6 +94,13 @@ public class MultiChannelRetrievalEngine {
             return List.of();
         }
 
+        SearchChannel vectorGlobalChannel = channels.stream()
+            .filter(ch -> "vector-global".equals(ch.channelId()))
+            .findFirst()
+            .orElse(null);
+        boolean vectorAlreadyApplicable = applicable.stream().anyMatch(ch -> "vector-global".equals(ch.channelId()));
+        boolean intentDirectedApplicable = applicable.stream().anyMatch(ch -> "intent-directed".equals(ch.channelId()));
+
         // 2. 并行分发到各通道（带超时保护）
         long t1 = System.nanoTime();
         List<CompletableFuture<SearchChannelResult>> tasks = applicable.stream()
@@ -131,6 +142,31 @@ public class MultiChannelRetrievalEngine {
                 result = proc.process(result, channelOutputs, ctx);
             } catch (Exception ex) {
                 log.warn("后处理器执行异常: processor={} | error={}", proc.label(), ex.getMessage(), ex);
+            }
+        }
+
+        if (!vectorAlreadyApplicable
+            && intentDirectedApplicable
+            && shouldSupplementGlobal(result)
+            && vectorGlobalChannel != null) {
+            SearchChannelResult fallbackOutput = invokeChannel(vectorGlobalChannel, ctx);
+            if (fallbackOutput != null && fallbackOutput.hasHits()) {
+                List<SearchChannelResult> supplementedOutputs = Stream.concat(channelOutputs.stream(), Stream.of(fallbackOutput))
+                    .toList();
+                List<RetrievalMatch> supplementedMerged = supplementedOutputs.stream()
+                    .flatMap(r -> r.hits() == null ? Stream.empty() : r.hits().stream())
+                    .toList();
+                List<RetrievalMatch> supplementedResult = new ArrayList<>(supplementedMerged);
+                for (SearchResultPostProcessor proc : activeProcessors) {
+                    try {
+                        supplementedResult = proc.process(supplementedResult, supplementedOutputs, ctx);
+                    } catch (Exception ex) {
+                        log.warn("补充全局检索后处理异常: processor={} | error={}", proc.label(), ex.getMessage(), ex);
+                    }
+                }
+                log.info("定向检索低分，已补充全局向量检索 | query='{}' | 原结果={} | 补充后={}",
+                    truncate(ctx.getOriginalQuery(), 60), result.size(), supplementedResult.size());
+                result = supplementedResult;
             }
         }
 
@@ -188,5 +224,20 @@ public class MultiChannelRetrievalEngine {
 
     private long nanosToMs(long startNanos) {
         return (System.nanoTime() - startNanos) / 1_000_000L;
+    }
+
+    private boolean shouldSupplementGlobal(List<RetrievalMatch> result) {
+        SearchChannelProperties.VectorGlobal config = searchChannelProperties.getChannels().getVectorGlobal();
+        if (config == null || !config.isEnabled()) {
+            return false;
+        }
+        if (result == null || result.isEmpty()) {
+            return true;
+        }
+        Double topScore = result.get(0).getRelevanceScore();
+        if (topScore == null) {
+            return true;
+        }
+        return topScore < config.getSupplementScoreThreshold();
     }
 }

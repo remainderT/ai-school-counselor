@@ -59,6 +59,18 @@ public class ScoreFilterPostProcessor implements SearchResultPostProcessor {
                     candidates.size() - filtered.size());
         }
 
+        // 避免把候选全部清空导致可回答问题直接变成 NO_ANSWER。
+        // 若所有结果都低于阈值，则保留原始 top-1，让后续 CRAG/生成阶段继续判断。
+        if (filtered.isEmpty()) {
+            RetrievalMatch fallback = candidates.get(0);
+            Double score = fallback.getRelevanceScore();
+            log.info("低分过滤保底保留 top1 | query='{}' | score={} | channel={}",
+                ctx == null ? "" : ctx.getOriginalQuery(),
+                score == null ? "null" : score,
+                fallback.getChannelType());
+            return List.of(fallback);
+        }
+
         return filtered;
     }
 }

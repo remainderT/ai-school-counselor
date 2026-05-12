@@ -403,7 +403,9 @@ public class SmartRetrieverService {
             if (record == null) {
                 continue;
             }
+            match.setDocumentId(record.getId());
             match.setSourceFileName(record.getOriginalFileName());
+            match.setSourceUrl(record.getSourceUrl());
             filtered.add(match);
         }
 

@@ -13,11 +13,13 @@ export interface PageResponse<T> {
 }
 
 export interface RetrievalMatch {
+  documentId?: number;
   fileMd5?: string;
   chunkId?: number;
   textContent?: string;
   relevanceScore?: number;
   sourceFileName?: string;
+  sourceUrl?: string;
 }
 
 export interface ChatResponsePayload {

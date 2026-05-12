@@ -16,7 +16,7 @@ export function normalizeSources(sources?: RetrievalMatch[]): RetrievalMatch[] {
   for (const source of sources) {
     if (!source) continue;
     const key = [
-      source.fileMd5 || source.sourceFileName || "unknown",
+      source.documentId ?? source.fileMd5 ?? source.sourceUrl ?? source.sourceFileName ?? "unknown",
       source.chunkId ?? "none"
     ].join(":");
     if (!unique.has(key)) {

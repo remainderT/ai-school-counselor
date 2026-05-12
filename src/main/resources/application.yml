@@ -73,6 +73,17 @@ storage:
   secret-access-key: rustfsadmin
   region: cn-beijing
 
+buaa:
+  jw:
+    base-url: https://byxt.buaa.edu.cn
+    score-path: /jwapp/sys/homeapp/api/home/student/scores.do
+    schedule-path: /jwapp/sys/homeapp/api/home/student/getMyScheduleDetail.do
+    cookie: ${BUAA_JW_COOKIE:}
+    referer: https://byxt.buaa.edu.cn/jwapp/sys/homeapp/home/index.html?av=1778312943233&contextPath=/jwapp
+    user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36
+    connect-timeout-seconds: 5
+    request-timeout-seconds: 20
+
 file:
   parsing:
     chunk-mode: structure_aware
@@ -177,10 +188,10 @@ rag:
   retrieval:
     default-top-k: 5
     max-top-k: 10
-    min-acceptable-score: 0.4
+    min-acceptable-score: 0.28
   prompt:
-    max-reference-length: 300
-    max-source-reference-count: 5
+    max-reference-length: 800
+    max-source-reference-count: 6
     temperature-kb: 0.0
     temperature-tool: 0.3
   search:
@@ -191,6 +202,8 @@ rag:
         top-k-multiplier: 2
       vector-global:
         enabled: true
+        supplement-high-confidence-intent: false
+        supplement-score-threshold: 0.52
         confidence-threshold: 0.65
         top-k-multiplier: 2
         default-confidence: 0.7

@@ -67,7 +67,8 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
 
         String normalizedType = normalizeNodeType(requestParam.getNodeType());
         validateParent(nodeId, requestParam.getParentId(), null);
-        validateNodeTypeAndFields(normalizedType, requestParam.getKnowledgeBaseId(), requestParam.getActionService());
+        validateNodeTypeAndFields(normalizedType, requestParam.getKnowledgeBaseId(),
+            requestParam.getActionService(), requestParam.getMcpToolId());
 
         IntentNodeDO entity = IntentNodeDO.builder()
             .nodeId(nodeId)
@@ -115,7 +116,10 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
             : normalizeNullable(requestParam.getActionService());
 
         validateParent(existing.getNodeId(), nextParentId, existing.getId());
-        validateNodeTypeAndFields(nextType, nextKnowledgeBaseId, nextActionService);
+        String nextMcpToolId = requestParam.getMcpToolId() == null
+            ? existing.getMcpToolId()
+            : normalizeNullable(requestParam.getMcpToolId());
+        validateNodeTypeAndFields(nextType, nextKnowledgeBaseId, nextActionService, nextMcpToolId);
 
         if (requestParam.getNodeName() != null) {
             existing.setNodeName(requireText(requestParam.getNodeName(), "nodeName 不能为空"));
@@ -300,12 +304,17 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
         }
     }
 
-    private void validateNodeTypeAndFields(String nodeType, Long knowledgeBaseId, String actionService) {
+    private void validateNodeTypeAndFields(String nodeType,
+                                           Long knowledgeBaseId,
+                                           String actionService,
+                                           String mcpToolId) {
         if (IntentNode.NodeType.RAG_QA.name().equals(nodeType) && knowledgeBaseId == null) {
             throw new ClientException("RAG_QA 节点必须指定 knowledgeBaseId");
         }
-        if (IntentNode.NodeType.API_ACTION.name().equals(nodeType) && !StringUtils.hasText(actionService)) {
-            throw new ClientException("API_ACTION 节点必须指定 actionService");
+        if (IntentNode.NodeType.API_ACTION.name().equals(nodeType)
+            && !StringUtils.hasText(actionService)
+            && !StringUtils.hasText(mcpToolId)) {
+            throw new ClientException("API_ACTION 节点必须指定 actionService 或 mcpToolId");
         }
     }
 

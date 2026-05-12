@@ -45,6 +45,16 @@ public class SearchChannelProperties {
          */
         private boolean enabled = true;
         /**
+         * 当意图通道已激活时，是否仍补充执行全局向量检索。
+         * 打开后可缓解高置信意图误路由导致的漏召回。
+         */
+        private boolean supplementHighConfidenceIntent = false;
+        /**
+         * 当定向检索最终得分低于该阈值时，补充执行一次全局向量检索。
+         * 仅在原本不会激活 vector-global 通道时生效。
+         */
+        private double supplementScoreThreshold = 0.52;
+        /**
          * 当意图置信度低于该值，启用向量全局检索
          */
         private double confidenceThreshold = 0.65;

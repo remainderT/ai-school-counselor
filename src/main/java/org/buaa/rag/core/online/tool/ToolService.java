@@ -1,8 +1,16 @@
 package org.buaa.rag.core.online.tool;
 
+import java.util.Map;
+
 import org.buaa.rag.core.model.IntentDecision;
+import org.buaa.rag.core.online.tool.mcp.AcademicMcpParameterExtractor;
+import org.buaa.rag.core.online.tool.mcp.LocalMcpToolExecutor;
+import org.buaa.rag.core.online.tool.mcp.LocalMcpToolRegistry;
+import org.buaa.rag.core.online.tool.mcp.ScheduleQueryMcpExecutor;
+import org.buaa.rag.core.online.tool.mcp.ScoreQueryMcpExecutor;
 import org.buaa.rag.tool.CounselorTools;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -14,19 +22,32 @@ import lombok.extern.slf4j.Slf4j;
 public class ToolService {
 
     private final CounselorTools counselorTools;
+    private final LocalMcpToolRegistry localMcpToolRegistry;
+    private final AcademicMcpParameterExtractor academicMcpParameterExtractor;
 
-    public ToolService(CounselorTools counselorTools) {
+    public ToolService(CounselorTools counselorTools,
+                       LocalMcpToolRegistry localMcpToolRegistry,
+                       AcademicMcpParameterExtractor academicMcpParameterExtractor) {
         this.counselorTools = counselorTools;
+        this.localMcpToolRegistry = localMcpToolRegistry;
+        this.academicMcpParameterExtractor = academicMcpParameterExtractor;
     }
 
     public String execute(String userId, String userQuery, IntentDecision decision) {
         String toolName = decision == null ? null : decision.getToolName();
-        if (toolName == null || toolName.isBlank()) {
-            return "未找到可用的工具处理该请求。";
-        }
         try {
+            String mcpToolId = decision == null ? null : decision.getMcpToolId();
+            if (StringUtils.hasText(mcpToolId)) {
+                return executeMcpTool(userQuery, mcpToolId, decision.getParamPromptTemplate());
+            }
+            if (toolName == null || toolName.isBlank()) {
+                return "未找到可用的工具处理该请求。";
+            }
             return switch (toolName.trim().toLowerCase()) {
-                case "score" -> executeScore(userId);
+                case "score", ScoreQueryMcpExecutor.TOOL_ID -> executeMcpTool(
+                    userQuery, ScoreQueryMcpExecutor.TOOL_ID, decision == null ? null : decision.getParamPromptTemplate());
+                case "schedule", ScheduleQueryMcpExecutor.TOOL_ID -> executeMcpTool(
+                    userQuery, ScheduleQueryMcpExecutor.TOOL_ID, decision == null ? null : decision.getParamPromptTemplate());
                 case "leave" -> executeLeave(userId, userQuery);
                 case "repair" -> executeRepair(userId, userQuery);
                 default -> {
@@ -40,10 +61,15 @@ public class ToolService {
         }
     }
 
-    private String executeScore(String userId) {
-        log.info("触发成绩查询工具, userId={}", userId);
-        counselorTools.queryGrade(safeValue(userId));
-        return "成绩查询结果：90分。";
+    private String executeMcpTool(String userQuery, String toolId, String paramPromptTemplate) {
+        LocalMcpToolExecutor executor = localMcpToolRegistry.getExecutor(toolId).orElse(null);
+        if (executor == null) {
+            log.warn("未找到 MCP 工具执行器: toolId={}", toolId);
+            return "该教务工具暂未接入，请稍后再试。";
+        }
+        Map<String, Object> parameters = academicMcpParameterExtractor.extractParameters(
+            userQuery, executor.getToolDefinition(), paramPromptTemplate);
+        return executor.execute(parameters);
     }
 
     private String executeLeave(String userId, String userQuery) {

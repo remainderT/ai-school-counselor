@@ -391,9 +391,15 @@ public class IntentRouterService {
             case CHITCHAT -> IntentDecision.Action.ROUTE_CHAT;
             default -> IntentDecision.Action.ROUTE_RAG;
         };
+        String mcpToolId = node.getType() == IntentNode.NodeType.API_ACTION
+            ? normalizeToolName(node.getMcpToolId())
+            : null;
         String tool = node.getType() == IntentNode.NodeType.API_ACTION
             ? normalizeToolName(node.getActionService())
             : null;
+        if (!StringUtils.hasText(tool) && StringUtils.hasText(mcpToolId)) {
+            tool = mcpToolId;
+        }
         String level1 = resolveDomainName(node);
         String level2 = node.getNodeName();
         if (action != IntentDecision.Action.ROUTE_TOOL && isChitchatIntent(level1, level2)) {
@@ -407,8 +413,10 @@ public class IntentRouterService {
             .level2(level2)
             .promptTemplate(node.getPromptTemplate())
             .promptSnippet(node.getPromptSnippet())
+            .paramPromptTemplate(node.getParamPromptTemplate())
             .knowledgeBaseId(node.getKnowledgeBaseId())
             .toolName(tool)
+            .mcpToolId(mcpToolId)
             .action(action)
             .confidence(cand.score())
             .strategy(strategy)
@@ -430,11 +438,18 @@ public class IntentRouterService {
         for (IntentNode leaf : leaves) {
             builder.append("- nodeId=").append(leaf.getNodeId()).append("\n");
             builder.append("  path=").append(resolveNodePath(leaf)).append("\n");
+            builder.append("  type=").append(leaf.getType()).append("\n");
             if (StringUtils.hasText(leaf.getDescription())) {
                 builder.append("  description=").append(leaf.getDescription().trim()).append("\n");
             }
             if (leaf.getKeywords() != null && !leaf.getKeywords().isEmpty()) {
                 builder.append("  keywords=").append(String.join(" / ", leaf.getKeywords())).append("\n");
+            }
+            if (StringUtils.hasText(leaf.getMcpToolId())) {
+                builder.append("  mcpToolId=").append(leaf.getMcpToolId().trim()).append("\n");
+            }
+            if (StringUtils.hasText(leaf.getActionService())) {
+                builder.append("  actionService=").append(leaf.getActionService().trim()).append("\n");
             }
         }
         return builder.toString();

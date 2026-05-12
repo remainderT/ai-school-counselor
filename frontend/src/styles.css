@@ -2029,6 +2029,34 @@ body {
   gap: 5px;
   flex-shrink: 0;
 }
+.msg-source-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #dbe7f3;
+  background: #fff;
+  color: #4f46e5;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast);
+}
+.msg-source-action:hover:not(:disabled) {
+  border-color: #c7d7ee;
+  background: #f8fbff;
+}
+.msg-source-action:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.msg-source-action svg {
+  flex-shrink: 0;
+}
 .msg-source-score {
   flex-shrink: 0;
   padding: 4px 8px;
@@ -2108,6 +2136,8 @@ body {
 
   .msg-source-aside {
     align-self: flex-start;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .msg-source-score {

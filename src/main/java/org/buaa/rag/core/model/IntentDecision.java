@@ -28,6 +28,8 @@ public class IntentDecision {
     private String level2;
     private Double confidence;
     private String toolName;
+    private String mcpToolId;
+    private String paramPromptTemplate;
     private String clarifyQuestion;
     private Action action;
     private Strategy strategy = Strategy.HYBRID;

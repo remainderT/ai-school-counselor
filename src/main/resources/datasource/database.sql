@@ -217,3 +217,39 @@ CREATE TABLE counselor_trace_step (
 
 INSERT INTO `user` (`id`, `username`, `password`, `mail`, `salt`, `is_admin`, `avatar`, `create_time`, `update_time`, `del_flag`)
 VALUES (1, 'admin', 'b9d11b3be25f5a1a7dc8ca04cd310b28', 'admin@example.com', 'admin', 1, NULL, NOW(), NOW(), 0);
+
+INSERT INTO `knowledge` (`id`, `user_id`, `name`, `description`, `create_time`, `update_time`, `del_flag`)
+VALUES
+    (101, 1, 'academic_kb', '教务教学库：包含学籍、选课、考试、培养方案、成绩管理等', NOW(), NOW(), 0),
+    (108, 1, 'integrated_kb', '综合规章库：包含学生手册、公文处理、行政通讯录、印信管理、规章制度等', NOW(), NOW(), 0);
+
+INSERT INTO `intent_node` (`id`, `node_id`, `node_name`, `parent_id`, `node_type`, `description`, `prompt_template`,
+                           `prompt_snippet`, `param_prompt_template`, `keywords_json`, `examples_json`, `knowledge_base_id`,
+                           `action_service`, `mcp_tool_id`, `top_k`, `enabled`, `create_time`, `update_time`, `del_flag`)
+VALUES
+    (1, 'root', 'BUAA AI 辅导员', NULL, 'GROUP', '高校全域问题咨询与办事服务', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1, NOW(), NOW(), 0),
+    (101, 'kb_academic', '教务教学', 'root', 'GROUP', '学籍管理、选课退课、考试安排、成绩查询、培养方案', NULL, NULL, NULL,
+     '["教务","选课","考试","成绩","学籍","培养方案","GPA","学分","课表"]',
+     '["选课时间","考试安排","成绩查询","培养方案","课表查询"]', 101, NULL, NULL, NULL, 1, NOW(), NOW(), 0),
+    (108, 'kb_integrated', '综合规章', 'root', 'GROUP', '学生手册、规章制度、公文处理、行政事务、通讯录、印信管理', NULL, NULL, NULL,
+     '["手册","规章","制度","公文","行政","通讯录"]',
+     '["学生手册在哪看","公文格式","行政部门电话"]', 108, NULL, NULL, NULL, 1, NOW(), NOW(), 0),
+    (112, 'academic_exam', '考试与成绩', 'kb_academic', 'RAG_QA', '考试安排、成绩查询、绩点计算、缓考申请', NULL, NULL, NULL,
+     '["考试","成绩","GPA","绩点","缓考","四六级"]',
+     '["考试安排","成绩查询","GPA计算"]', 101, NULL, NULL, NULL, 1, NOW(), NOW(), 0),
+    (145, 'academic_term_scores', '学期成绩查询', 'kb_academic', 'API_ACTION',
+     '查询指定学期成绩，支持 2021-2022-1 这类 termCode，也支持“2022学年春季”表达',
+     NULL, NULL,
+     '如果用户没有明确给出学期，请要求其补充 termCode 或明确的学年春秋季。termCode 规则：2021-2022-1 表示 2021 学年秋季；2021-2022-2 表示 2022 学年春季；2022-2023-1 表示 2022 学年秋季；2022-2023-2 表示 2023 学年春季。',
+     '["成绩","查成绩","学期成绩","分数","考试成绩","2021-2022-1","2022学年春季成绩"]',
+     '["帮我查 2021-2022-1 的成绩","查询 2022 学年春季成绩"]', NULL, NULL, 'academic_score_query', NULL, 1, NOW(), NOW(), 0),
+    (146, 'academic_term_schedule', '学期课表查询', 'kb_academic', 'API_ACTION',
+     '查询指定学期某一周课表，支持 termCode 和周次',
+     NULL, NULL,
+     '如果用户没有明确给出学期，要求补充学期；如果没有给周次，默认按第 1 周查询。termCode 规则：2021-2022-1 表示 2021 学年秋季；2021-2022-2 表示 2022 学年春季；2022-2023-1 表示 2022 学年秋季；2022-2023-2 表示 2023 学年春季。',
+     '["课表","查课表","课程表","本周课表","第1周课表","2022-2023-2 课表"]',
+     '["帮我查 2022-2023-2 第 1 周课表","查询 2023 学年春季课表"]', NULL, NULL, 'academic_schedule_query', NULL, 1, NOW(), NOW(), 0),
+    (147, 'chitchat', '日常闲聊', 'root', 'CHITCHAT', '打招呼、日常聊天、简单问候',
+     '这是闲聊场景，请保持简洁友好回答。', NULL, NULL,
+     '["你好","在吗","谢谢","早上好","晚安","聊聊"]',
+     '["你好","在吗","聊聊天"]', NULL, NULL, NULL, NULL, 1, NOW(), NOW(), 0);

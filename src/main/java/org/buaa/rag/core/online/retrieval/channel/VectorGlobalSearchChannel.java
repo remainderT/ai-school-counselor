@@ -47,6 +47,9 @@ public class VectorGlobalSearchChannel implements SearchChannel {
         if (!properties.getChannels().getVectorGlobal().isEnabled()) {
             return false;
         }
+        if (properties.getChannels().getVectorGlobal().isSupplementHighConfidenceIntent()) {
+            return true;
+        }
         double threshold = properties.getChannels().getVectorGlobal().getConfidenceThreshold();
         if (context.getIntentDecisions() != null && !context.getIntentDecisions().isEmpty()) {
             double peak = context.getIntentDecisions().stream()

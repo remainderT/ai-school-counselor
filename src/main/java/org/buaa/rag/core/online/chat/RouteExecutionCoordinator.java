@@ -76,8 +76,12 @@ public class RouteExecutionCoordinator {
             List<IntentDecision> candidates = resolvedSubQueries.isEmpty()
                 ? List.of()
                 : resolvedSubQueries.get(0).candidates();
+            String singleRouteQuery = primaryIntent != null
+                && primaryIntent.getAction() == IntentDecision.Action.ROUTE_TOOL
+                ? userMessage
+                : rewrittenQuery;
             executionResult = executeSingleIntentRoute(
-                userId, rewrittenQuery, primaryIntent, candidates, conversationHistory, chunkHandler, cancelHandle);
+                userId, singleRouteQuery, primaryIntent, candidates, conversationHistory, chunkHandler, cancelHandle);
         }
 
         return new ExecutionResult(

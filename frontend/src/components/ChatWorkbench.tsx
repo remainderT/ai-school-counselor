@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useCallback, type KeyboardEventHandler, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { apiPost, toErrorMessage } from "../lib/api";
+import { useEffect, useRef, useState, useCallback, type KeyboardEventHandler, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { apiAuthHeaders, apiPost, apiUrl, toErrorMessage } from "../lib/api";
 import { formatSourceScore, normalizeSources, stripLegacyReferenceSection } from "../lib/chat-message";
 import { createChatStream } from "../lib/sse";
 import { pushToast } from "../lib/toast";
@@ -42,6 +42,20 @@ const ThumbDownIcon = () => (
 const ChevronDownIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="m6 9 6 6 6-6" />
+  </svg>
+);
+const DownloadIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 3v12" />
+    <path d="m7 10 5 5 5-5" />
+    <path d="M5 21h14" />
+  </svg>
+);
+const LinkOutIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 3h7v7" />
+    <path d="M10 14 21 3" />
+    <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
   </svg>
 );
 const TrashIcon = () => (
@@ -97,6 +111,48 @@ function enhanceCitationLinks(text: string) {
   return text.replace(SOURCE_CITATION_RE, (full, rawIndex) => `[${rawIndex}](source-ref:${rawIndex})`);
 }
 
+function hasRemoteSource(item: RetrievalMatch) {
+  return Boolean(item.sourceUrl?.trim());
+}
+
+async function downloadSourceDocument(item: RetrievalMatch) {
+  if (!item.documentId) {
+    throw new Error("当前来源缺少文档标识，暂时无法下载");
+  }
+  const url = apiUrl(`/api/rag/document/${item.documentId}/download`);
+  const headers = apiAuthHeaders();
+  const resp = await fetch(url, {
+    method: "GET",
+    headers
+  });
+  const contentType = resp.headers.get("content-type") || "";
+  if (!resp.ok || contentType.includes("application/json")) {
+    let message = `下载失败: HTTP ${resp.status}`;
+    try {
+      const payload = (await resp.json()) as { message?: string };
+      if (payload?.message) {
+        message = payload.message;
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  const blob = await resp.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+  const disposition = resp.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^\";]+)"?/i);
+  const fallbackName = item.sourceFileName || `document-${item.documentId}`;
+  const filename = decodeURIComponent(match?.[1] || match?.[2] || fallbackName);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
 /** 来源引用卡片 */
 function SourceReferences({
   sources,
@@ -108,6 +164,7 @@ function SourceReferences({
   onExpandedIndexChange?: (index: number) => void;
 }) {
   const [expandedIndex, setExpandedIndex] = useState<number>(-1);
+  const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
 
   useEffect(() => { setExpandedIndex(-1); }, [sources]);
 
@@ -125,6 +182,34 @@ function SourceReferences({
     });
   };
 
+  const handleCardKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>, index: number) => {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleExpanded(index);
+    }
+  };
+
+  const handleSourceAction = async (event: ReactMouseEvent<HTMLButtonElement>, item: RetrievalMatch, index: number) => {
+    event.stopPropagation();
+    const actionKey = `${item.documentId ?? item.sourceUrl ?? item.fileMd5 ?? index}`;
+    setBusyActionKey(actionKey);
+    try {
+      const targetUrl = item.sourceUrl?.trim();
+      if (targetUrl) {
+        window.open(targetUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      await downloadSourceDocument(item);
+    } catch (error) {
+      pushToast(toErrorMessage(error, "来源操作失败"), "error");
+    } finally {
+      setBusyActionKey((current) => (current === actionKey ? null : current));
+    }
+  };
+
   return (
     <div className="msg-sources">
       <div className="msg-sources-title">参考来源</div>
@@ -134,18 +219,24 @@ function SourceReferences({
           const hasContent = previewText !== SOURCE_PLACEHOLDER_TEXT;
           const expanded = expandedIndex === i;
           const detailId = `msg-source-detail-${item.fileMd5 ?? "source"}-${item.chunkId ?? i}-${i}`;
+          const remote = hasRemoteSource(item);
+          const actionLabel = remote ? "打开" : "下载";
+          const actionKey = `${item.documentId ?? item.sourceUrl ?? item.fileMd5 ?? i}`;
+          const busy = busyActionKey === actionKey;
 
           return (
             <div
               key={`${item.fileMd5 ?? item.chunkId ?? i}-${i}`}
               className={`msg-source-card${expanded ? " expanded" : ""}${hasContent ? "" : " empty"}`}
             >
-              <button
-                type="button"
+              <div
                 className="msg-source-trigger"
+                role="button"
+                tabIndex={0}
                 aria-expanded={expanded}
                 aria-controls={detailId}
                 onClick={() => toggleExpanded(i)}
+                onKeyDown={(event) => handleCardKeyDown(event, i)}
               >
                 <div className="msg-source-card-head">
                   <div className="msg-source-main">
@@ -158,16 +249,27 @@ function SourceReferences({
                     </div>
                   </div>
                   <div className="msg-source-aside">
+                    <button
+                      type="button"
+                      className="msg-source-action"
+                      onClick={(event) => void handleSourceAction(event, item, i)}
+                      disabled={busy}
+                      aria-label={`${actionLabel}${item.sourceFileName || "来源文档"}`}
+                    >
+                      {remote ? <LinkOutIcon /> : <DownloadIcon />}
+                      <span>{busy ? "处理中" : actionLabel}</span>
+                    </button>
                     <div className="msg-source-score">相关度 {formatSourceScore(item.relevanceScore)}</div>
                     <div className="msg-source-arrow" aria-hidden="true"><ChevronDownIcon /></div>
                   </div>
                 </div>
-              </button>
+              </div>
               {expanded ? (
                 <div id={detailId} className="msg-source-preview">
                   <div className="msg-source-preview-head">
                     <div className="msg-source-preview-meta">
                       <span>相关度 {formatSourceScore(item.relevanceScore)}</span>
+                      {remote ? <span>远程链接</span> : <span>本地文件</span>}
                     </div>
                   </div>
                   <div className="msg-source-preview-text">{previewText}</div>

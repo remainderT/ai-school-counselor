@@ -1,0 +1,510 @@
+{
+  "datasetName" : "ai-school-counselor-rag-eval-system-regression",
+  "generatedAt" : "2026-05-12T09:26:59.733631+08:00",
+  "note" : "用于快速验证 System 优化方向的回归子集，覆盖错误拒答、证据不足编造和制度类精确问答。",
+  "cases" : [ {
+    "query" : "北航2019年博士研究生招生中，全日制与非全日制计划人数分别是多少？",
+    "referenceAnswer" : "全日制博士研究生约950名，非全日制博士研究生约50名。",
+    "questionType" : "procedure",
+    "difficulty" : "medium",
+    "knowledgeScope" : "integrated_kb",
+    "relevantChunks" : [ {
+      "documentId" : 355,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "研招问答.docx",
+    "keywords" : [ "2019年", "博士招生", "全日制", "非全日制" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "北航在研究生国际交流方面提供了哪些经费支持项目？请列举至少三项。",
+    "referenceAnswer" : "资助博士生短期出国访学、资助出国参加高水平学术会议、研究生国际暑期学校、研究生国际化学术论坛。",
+    "questionType" : "policy",
+    "difficulty" : "medium",
+    "knowledgeScope" : "integrated_kb",
+    "relevantChunks" : [ {
+      "documentId" : 355,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "研招问答.docx",
+    "keywords" : [ "国际交流", "经费支持", "博士生" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "考生报名前应通过什么渠道了解北航研究生招生政策和流程？",
+    "referenceAnswer" : "招生单位的官方网站",
+    "questionType" : "contact",
+    "difficulty" : "easy",
+    "knowledgeScope" : "integrated_kb",
+    "relevantChunks" : [ {
+      "documentId" : 355,
+      "fragmentIndex" : 2
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "研招问答.docx",
+    "keywords" : [ "报名前", "招生政策", "官方网站" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "北京航空航天大学国际创新研究院的统一社会信用代码是多少？",
+    "referenceAnswer" : "12330100MB1Q56202B",
+    "questionType" : "contact",
+    "difficulty" : "easy",
+    "knowledgeScope" : "finance_kb",
+    "relevantChunks" : [ {
+      "documentId" : 88,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "北航国新院开票信息.pdf",
+    "keywords" : [ "统一社会信用代码", "国新院" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "给北航国新院开具发票时，应填写的开户银行和银行账号分别是什么？",
+    "referenceAnswer" : "开户银行：中国农业银行杭州瓶窑支行；银行账号：19050601040068888",
+    "questionType" : "procedure",
+    "difficulty" : "medium",
+    "knowledgeScope" : "finance_kb",
+    "relevantChunks" : [ {
+      "documentId" : 88,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "北航国新院开票信息.pdf",
+    "keywords" : [ "开票", "开户银行", "银行账号" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "团体辅导中‘我的资源盾牌’环节要求参与者在盾牌上记录哪8个问题的答案？",
+    "referenceAnswer" : "1. 从出生到现在最重要的一件事；2. 到目前为止自己认为最成功的事项，以及能够做成这件事需要的三种能力；3. 你能回想起的一个过去最快乐的时刻；4. 你的一项专长；5. 你想要加强的技能；6. 你希望将来是什么样子？7. 如果你突然拥有了让事情变得顺利的所有能力，但目前生命只剩下一年，你将会做什么？8. 如果你现在八十岁了，你喜欢别人用哪三个词来形容你？",
+    "questionType" : "procedure",
+    "difficulty" : "medium",
+    "knowledgeScope" : "psy_safety_kb",
+    "relevantChunks" : [ {
+      "documentId" : 371,
+      "fragmentIndex" : 2
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "心灵减压：解锁自我的力量 团体辅导方案.docx",
+    "keywords" : [ "资源盾牌", "8个问题", "团体辅导" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "‘我的资源盾牌’活动结束后，带领者强调这些资源的核心作用是什么？",
+    "referenceAnswer" : "成为保护自己、帮助面对未来的力量，是身上一直跟着自己的力量，用于面对人生的各种境遇。",
+    "questionType" : "policy",
+    "difficulty" : "medium",
+    "knowledgeScope" : "psy_safety_kb",
+    "relevantChunks" : [ {
+      "documentId" : 371,
+      "fragmentIndex" : 2
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "心灵减压：解锁自我的力量 团体辅导方案.docx",
+    "keywords" : [ "资源盾牌", "力量", "作用" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "国家建设高水平大学公派研究生项目回国手续办理需要多久？",
+    "referenceAnswer" : "即办",
+    "questionType" : "time",
+    "difficulty" : "easy",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 44,
+      "fragmentIndex" : 3
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "学生服务大厅业务流程梳理-127.xlsx",
+    "keywords" : [ "公派研究生", "回国手续", "办理时长" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "马骏涛申请临时困难补助的理由中，提到其家庭面临哪些具体经济压力？",
+    "referenceAnswer" : "外公患胃癌、已进行4次化疗手术，每月化疗费用至少7000元；父母均为残疾人，父亲因肝癌提前退休，家庭收入低，难以负担医疗费、学费及生活开支。",
+    "questionType" : "eligibility",
+    "difficulty" : "medium",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 285,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "临时困难补助申请情况汇报-马骏涛(1).docx",
+    "keywords" : [ "马骏涛", "经济压力", "申请理由" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "学校同意给予马骏涛临时困难补助的依据是什么管理办法的哪一条款？",
+    "referenceAnswer" : "《我校临时困难补助管理办法》第二章第四条第二点。",
+    "questionType" : "policy",
+    "difficulty" : "easy",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 285,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "临时困难补助申请情况汇报-马骏涛(1).docx",
+    "keywords" : [ "管理办法", "依据", "第二章第四条" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "根据核查情况，马骏涛的家庭困难是否符合临时困难补助的申请条件？为什么？",
+    "referenceAnswer" : "符合，因其父亲身患重病（肝癌）并提前退休，丧失劳动能力，属于管理办法第二章第四条第二点规定的‘父母身患重病、丧失劳动能力等导致家庭经济出现临时困难’的情形。",
+    "questionType" : "eligibility",
+    "difficulty" : "medium",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 285,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "临时困难补助申请情况汇报-马骏涛(1).docx",
+    "keywords" : [ "符合", "申请条件", "父亲肝癌" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "本科生中英文成绩单翻译申请，哪些年级的学生必须通过线上系统申请，哪些可以自助打印？",
+    "referenceAnswer" : "2018级（含）之前毕业的本科生需通过系统申请；2019级（含）以后本科生可凭一卡通在自助打印机打印。",
+    "questionType" : "procedure",
+    "difficulty" : "medium",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 54,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "毕业生出国中英文成绩、证书翻译申请系统-A4-竖版.pdf",
+    "keywords" : [ "年级", "自助打印", "线上申请" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "申请中英文成绩或证书翻译是否收费？办理形式是什么？",
+    "referenceAnswer" : "不收费，线上办理。",
+    "questionType" : "policy",
+    "difficulty" : "easy",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 54,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "毕业生出国中英文成绩、证书翻译申请系统-A4-竖版.pdf",
+    "keywords" : [ "收费", "办理形式" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "提交证书翻译申请时，对上传扫描件的分辨率有什么要求？",
+    "referenceAnswer" : "图片分辨率不小于300dpi。",
+    "questionType" : "procedure",
+    "difficulty" : "easy",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 54,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "毕业生出国中英文成绩、证书翻译申请系统-A4-竖版.pdf",
+    "keywords" : [ "证书翻译", "扫描件", "分辨率" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "进入国新院图书馆阅览室需要什么证件或方式？",
+    "referenceAnswer" : "持开通阅览或借阅权限的校园一卡通，可刷脸或刷卡进入。",
+    "questionType" : "procedure",
+    "difficulty" : "easy",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 35,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "国新院图书馆阅览须知.pdf",
+    "keywords" : [ "进入", "证件", "刷脸", "刷卡" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "在图书馆阅览时，对携带书刊数量有建议吗？",
+    "referenceAnswer" : "建议每人每次不超过5册。",
+    "questionType" : "procedure",
+    "difficulty" : "easy",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 35,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "国新院图书馆阅览须知.pdf",
+    "keywords" : [ "书刊数量", "每次", "5册" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "如果在阅览区接打电话，图书馆有什么具体要求？",
+    "referenceAnswer" : "严禁在阅览区接、打手机，建议移步至静音舱。",
+    "questionType" : "procedure",
+    "difficulty" : "medium",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 35,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "国新院图书馆阅览须知.pdf",
+    "keywords" : [ "接打电话", "阅览区", "静音舱" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "在国新院图书馆使用电子存包柜时，如果忘记取物密码该怎么办？",
+    "referenceAnswer" : "与二层咨询台联系，凭有效证件开锁领取物品。",
+    "questionType" : "procedure",
+    "difficulty" : "easy",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 50,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "国新院图书馆电子存包柜使用规定.pdf",
+    "keywords" : [ "密码遗忘", "开锁", "咨询台" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "国新院图书馆电子存包柜是否允许存放笔记本电脑？",
+    "referenceAnswer" : "不允许，禁止存放贵重物品，包括笔记本电脑。",
+    "questionType" : "policy",
+    "difficulty" : "easy",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 50,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "国新院图书馆电子存包柜使用规定.pdf",
+    "keywords" : [ "笔记本电脑", "贵重物品", "存放限制" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "国家建设高水平大学公派研究生项目出国手续办理中，图书馆和公寓管理部门分别要确认什么？",
+    "referenceAnswer" : "图书馆确认无欠费情况，公寓管理部门确认完成退宿。",
+    "questionType" : "procedure",
+    "difficulty" : "medium",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 44,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "学生服务大厅业务流程梳理-127.xlsx",
+    "keywords" : [ "公派研究生", "图书馆", "公寓管理", "确认事项" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "在图书馆阅览区使用手机有哪些具体规定？",
+    "referenceAnswer" : "需将手机调至振动档，严禁在阅览区接、打手机，建议移步至静音舱。",
+    "questionType" : "policy",
+    "difficulty" : "medium",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 203,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "国新院图书馆阅览须知.docx",
+    "keywords" : [ "手机", "阅览区", "静音舱", "接打电话" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "读者在图书馆自选书刊阅览时，对取阅数量有何建议？",
+    "referenceAnswer" : "建议每人每次不超过5册。",
+    "questionType" : "procedure",
+    "difficulty" : "easy",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 203,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "国新院图书馆阅览须知.docx",
+    "keywords" : [ "自选书刊", "数量限制", "5册" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "北航图书馆对电子资源批量下载行为有哪些具体限制？",
+    "referenceAnswer" : "严禁使用软件或工具批量下载；严禁连续、系统、集中、批量地下载、浏览或检索全文数据库；超出正常阅读速度（如几分钟内下载多篇）可能被数据库商视为恶意下载。",
+    "questionType" : "policy",
+    "difficulty" : "medium",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 244,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "电子资源下载规定（来源：北航图书馆主页）.docx",
+    "keywords" : [ "批量下载", "恶意下载", "电子资源" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "如果北航师生违规下载电子资源，图书馆会采取哪些处理措施？",
+    "referenceAnswer" : "通报批评、停止借书权限半年、冻结网络帐号2个月；情节严重者报请学校纪律处分并追究法律责任。",
+    "questionType" : "procedure",
+    "difficulty" : "easy",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 244,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "电子资源下载规定（来源：北航图书馆主页）.docx",
+    "keywords" : [ "违规处理", "通报批评", "借书权限" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "校内单位是否可以自行设置代理服务器访问图书馆电子资源？",
+    "referenceAnswer" : "不可以擅自设置；如确需设置，必须事先获得图书馆允许，且须确保校外IP无法通过该服务器访问电子资源。",
+    "questionType" : "policy",
+    "difficulty" : "medium",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 244,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "电子资源下载规定（来源：北航图书馆主页）.docx",
+    "keywords" : [ "代理服务器", "校内单位", "图书馆允许" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "国新院学生申请临时困难补助的适用情形有哪些？",
+    "referenceAnswer" : "（一）遭遇意外伤害事故或突发急重病症，所需治疗费用较高，自付费用对其家庭构成较大经济压力；（二）父母或监护人亡故、失踪、身患重病、丧失劳动能力等，导致家庭经济出现临时困难；（三）家庭遭遇重大自然灾害或突发事件，财产遭受较大损失，造成临时性经济困难；（四）遭遇其他突发变故，面临较大经济压力，基本学习生活受到影响。",
+    "questionType" : "eligibility",
+    "difficulty" : "medium",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 231,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "杭州市北京航空航天大学国际创新研究院（北京航空航天大学国际创新学院）临时困难补助管理规定.docx",
+    "keywords" : [ "申请条件", "适用情形", "eligibility" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "国新院临时困难补助的资助额度分为哪几档？",
+    "referenceAnswer" : "0-3000元、3000-5000元、5000-10000元三档。",
+    "questionType" : "policy",
+    "difficulty" : "easy",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 231,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "杭州市北京航空航天大学国际创新研究院（北京航空航天大学国际创新学院）临时困难补助管理规定.docx",
+    "keywords" : [ "资助标准", "金额档次", "额度" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "国新院学生工作部在临时困难补助工作中承担什么具体职责？",
+    "referenceAnswer" : "具体负责组织和管理学生临时困难补助申请、认定和审核工作。",
+    "questionType" : "procedure",
+    "difficulty" : "easy",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 231,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "杭州市北京航空航天大学国际创新研究院（北京航空航天大学国际创新学院）临时困难补助管理规定.docx",
+    "keywords" : [ "学生工作部", "职责", "审核流程" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "海洋同学申请临时困难补助的原因是什么？",
+    "referenceAnswer" : "其父亲于2024年11月确诊NK细胞白血病及噬血细胞综合症，治疗产生高额自费费用（每月近20万元，更换方案后每日近3万元），医保无法覆盖，且父亲已不幸去世，家庭陷入经济困境。",
+    "questionType" : "eligibility",
+    "difficulty" : "easy",
+    "knowledgeScope" : "integrated_kb",
+    "relevantChunks" : [ {
+      "documentId" : 320,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "困难情况说明-海洋-ZY2457506.pdf",
+    "keywords" : [ "海洋", "临时困难补助", "原因" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "每天闭馆后图书馆对电子存包柜会做哪些处理？读者物品若被清理，责任如何划分？",
+    "referenceAnswer" : "闭馆后工作人员会对存包柜进行清理，所清物品集中收存；物品缺坏、遗失等责任由读者自负。",
+    "questionType" : "procedure",
+    "difficulty" : "medium",
+    "knowledgeScope" : "affairs_kb",
+    "relevantChunks" : [ {
+      "documentId" : 252,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "国新院图书馆电子存包柜使用规定.docx",
+    "keywords" : [ "闭馆清理", "物品遗失", "责任自负" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "中国农业银行杭州瓶窑支行的开户行代码是多少？",
+    "referenceAnswer" : "103331005062",
+    "questionType" : "contact",
+    "difficulty" : "easy",
+    "knowledgeScope" : "external_kb",
+    "relevantChunks" : [ {
+      "documentId" : 391,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "13-14 开户行信息.docx",
+    "keywords" : [ "开户行代码", "中国农业银行", "杭州瓶窑支行" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "杭州市北京航空航天大学国际创新研究院的统一社会信用代码是多少？",
+    "referenceAnswer" : "12330100MB1Q56202B",
+    "questionType" : "eligibility",
+    "difficulty" : "easy",
+    "knowledgeScope" : "external_kb",
+    "relevantChunks" : [ {
+      "documentId" : 391,
+      "fragmentIndex" : 1
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "13-14 开户行信息.docx",
+    "keywords" : [ "统一社会信用代码", "北京航空航天大学国际创新研究院" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "乙方能否将本合同项下的设计业务分包给第三方？",
+    "referenceAnswer" : "未经甲方书面同意，乙方不得分包；即使甲方同意分包，乙方仍须对全部合同义务承担责任。",
+    "questionType" : "policy",
+    "difficulty" : "easy",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 27,
+      "fragmentIndex" : 3
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "附件4：XXX工程设计合同范本（法务审核版）.doc",
+    "keywords" : [ "分包", "书面同意", "乙方责任" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "监理合同在什么条件下正式生效？",
+    "referenceAnswer" : "委托人和监理人的法定代表人或其授权代理人在协议书上签字并盖单位章后生效，除非法律另有规定或专用条件另有约定。",
+    "questionType" : "procedure",
+    "difficulty" : "easy",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 34,
+      "fragmentIndex" : 5
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "附件9：xxx工程监理合同范本（法务审核版）.doc",
+    "keywords" : [ "合同生效", "签字", "盖章" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "如果工程因非监理人原因暂停超过182天，监理人是否有权解除合同？依据是什么？",
+    "referenceAnswer" : "有权解除合同；依据是6.3.2条：暂停全部工作时间超过182天，监理人可发出解除本合同的通知，合同自通知到达委托人时解除。",
+    "questionType" : "procedure",
+    "difficulty" : "medium",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 34,
+      "fragmentIndex" : 5
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "附件9：xxx工程监理合同范本（法务审核版）.doc",
+    "keywords" : [ "暂停", "182天", "解除合同", "监理人权利" ],
+    "sourceType" : "llm_generated_from_chunk"
+  }, {
+    "query" : "当委托人拖欠监理酬金时，监理人可采取哪些递进式救济措施？",
+    "referenceAnswer" : "先发出催付通知；委托人14天内未支付或未提出可接受安排的，可发出暂停工作通知；暂停后14天仍未获付款或合理答复的，可发出解除合同通知。",
+    "questionType" : "procedure",
+    "difficulty" : "medium",
+    "knowledgeScope" : "campus_life_kb",
+    "relevantChunks" : [ {
+      "documentId" : 34,
+      "fragmentIndex" : 5
+    } ],
+    "expectedNoAnswer" : false,
+    "sourceFileName" : "附件9：xxx工程监理合同范本（法务审核版）.doc",
+    "keywords" : [ "拖欠酬金", "催付", "暂停工作", "解除合同" ],
+    "sourceType" : "llm_generated_from_chunk"
+  } ]
+}

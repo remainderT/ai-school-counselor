@@ -478,6 +478,7 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
             List<MessageSourceDO> rows = sources.stream()
                     .map(match -> MessageSourceDO.builder()
                             .messageId(messageId)
+                            .documentId(match.getDocumentId())
                             .documentMd5(match.getFileMd5())
                             .chunkId(match.getChunkId())
                             .relevanceScore(match.getRelevanceScore())
@@ -502,22 +503,30 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
             return Map.of();
         }
         Map<String, String> chunkTextMap = loadChunkTextMap(sourceRows);
-        Map<String, String> sourceNameMap = loadDocumentNameMap(sourceRows);
+        Map<String, DocumentDO> documentMap = loadDocumentMap(sourceRows);
         Map<Long, List<RetrievalMatch>> grouped = new HashMap<>();
         for (MessageSourceDO source : sourceRows) {
             if (source == null || source.getMessageId() == null) {
                 continue;
             }
             RetrievalMatch match = new RetrievalMatch();
+            match.setDocumentId(source.getDocumentId());
             match.setFileMd5(source.getDocumentMd5());
             match.setChunkId(source.getChunkId());
             match.setTextContent(chunkTextMap.get(buildChunkKey(source.getDocumentMd5(), source.getChunkId())));
             match.setRelevanceScore(source.getRelevanceScore());
             String sourceName = source.getSourceFileName();
+            DocumentDO document = documentMap.get(source.getDocumentMd5());
             if (!StringUtils.hasText(sourceName)) {
-                sourceName = sourceNameMap.get(source.getDocumentMd5());
+                sourceName = document == null ? null : document.getOriginalFileName();
             }
             match.setSourceFileName(sourceName);
+            if (document != null) {
+                match.setSourceUrl(document.getSourceUrl());
+                if (match.getDocumentId() == null) {
+                    match.setDocumentId(document.getId());
+                }
+            }
             grouped.computeIfAbsent(source.getMessageId(), key -> new ArrayList<>()).add(match);
         }
         return grouped;
@@ -563,7 +572,7 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
         return chunkTextMap;
     }
 
-    private Map<String, String> loadDocumentNameMap(List<MessageSourceDO> sourceRows) {
+    private Map<String, DocumentDO> loadDocumentMap(List<MessageSourceDO> sourceRows) {
         Set<String> md5Set = sourceRows.stream()
                 .map(MessageSourceDO::getDocumentMd5)
                 .filter(StringUtils::hasText)
@@ -573,13 +582,13 @@ public class ConversationServiceImpl extends ServiceImpl<ConversationMapper, Con
         }
         List<DocumentDO> documents = documentMapper.selectList(Wrappers.lambdaQuery(DocumentDO.class)
                 .in(DocumentDO::getMd5Hash, md5Set)
-                .select(DocumentDO::getMd5Hash, DocumentDO::getOriginalFileName));
+                .select(DocumentDO::getId, DocumentDO::getMd5Hash, DocumentDO::getOriginalFileName, DocumentDO::getSourceUrl));
         if (documents == null || documents.isEmpty()) {
             return Map.of();
         }
         return documents.stream()
-                .filter(d -> StringUtils.hasText(d.getMd5Hash()) && StringUtils.hasText(d.getOriginalFileName()))
-                .collect(Collectors.toMap(DocumentDO::getMd5Hash, DocumentDO::getOriginalFileName, (l, r) -> l));
+                .filter(d -> StringUtils.hasText(d.getMd5Hash()))
+                .collect(Collectors.toMap(DocumentDO::getMd5Hash, d -> d, (l, r) -> l));
     }
 
     private boolean isIgnoredContent(String content) {

@@ -30,6 +30,8 @@ public class RetrievalMatch {
 
     private String sourceFileName;
 
+    private String sourceUrl;
+
     /** 产出该匹配的检索通道类型（去重时用于区分来源优先级） */
     private SearchChannelType channelType;
 
