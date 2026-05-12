@@ -14,6 +14,12 @@ type AuthStore = {
 
 const AuthContext = createContext<AuthStore | null>(null);
 
+function isUnauthenticatedError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message || "";
+  return message.includes("用户未登录") || message.includes("HTTP 401") || message.includes("HTTP 403");
+}
+
 async function loadProfile(username: string, token: string): Promise<AuthState | null> {
   const ok = await checkLogin(username, token);
   if (!ok) return null;
@@ -42,10 +48,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         saveAuth(refreshed);
         setAuth(refreshed);
-      } catch {
-        // 网络错误 / 限流等非确定性失败 → 保留本地凭据，避免丢失登录态
+      } catch (error) {
         const saved = loadAuth();
-        if (saved) {
+        if (isUnauthenticatedError(error)) {
+          clearAuth();
+          setAuth(null);
+        } else if (saved) {
+          // 网络错误 / 限流等非确定性失败 → 保留本地凭据，避免误清登录态
           setAuth(saved);
         } else {
           setAuth(null);

@@ -154,6 +154,12 @@ export default function App() {
   }, [restoring, isAdmin, tab]);
 
   useEffect(() => {
+    if (!restoring && !auth && window.location.hash && window.location.hash !== "#chat") {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  }, [restoring, auth]);
+
+  useEffect(() => {
     if (auth?.username) {
       setUsername(auth.username);
     }
