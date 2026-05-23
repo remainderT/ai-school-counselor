@@ -9,7 +9,6 @@ import org.buaa.rag.core.online.tool.mcp.LocalMcpToolExecutor;
 import org.buaa.rag.core.online.tool.mcp.LocalMcpToolRegistry;
 import org.buaa.rag.core.online.tool.mcp.ScheduleQueryMcpExecutor;
 import org.buaa.rag.core.online.tool.mcp.ScoreQueryMcpExecutor;
-import org.buaa.rag.tool.CounselorTools;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -22,14 +21,11 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class ToolService {
 
-    private final CounselorTools counselorTools;
     private final LocalMcpToolRegistry localMcpToolRegistry;
     private final AcademicMcpParameterExtractor academicMcpParameterExtractor;
 
-    public ToolService(CounselorTools counselorTools,
-                       LocalMcpToolRegistry localMcpToolRegistry,
+    public ToolService(LocalMcpToolRegistry localMcpToolRegistry,
                        AcademicMcpParameterExtractor academicMcpParameterExtractor) {
-        this.counselorTools = counselorTools;
         this.localMcpToolRegistry = localMcpToolRegistry;
         this.academicMcpParameterExtractor = academicMcpParameterExtractor;
     }
@@ -51,8 +47,6 @@ public class ToolService {
                     userQuery, ScheduleQueryMcpExecutor.TOOL_ID, decision == null ? null : decision.getParamPromptTemplate());
                 case "exam", ExamQueryMcpExecutor.TOOL_ID -> executeMcpTool(
                     userQuery, ExamQueryMcpExecutor.TOOL_ID, decision == null ? null : decision.getParamPromptTemplate());
-                case "leave" -> executeLeave(userId, userQuery);
-                case "repair" -> executeRepair(userId, userQuery);
                 default -> {
                     log.warn("未找到工具执行器: toolName={}", toolName);
                     yield "该需求暂未接入自动处理，请稍后再试。";
@@ -73,25 +67,5 @@ public class ToolService {
         Map<String, Object> parameters = academicMcpParameterExtractor.extractParameters(
             userQuery, executor.getToolDefinition(), paramPromptTemplate);
         return executor.execute(parameters);
-    }
-
-    private String executeLeave(String userId, String userQuery) {
-        log.info("触发请假工具, userId={}, query={}", userId, userQuery);
-        CounselorTools.LeaveDraftToolResult result = counselorTools.createLeaveDraft(
-            safeValue(userId), null, null, userQuery);
-        return "已创建请假草稿，状态：" + result.status()
-            + "；后续操作：" + result.nextAction();
-    }
-
-    private String executeRepair(String userId, String userQuery) {
-        log.info("触发报修工具, userId={}, query={}", userId, userQuery);
-        CounselorTools.RepairDraftToolResult result = counselorTools.createRepairTicket(
-            safeValue(userId), null, userQuery);
-        return "已创建报修草稿，状态：" + result.status()
-            + "；后续操作：" + result.nextAction();
-    }
-
-    private String safeValue(String value) {
-        return value == null ? "" : value.trim();
     }
 }

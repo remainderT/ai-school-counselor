@@ -32,7 +32,7 @@ public class RetrievalPostProcessorService {
     private static final String DEFAULT_CRAG_PROMPT = PromptTemplateLoader.load("retrieval-crag.st");
 
     private static final String DEFAULT_CLARIFY_PROMPT = PromptTemplateLoader.load("retrieval-clarify.st");
-    private static final double CRAG_TEMPERATURE = 0.1D;
+    private static final double CRAG_TEMPERATURE = 0.0D;
     private static final double CRAG_TOP_P = 0.3D;
 
     private final LlmChat llmChat;
@@ -166,7 +166,11 @@ public class RetrievalPostProcessorService {
 
         try {
             JsonNode node = objectMapper.readTree(output.trim());
-            String actionText = node.path("action").asText("").toUpperCase();
+            String actionText = node.path("verdict").asText("");
+            if (actionText.isBlank()) {
+                actionText = node.path("action").asText("");
+            }
+            actionText = actionText.toUpperCase();
             CragDecision.Action action = parseAction(actionText);
             if (action == null) {
                 return null;
@@ -192,6 +196,15 @@ public class RetrievalPostProcessorService {
         if (actionText == null || actionText.isBlank()) {
             return null;
         }
+        return switch (actionText) {
+            case "CORRECT" -> CragDecision.Action.ANSWER;
+            case "AMBIGUOUS" -> CragDecision.Action.CLARIFY;
+            case "INCORRECT" -> CragDecision.Action.NO_ANSWER;
+            default -> parseLegacyAction(actionText);
+        };
+    }
+
+    private CragDecision.Action parseLegacyAction(String actionText) {
         try {
             return CragDecision.Action.valueOf(actionText);
         } catch (IllegalArgumentException e) {

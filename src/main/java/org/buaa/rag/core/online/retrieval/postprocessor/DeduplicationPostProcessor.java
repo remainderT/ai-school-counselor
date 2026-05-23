@@ -45,12 +45,13 @@ public class DeduplicationPostProcessor implements SearchResultPostProcessor {
 
     @Override
     public int stage() {
-        return 1;
+        return 30;
     }
 
     @Override
     public boolean isActive(SearchContext ctx) {
-        return properties.getPostProcessor().isDeduplicate();
+        return properties.getPostProcessor().isDeduplicate()
+            && !properties.getPostProcessor().isRrfFusion();
     }
 
     @Override
@@ -109,6 +110,7 @@ public class DeduplicationPostProcessor implements SearchResultPostProcessor {
         // 意图定向通道可信度最高，全局检索次之
         return Map.of(
                 SearchChannelType.INTENT_DIRECTED, 1.2,
+                SearchChannelType.SPARSE_TEXT, 1.1,
                 SearchChannelType.VECTOR_GLOBAL, 1.0
         );
     }

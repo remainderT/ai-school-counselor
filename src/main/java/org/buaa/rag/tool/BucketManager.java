@@ -33,29 +33,9 @@ public class BucketManager {
     private final S3Client s3Client;
 
     /**
-     * 将知识库 name 转换为合法的 RustFS/S3 Bucket 名称。
-     *
-     * @deprecated 请使用 {@link KnowledgeNameConverter#toBucketName(String)}
-     */
-    @Deprecated
-    public static String toBucketName(String knowledgeName) {
-        return KnowledgeNameConverter.toBucketName(knowledgeName);
-    }
-
-    /**
-     * 将知识库 name 转换为合法的 Milvus Collection 名称。
-     *
-     * @deprecated 请使用 {@link KnowledgeNameConverter#toCollectionName(String)}
-     */
-    @Deprecated
-    public static String toCollectionName(String knowledgeName) {
-        return KnowledgeNameConverter.toCollectionName(knowledgeName);
-    }
-
-    /**
      * 确保指定 Bucket 存在，不存在则创建。
      *
-     * @param bucketName 已规范化的 Bucket 名称（使用 {@link #toBucketName} 转换后的值）
+     * @param bucketName 已规范化的 Bucket 名称（使用 {@link KnowledgeNameConverter#toBucketName(String)} 转换后的值）
      */
     public void ensureBucket(String bucketName) {
         try {

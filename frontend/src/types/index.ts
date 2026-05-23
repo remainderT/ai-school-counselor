@@ -22,18 +22,6 @@ export interface RetrievalMatch {
   sourceUrl?: string;
 }
 
-export interface ChatResponsePayload {
-  response: string;
-  sources: RetrievalMatch[];
-}
-
-export interface FeedbackPayload {
-  messageId: number;
-  score: number;
-  comment?: string;
-  userId?: string;
-}
-
 export interface KnowledgeItem {
   id: number;
   userId?: string;

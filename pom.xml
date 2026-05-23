@@ -23,12 +23,9 @@
         <aws.sdk.version>2.25.57</aws.sdk.version>
         <commons-codec.version>1.16.1</commons-codec.version>
         <tika.version>2.9.1</tika.version>
-        <commons-io.version>2.14.0</commons-io.version>
         <elasticsearch-java.version>8.10.0</elasticsearch-java.version>
         <jackson-databind.version>2.15.2</jackson-databind.version>
-        <httpclient.version>4.5.14</httpclient.version>
         <gson.version>2.10.1</gson.version>
-        <hanlp.version>portable-1.8.6</hanlp.version>
         <fastjson2.version>2.0.36</fastjson2.version>
         <hutool-all.version>5.8.20</hutool-all.version>
     </properties>
@@ -49,11 +46,6 @@
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-jsqlparser</artifactId>
             <version>${mybatis-plus.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
 
         <dependency>
@@ -114,12 +106,6 @@
         </dependency>
 
         <dependency>
-            <groupId>commons-io</groupId>
-            <artifactId>commons-io</artifactId>
-            <version>${commons-io.version}</version>
-        </dependency>
-
-        <dependency>
             <groupId>co.elastic.clients</groupId>
             <artifactId>elasticsearch-java</artifactId>
             <version>${elasticsearch-java.version}</version>
@@ -138,21 +124,9 @@
         </dependency>
 
         <dependency>
-            <groupId>org.apache.httpcomponents</groupId>
-            <artifactId>httpclient</artifactId>
-            <version>${httpclient.version}</version>
-        </dependency>
-
-        <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>${gson.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>com.hankcs</groupId>
-            <artifactId>hanlp</artifactId>
-            <version>${hanlp.version}</version>
         </dependency>
 
         <dependency>
@@ -170,13 +144,6 @@
             <groupId>cn.hutool</groupId>
             <artifactId>hutool-all</artifactId>
             <version>${hutool-all.version}</version>
-        </dependency>
-
-        <!-- Netty macOS DNS 原生解析器，解决 macOS 上 DNS 解析警告 -->
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-resolver-dns-native-macos</artifactId>
-            <classifier>osx-aarch_64</classifier>
         </dependency>
 
         <dependency>

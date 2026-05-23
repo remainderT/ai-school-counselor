@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState, useCallback, type KeyboardEventHandler, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { apiAuthHeaders, apiPost, apiUrl, toErrorMessage } from "../lib/api";
+import { apiAuthHeaders, apiUrl, toErrorMessage } from "../lib/api";
 import { appendStreamDelta, formatSourceScore, normalizeSources, stripLegacyReferenceSection } from "../lib/chat-message";
 import { createChatStream } from "../lib/sse";
 import { pushToast } from "../lib/toast";
-import type { FeedbackPayload, RetrievalMatch } from "../types";
+import type { RetrievalMatch } from "../types";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { useChatSessions, type Conversation } from "../hooks/useChatSessions";
-import { useActionRequest } from "../hooks/useActionRequest";
 
 /* ===== Inline SVG Icons ===== */
 const SparkleIcon = () => (
@@ -27,16 +26,6 @@ const StopIcon = () => (
 const CopyIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-  </svg>
-);
-const ThumbUpIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M7 10v12" /><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
-  </svg>
-);
-const ThumbDownIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M17 14V2" /><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z" />
   </svg>
 );
 const ChevronDownIcon = () => (
@@ -322,8 +311,6 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
   const [activeSourceMap, setActiveSourceMap] = useState<Record<string, number>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
-  const [feedbackState, setFeedbackState] = useState<Record<number, "up" | "down">>({});
-  const feedbackReq = useActionRequest();
 
   const streamRef = useRef<ReturnType<typeof createChatStream> | null>(null);
   const msgListRef = useRef<HTMLDivElement | null>(null);
@@ -515,23 +502,6 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
     } catch {
       pushToast("复制失败", "error");
     }
-  };
-
-  const submitFeedback = async (messageId: number, score: number) => {
-    const payload: FeedbackPayload = {
-      messageId,
-      score,
-      comment: "",
-      userId: runtimeUserId
-    };
-    const prev = feedbackState[messageId];
-    const newVal: "up" | "down" = score > 3 ? "up" : "down";
-    setFeedbackState((s) => ({ ...s, [messageId]: prev === newVal ? undefined as unknown as "up" : newVal }));
-    await feedbackReq.runAction(() => apiPost("/api/rag/conversations/feedback", payload), {
-      successToast: score > 3 ? "感谢好评 👍" : "感谢反馈",
-      errorFallback: "反馈失败",
-      onError: setNotice
-    });
   };
 
   /* ===== Title editing ===== */
@@ -822,7 +792,6 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
                 const displaySources = isAssistant ? normalizeSources(msg.sources).slice(0, 5) : [];
                 const canCopy = Boolean(displayText);
                 const messageKey = `${msg.role}-${idx}`;
-                const feedbackVal = msg.messageId ? feedbackState[msg.messageId] : undefined;
 
                 return (
                   <article key={messageKey} className={`msg ${msg.role}${isLast ? " msg-last" : ""}`}>
@@ -885,35 +854,15 @@ export function ChatWorkbench({ authUsername, adminEntryButton, onLogout }: Chat
                           )}
 
                           {/* Action buttons */}
-                          {(canCopy || (isAssistant && msg.messageId)) && (
+                          {canCopy && (
                             <div className={`msg-actions${isLast ? " visible" : ""}`}>
-                              {canCopy && (
-                                <button
-                                  className="msg-action-btn"
-                                  onClick={() => void copyAnswer(displayText)}
-                                  title="复制回答"
-                                >
-                                  <CopyIcon />
-                                </button>
-                              )}
-                              {isAssistant && msg.messageId && (
-                                <>
-                                  <button
-                                    className={`msg-action-btn${feedbackVal === "up" ? " active-like" : ""}`}
-                                    onClick={() => void submitFeedback(msg.messageId!, 5)}
-                                    title="有帮助"
-                                  >
-                                    <ThumbUpIcon />
-                                  </button>
-                                  <button
-                                    className={`msg-action-btn${feedbackVal === "down" ? " active-dislike" : ""}`}
-                                    onClick={() => void submitFeedback(msg.messageId!, 1)}
-                                    title="没帮助"
-                                  >
-                                    <ThumbDownIcon />
-                                  </button>
-                                </>
-                              )}
+                              <button
+                                className="msg-action-btn"
+                                onClick={() => void copyAnswer(displayText)}
+                                title="复制回答"
+                              >
+                                <CopyIcon />
+                              </button>
                             </div>
                           )}
                         </div>

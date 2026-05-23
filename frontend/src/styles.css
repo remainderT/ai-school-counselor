@@ -399,9 +399,6 @@ body {
   grid-template-columns: 1fr;
   position: relative;
 }
-.console-layout.admin-sidebar-collapsed {
-  grid-template-columns: 0 1fr;
-}
 
 /* ===== Admin Top-Bar Layout ===== */
 .admin-topbar-layout {
@@ -723,89 +720,6 @@ body {
   stroke-width: 2;
 }
 
-/* ===== Admin Back Button (inside admin sidebar) ===== */
-.admin-back-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  border: 1px solid rgba(148,163,184,0.15);
-  border-radius: var(--radius-md);
-  background: rgba(148,163,184,0.08);
-  padding: 9px 12px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  color: #94a3b8;
-  cursor: pointer;
-  margin-bottom: 8px;
-  transition: all var(--transition-fast);
-}
-.admin-back-btn:hover {
-  background: rgba(148,163,184,0.15);
-  color: #e2e8f0;
-}
-.admin-back-btn svg {
-  width: 16px; height: 16px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 2;
-  flex-shrink: 0;
-}
-
-/* ===== Sidebar ===== */
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-sidebar-surface);
-  border-right: none;
-  padding: 14px;
-  height: 100vh;
-  overflow: hidden;
-}
-.sidebar.admin-sidebar {
-  min-width: 0;
-  transition: width var(--transition-base), opacity var(--transition-base);
-}
-.console-layout.admin-sidebar-collapsed .sidebar.admin-sidebar {
-  width: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.admin-sidebar-handle {
-  position: absolute;
-  top: 50%;
-  left: calc(var(--sidebar-width) - 14px);
-  transform: translateY(-50%);
-  width: 14px;
-  height: 48px;
-  border: 1px solid rgba(30,41,59,0.2);
-  border-right: 0;
-  border-radius: 6px 0 0 6px;
-  background: #334155;
-  color: #94a3b8;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 6;
-  transition: left var(--transition-base), background var(--transition-fast), color var(--transition-fast);
-}
-.admin-sidebar-handle:hover {
-  background: #475569;
-  color: #e2e8f0;
-}
-.admin-sidebar-handle.collapsed {
-  left: 0;
-  border-right: 1px solid rgba(30,41,59,0.2);
-  border-left: 0;
-  border-radius: 0 6px 6px 0;
-}
-.admin-sidebar-handle svg {
-  width: 16px;
-  height: 16px;
-}
 .sidebar-handle-arrow {
   display: inline-block;
   font-size: 14px;
@@ -841,41 +755,6 @@ body {
   letter-spacing: -0.2px;
 }
 
-.side-nav {
-  margin-top: 8px;
-  display: grid;
-  gap: 2px;
-  flex: 1;
-  align-content: start;
-}
-.side-item {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  text-align: left;
-  border: 1px solid transparent;
-  color: #94a3b8;
-  background: transparent;
-  border-radius: var(--radius-md);
-  padding: 9px 12px;
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-.side-item:hover {
-  background: rgba(148,163,184,0.1);
-  color: #e2e8f0;
-}
-.side-item.active {
-  background: rgba(99,102,241,0.15);
-  color: #a5b4fc;
-  font-weight: 600;
-  border-color: transparent;
-  border-left: 3px solid #818cf8;
-}
-
 .side-icon {
   width: 18px; height: 18px;
   border-radius: 4px;
@@ -887,7 +766,6 @@ body {
   position: relative;
   opacity: 0.7;
 }
-.side-item.active .side-icon { opacity: 1; }
 .side-icon-chat::after {
   content: "";
   position: absolute;
@@ -1861,10 +1739,6 @@ body {
   user-select: text;
 }
 
-/* Keep legacy selectors for MarkdownMessage compat */
-.msg-content { max-width: 100%; min-width: 0; }
-.msg-avatar { display: none; }
-
 /* Waiting dots */
 .msg-waiting {
   display: inline-flex;
@@ -1880,7 +1754,7 @@ body {
 .msg-waiting-dot:nth-child(2) { animation-delay: 0.2s; }
 .msg-waiting-dot:nth-child(3) { animation-delay: 0.4s; }
 
-/* Message actions (copy, feedback) */
+/* Message actions */
 .msg-actions {
   display: flex;
   align-items: center;
@@ -1913,8 +1787,6 @@ body {
   background: var(--bg-tertiary);
   color: var(--ink-secondary);
 }
-.msg-action-btn.active-like { color: var(--success); }
-.msg-action-btn.active-dislike { color: var(--danger); }
 .msg-action-btn svg {
   width: 14px; height: 14px;
   fill: none;
@@ -2182,25 +2054,6 @@ body {
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
-}
-
-/* ===== Feedback Card (inline) ===== */
-.feedback-inline {
-  max-width: var(--content-max);
-  margin: 0 auto;
-  padding: 12px 28px 16px;
-}
-.feedback-card {
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  background: var(--bg-secondary);
-  padding: 16px 20px;
-}
-.feedback-card h3 {
-  margin: 0 0 12px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
 }
 
 /* ===== Shared Form Elements ===== */
@@ -3416,44 +3269,10 @@ button:disabled {
   color: var(--brand-hover);
 }
 
-/* ===== Legacy Panel Compat ===== */
-.section-title {
-  margin: 0 0 14px;
-  font-size: 20px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.panel-subtitle { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
-.panel-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.list { display: grid; gap: 8px; margin-top: 12px; }
-
 /* ===== Responsive ===== */
 @media (max-width: 1024px) {
   .console-layout { grid-template-columns: 1fr; }
   .console-layout.console-layout-full { grid-template-columns: 1fr; }
-  .console-layout.admin-sidebar-collapsed { grid-template-columns: 1fr; }
-  .sidebar {
-    border-right: 0;
-    border-bottom: 1px solid var(--border-light);
-    height: auto;
-    padding: 8px 12px;
-  }
-  .admin-sidebar-handle { display: none; }
-  .side-nav {
-    display: flex;
-    gap: 4px;
-    overflow-x: auto;
-  }
-  .side-item { white-space: nowrap; }
   .chat-layout { grid-template-columns: 1fr; }
   .chat-layout.sidebar-collapsed { grid-template-columns: 1fr; }
   .chat-sidebar-handle { display: none; }
@@ -3487,7 +3306,6 @@ button:disabled {
   .auth-panel { padding: 28px 24px; max-width: 100%; margin: 0 16px; }
   .auth-slogan { font-size: 20px; }
   .chat-prompt-grid { grid-template-columns: 1fr; }
-  .msg-content { max-width: 90%; }
   .chat-composer {
     padding: 8px 14px 14px;
     max-width: 100%;

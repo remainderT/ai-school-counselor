@@ -171,9 +171,9 @@ public class IntentDirectedSearchChannel implements SearchChannel {
             ? Set.of(decision.getKnowledgeBaseId())
             : Set.of();
         if (!kbIds.isEmpty()) {
-            return smartRetrieverService.retrieveScoped(query, topK, context.getUserId(), kbIds);
+            return smartRetrieverService.retrieveVectorScoped(query, topK, context.getUserId(), kbIds);
         }
-        return smartRetrieverService.retrieve(query, topK, context.getUserId());
+        return smartRetrieverService.retrieveVectorOnly(query, topK, context.getUserId());
     }
 
 

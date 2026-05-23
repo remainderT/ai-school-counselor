@@ -80,9 +80,7 @@ public class VectorGlobalSearchChannel implements SearchChannel {
             int multiplier = Math.max(1, properties.getChannels().getVectorGlobal().getTopKMultiplier());
             int effectiveTopK = Math.max(1, context.getTopK() * multiplier);
 
-            // 全局兜底通道优先使用混合检索。这里保留“全局”语义，但不只依赖向量：
-            // 向量对语义泛化友好，BM25 对人名、数字、简称、发票抬头等精确字段更稳。
-            List<RetrievalMatch> hits = smartRetrieverService.retrieve(
+            List<RetrievalMatch> hits = smartRetrieverService.retrieveVectorOnly(
                     context.resolvedQuery(), effectiveTopK, context.getUserId());
 
             // 标记来源通道

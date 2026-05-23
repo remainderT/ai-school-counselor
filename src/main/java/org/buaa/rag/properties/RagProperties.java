@@ -19,8 +19,6 @@ public class RagProperties {
     private Fusion fusion = new Fusion();
     private Rerank rerank = new Rerank();
     private Crag crag = new Crag();
-    private Feedback feedback = new Feedback();
-    private SemanticCache semanticCache = new SemanticCache();
     private Memory memory = new Memory();
     private Retrieval retrieval = new Retrieval();
     private Prompt prompt = new Prompt();
@@ -85,20 +83,6 @@ public class RagProperties {
          * 歧义判定最小消息长度（短于此值视为模糊）
          */
         private int ambiguityMinLength = 6;
-    }
-
-    @Data
-    public static class Feedback {
-        private boolean enabled = true;
-        private double maxBoost = 0.15;
-    }
-
-    @Data
-    public static class SemanticCache {
-        private boolean enabled = true;
-        private double minSimilarity = 0.92;
-        private int maxEntries = 300;
-        private long ttlMinutes = 120;
     }
 
     @Data

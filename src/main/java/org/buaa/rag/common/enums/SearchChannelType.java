@@ -8,6 +8,9 @@ public enum SearchChannelType {
     /** 基于意图的精准定向召回 */
     INTENT_DIRECTED,
 
+    /** 基于 Elasticsearch/BM25 的稀疏文本召回 */
+    SPARSE_TEXT,
+
     /** 不依赖意图的全局向量召回 */
     VECTOR_GLOBAL
 }

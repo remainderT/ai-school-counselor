@@ -19,6 +19,7 @@ public class SearchChannelProperties {
     @Data
     public static class Channels {
         private IntentDirected intentDirected = new IntentDirected();
+        private SparseText sparseText = new SparseText();
         private VectorGlobal vectorGlobal = new VectorGlobal();
     }
 
@@ -36,6 +37,18 @@ public class SearchChannelProperties {
          * 定向召回倍数
          */
         private int topKMultiplier = 2;
+    }
+
+    @Data
+    public static class SparseText {
+        /**
+         * 是否启用 ES/BM25 稀疏文本检索通道
+         */
+        private boolean enabled = true;
+        /**
+         * 稀疏召回倍数
+         */
+        private int topKMultiplier = 3;
     }
 
     @Data
@@ -78,6 +91,10 @@ public class SearchChannelProperties {
          * 是否启用去重处理
          */
         private boolean deduplicate = true;
+        /**
+         * 是否启用 RRF 倒数排名融合
+         */
+        private boolean rrfFusion = true;
         /**
          * 是否启用重排处理
          */

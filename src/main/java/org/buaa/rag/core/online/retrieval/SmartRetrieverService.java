@@ -116,6 +116,32 @@ public class SmartRetrieverService {
         }
     }
 
+    public List<RetrievalMatch> retrieveVectorScoped(String queryText,
+                                                     int topK,
+                                                     String userId,
+                                                     Set<Long> knowledgeIds) {
+        if (knowledgeIds == null || knowledgeIds.isEmpty()) {
+            return retrieveVectorOnly(queryText, topK, userId);
+        }
+        try {
+            List<Float> vector = generateQueryVector(queryText);
+            if (vector == null) {
+                return Collections.emptyList();
+            }
+            List<KnowledgeDO> knowledgeList = knowledgeMapper.selectList(
+                Wrappers.lambdaQuery(KnowledgeDO.class)
+                    .in(KnowledgeDO::getId, knowledgeIds)
+                    .eq(KnowledgeDO::getDelFlag, 0)
+            );
+            int recallSize = calculateRecallSize(queryText, topK);
+            List<RetrievalMatch> results = searchCollectionsParallel(knowledgeList, vector, recallSize);
+            return filterAndEnrichMatches(results, userId, topK);
+        } catch (Exception e) {
+            log.error("定向向量检索失败", e);
+            throw new RuntimeException("定向向量检索过程发生异常", e);
+        }
+    }
+
     public List<RetrievalMatch> retrieveTextOnly(String queryText,
                                                  int topK,
                                                  String userId) {
@@ -129,72 +155,6 @@ public class SmartRetrieverService {
             log.error("文本检索失败，降级返回空结果", e);
             return Collections.emptyList();
         }
-    }
-
-    /**
-     * 在指定知识库集合中检索（意图定向）。
-     * <p>
-     * 直接在对应知识库的 Milvus Collection 中做向量检索，并用 ES 文本检索结果做 RRF 融合后过滤，
-     * 避免全局检索后再过滤的额外开销和跨库噪声。
-     */
-    public List<RetrievalMatch> retrieveScoped(String queryText,
-                                               int topK,
-                                               String userId,
-                                               Set<Long> knowledgeIds) {
-        if (knowledgeIds == null || knowledgeIds.isEmpty()) {
-            return retrieve(queryText, topK, userId);
-        }
-
-        // 查出各知识库的 collectionName
-        List<KnowledgeDO> knowledgeList = knowledgeMapper.selectList(
-            Wrappers.lambdaQuery(KnowledgeDO.class)
-                .in(KnowledgeDO::getId, knowledgeIds)
-                .eq(KnowledgeDO::getDelFlag, 0)
-        );
-
-        List<Float> queryVector = generateQueryVector(queryText);
-        int recallSize = calculateRecallSize(queryText, topK);
-
-        // 并行：向量检索 + 文本检索同时执行
-        List<RetrievalMatch> vectorMatches = queryVector != null
-            ? searchCollectionsParallel(knowledgeList, queryVector, recallSize)
-            : Collections.emptyList();
-
-        List<RetrievalMatch> textMatches;
-        try {
-            textMatches = performTextOnlyRetrievalRaw(queryText, recallSize);
-        } catch (Exception e) {
-            textMatches = Collections.emptyList();
-        }
-
-        // RRF 融合
-        List<RetrievalMatch> fused = fuseRetrievalMatches(List.of(textMatches, vectorMatches), topK);
-
-        // 过滤只保留属于目标知识库的结果
-        Set<String> md5s = fused.stream()
-            .map(RetrievalMatch::getFileMd5)
-            .filter(md5 -> md5 != null && !md5.isBlank())
-            .collect(Collectors.toSet());
-
-        if (md5s.isEmpty()) {
-            return List.of();
-        }
-
-        List<DocumentDO> docs = documentMapper.selectList(
-            Wrappers.lambdaQuery(DocumentDO.class)
-                .in(DocumentDO::getMd5Hash, md5s)
-                .eq(DocumentDO::getDelFlag, 0)
-        );
-        Set<String> allowed = docs.stream()
-            .filter(doc -> doc.getKnowledgeId() != null && knowledgeIds.contains(doc.getKnowledgeId()))
-            .map(DocumentDO::getMd5Hash)
-            .collect(Collectors.toSet());
-
-        List<RetrievalMatch> scoped = fused.stream()
-            .filter(match -> allowed.contains(match.getFileMd5()))
-            .collect(Collectors.toList());
-
-        return filterAndEnrichMatches(scoped, userId, topK);
     }
 
     /**

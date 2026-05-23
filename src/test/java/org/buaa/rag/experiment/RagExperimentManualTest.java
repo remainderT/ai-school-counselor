@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import lombok.extern.slf4j.Slf4j;
-import org.buaa.rag.common.util.VectorMathUtils;
 import org.buaa.rag.core.model.CragDecision;
 import org.buaa.rag.core.model.IntentDecision;
 import org.buaa.rag.core.model.RetrievalMatch;
@@ -2247,7 +2246,7 @@ class RagExperimentManualTest {
 
         private RetrievalMatch toMatch(BaselineBChunkVector item, float[] queryVector) {
             BaselineBChunk chunk = item.chunk();
-            double score = VectorMathUtils.cosine(queryVector, item.vector());
+            double score = cosine(queryVector, item.vector());
             RetrievalMatch match = new RetrievalMatch(
                 chunk.md5Hash(),
                 chunk.fragmentIndex(),
@@ -2257,6 +2256,28 @@ class RagExperimentManualTest {
             match.setDocumentId(chunk.documentId());
             match.setSourceFileName(chunk.fileName());
             return match;
+        }
+
+        private double cosine(float[] a, float[] b) {
+            if (a == null || b == null || a.length == 0 || b.length == 0 || a.length != b.length) {
+                return 0.0;
+            }
+            double dot = 0.0;
+            double normA = 0.0;
+            double normB = 0.0;
+            for (int i = 0; i < a.length; i++) {
+                dot += a[i] * b[i];
+                normA += a[i] * a[i];
+                normB += b[i] * b[i];
+            }
+            if (normA == 0.0 || normB == 0.0) {
+                return 0.0;
+            }
+            double raw = dot / (Math.sqrt(normA) * Math.sqrt(normB));
+            if (Double.isNaN(raw) || Double.isInfinite(raw)) {
+                return 0.0;
+            }
+            return Math.max(0.0, Math.min(1.0, (raw + 1.0) / 2.0));
         }
     }
 }
