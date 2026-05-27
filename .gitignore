@@ -35,3 +35,4 @@ frontend/*.tsbuildinfo
 
 # RAG experiment outputs
 evaluation-output/
+experiment/

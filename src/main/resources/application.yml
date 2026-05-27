@@ -171,6 +171,14 @@ rag:
       - 怎么弄
       - 怎么办
     ambiguity-min-length: 6
+  feedback:
+    enabled: true
+    max-boost: 0.15
+  semantic-cache:
+    enabled: true
+    min-similarity: 0.92
+    max-entries: 300
+    ttl-minutes: 120
   memory:
     history-keep-turns: 4
     summary-enabled: true
@@ -194,9 +202,6 @@ rag:
         enabled: true
         min-intent-score: 0.55
         top-k-multiplier: 3
-      sparse-text:
-        enabled: true
-        top-k-multiplier: 3
       vector-global:
         enabled: true
         supplement-high-confidence-intent: false
@@ -207,8 +212,8 @@ rag:
         default-confidence: 0.7
     post-processor:
       deduplicate: true
-      rrf-fusion: true
       rerank: true
+  intent-routing: {}
   intent-guidance:
     enabled: true
     hit-threshold: 0.58

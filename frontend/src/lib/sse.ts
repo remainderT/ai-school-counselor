@@ -8,6 +8,7 @@ export interface StreamHandlers {
   onSources?: (sources: unknown) => void;
   onMessageId?: (messageId: number) => void;
   onFinish?: (payload: FinishPayload) => void;
+  onStatus?: (stage: string, label: string) => void;
   onDone?: () => void;
   onError?: (error: Error) => void;
 }
@@ -49,6 +50,13 @@ function routeEvent(name: string, payload: unknown, handlers: StreamHandlers): v
       const messageId = extractMessageId(payload);
       if (messageId !== null) {
         handlers.onMessageId?.(messageId);
+      }
+      break;
+    }
+    case "status": {
+      const statusPayload = payload && typeof payload === "object" ? payload as { stage?: string; label?: string } : {};
+      if (statusPayload.stage && statusPayload.label) {
+        handlers.onStatus?.(statusPayload.stage, statusPayload.label);
       }
       break;
     }

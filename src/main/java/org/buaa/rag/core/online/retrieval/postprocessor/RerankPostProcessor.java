@@ -40,7 +40,7 @@ public class RerankPostProcessor implements SearchResultPostProcessor {
 
     @Override
     public int stage() {
-        return 20;
+        return 30;
     }
 
     @Override

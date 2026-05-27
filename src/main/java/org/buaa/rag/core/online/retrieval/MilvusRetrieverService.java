@@ -12,6 +12,7 @@ import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.offline.index.MilvusCollectionManager;
 import org.buaa.rag.properties.MilvusProperties;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import io.milvus.v2.client.MilvusClientV2;
@@ -33,14 +34,14 @@ public class MilvusRetrieverService {
     private static final int MIN_EF = 8;
     private static final int MAX_EF = 32768;
 
-    private final MilvusClientV2 milvusClient;
+    private final ObjectProvider<MilvusClientV2> milvusClientProvider;
     private final MilvusCollectionManager collectionManager;
     private final MilvusProperties milvusProperties;
 
-    public MilvusRetrieverService(MilvusClientV2 milvusClient,
+    public MilvusRetrieverService(ObjectProvider<MilvusClientV2> milvusClientProvider,
                                   MilvusCollectionManager collectionManager,
                                   MilvusProperties milvusProperties) {
-        this.milvusClient = milvusClient;
+        this.milvusClientProvider = milvusClientProvider;
         this.collectionManager = collectionManager;
         this.milvusProperties = milvusProperties;
     }
@@ -89,7 +90,7 @@ public class MilvusRetrieverService {
                 .outputFields(List.of("source_md5", "segment_number", "text_payload"))
                 .build();
 
-            SearchResp response = milvusClient.search(request);
+            SearchResp response = milvusClient().search(request);
             List<List<SearchResp.SearchResult>> results = response.getSearchResults();
             if (results == null || results.isEmpty()) {
                 return Collections.emptyList();
@@ -144,5 +145,9 @@ public class MilvusRetrieverService {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private MilvusClientV2 milvusClient() {
+        return milvusClientProvider.getObject();
     }
 }

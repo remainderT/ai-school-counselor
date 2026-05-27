@@ -137,23 +137,46 @@ public class ChatFacade implements ChatService {
      */
     @Override
     public List<RetrievalMatch> handleSearchRequest(String query, int topK, Long userId) {
-        String userIdStr = String.valueOf(resolveUserId(userId));
-        IntentDecision decision = null;
-        try {
-            IntentDecision raw = intentRouterService.decide(userIdStr, query);
-            if (raw != null && raw.getAction() == IntentDecision.Action.ROUTE_RAG) {
-                decision = raw;
-            }
-        } catch (Exception e) {
-            log.debug("搜索接口意图识别失败，降级到全局检索: {}", e.getMessage());
-        }
+        return handleSearchRequest(query, topK, userId, "full");
+    }
 
-        List<RetrievalMatch> results = multiChannelRetrievalEngine.retrieve(userIdStr, query, topK, decision);
-        if (results.isEmpty()) {
-            results = retrieverService.retrieve(query, topK, userIdStr);
-            results = postProcessorService.rerank(query, results, topK);
+    /**
+     * 带 mode 参数的检索接口，用于对照实验。
+     * mode: es(纯BM25) / vector(纯向量) / hybrid(混合无重排) / full(完整流程含意图路由+重排)
+     */
+    @Override
+    public List<RetrievalMatch> handleSearchRequest(String query, int topK, Long userId, String mode) {
+        String userIdStr = String.valueOf(resolveUserId(userId));
+        if (mode == null) mode = "full";
+        switch (mode) {
+            case "es":
+                return retrieverService.retrieveTextOnly(query, topK, userIdStr);
+            case "vector":
+                return retrieverService.retrieveVectorOnly(query, topK, userIdStr);
+            case "hybrid": {
+                // BM25+向量 RRF融合，不做重排
+                List<RetrievalMatch> raw = retrieverService.retrieve(query, topK, userIdStr);
+                return raw; // retrieve() 内部已做平袍融合
+            }
+            default: {
+                // full: 意图路由 + 多通道并发检索 + RRF + 重排
+                IntentDecision decision = null;
+                try {
+                    IntentDecision raw = intentRouterService.decide(userIdStr, query);
+                    if (raw != null && raw.getAction() == IntentDecision.Action.ROUTE_RAG) {
+                        decision = raw;
+                    }
+                } catch (Exception e) {
+                    log.debug("搜索接口意图识别失败，降级到全局检索: {}", e.getMessage());
+                }
+                List<RetrievalMatch> results = multiChannelRetrievalEngine.retrieve(userIdStr, query, topK, decision);
+                if (results.isEmpty()) {
+                    results = retrieverService.retrieve(query, topK, userIdStr);
+                    results = postProcessorService.rerank(query, results, topK);
+                }
+                return results;
+            }
         }
-        return results;
     }
 
     // ──────────────────────── helpers ────────────────────────

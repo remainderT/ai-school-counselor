@@ -17,6 +17,9 @@
       },
       "encoding_model": {
         "type": "keyword"
+      },
+      "knowledge_id": {
+        "type": "long"
       }
     }
   }

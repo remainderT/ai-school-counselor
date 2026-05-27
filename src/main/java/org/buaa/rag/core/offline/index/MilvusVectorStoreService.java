@@ -9,6 +9,7 @@ import org.buaa.rag.dao.entity.DocumentDO;
 import org.buaa.rag.common.convention.exception.ServiceException;
 import org.buaa.rag.core.model.ContentFragment;
 import org.buaa.rag.properties.MilvusProperties;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import com.google.gson.JsonArray;
@@ -32,7 +33,7 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class MilvusVectorStoreService {
 
-    private final MilvusClientV2 milvusClient;
+    private final ObjectProvider<MilvusClientV2> milvusClientProvider;
     private final MilvusCollectionManager collectionManager;
     private final MilvusProperties milvusProperties;
 
@@ -79,7 +80,7 @@ public class MilvusVectorStoreService {
             .data(rows)
             .build();
 
-        UpsertResp response = milvusClient.upsert(request);
+        UpsertResp response = milvusClient().upsert(request);
         log.info("Milvus 文档向量写入成功: collection={}, md5={}, upsertCnt={}",
             collectionName, document.getMd5Hash(), response.getUpsertCnt());
     }
@@ -121,7 +122,7 @@ public class MilvusVectorStoreService {
             .data(List.of(row))
             .build();
 
-        UpsertResp response = milvusClient.upsert(request);
+        UpsertResp response = milvusClient().upsert(request);
         log.info("Milvus 单 chunk 向量写入成功: collection={}, pk={}, upsertCnt={}",
             collectionName, buildPrimaryKey(document.getMd5Hash(), fragmentId), response.getUpsertCnt());
     }
@@ -143,7 +144,7 @@ public class MilvusVectorStoreService {
         }
         try {
             String primaryKey = buildPrimaryKey(documentMd5, fragmentId);
-            DeleteResp response = milvusClient.delete(
+            DeleteResp response = milvusClient().delete(
                 DeleteReq.builder()
                     .collectionName(collectionName)
                     .ids(List.of(primaryKey))
@@ -171,7 +172,7 @@ public class MilvusVectorStoreService {
             return;
         }
         try {
-            DeleteResp response = milvusClient.delete(
+            DeleteResp response = milvusClient().delete(
                 DeleteReq.builder()
                     .collectionName(collectionName)
                     .filter("source_md5 == \"" + escapeLiteral(documentMd5.trim()) + "\"")
@@ -218,5 +219,9 @@ public class MilvusVectorStoreService {
 
     private String escapeLiteral(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private MilvusClientV2 milvusClient() {
+        return milvusClientProvider.getObject();
     }
 }

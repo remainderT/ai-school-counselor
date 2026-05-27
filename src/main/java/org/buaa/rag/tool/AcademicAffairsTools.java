@@ -10,7 +10,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-import org.buaa.rag.core.online.tool.mcp.BuaaAcademicTermResolver;
+import org.buaa.rag.core.online.mcp.BuaaAcademicTermResolver;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 

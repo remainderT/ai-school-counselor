@@ -49,7 +49,7 @@ public class RagPromptService {
     /** 多意图综合场景默认系统提示 */
     private static final String MULTI_INTENT_DEFAULT_PROMPT =
         PromptTemplateLoader.load("rag-multi-intent.st");
-    /** 单个文档块模板：对齐 context-format.st sub-question-kb-wrapper section */
+    /** 单个文档块模板：用于 <documents> 上下文块。 */
     private static final String DOC_BLOCK_TPL =
         "<document index=\"%d\">\n<question>%s</question>\n<content>%s</content>\n</document>";
     /** 动态结果片段（工具结果）标头，保留给 tool context 场景 */
@@ -276,7 +276,7 @@ public class RagPromptService {
 
         messages.addAll(llmService.toStructuredHistory(conversationHistory));
         if (!isBlank(promptContext.getQuestion())) {
-            // 用 XML <question> 标签包装，对齐 context-format.st single-question section
+            // 用 XML <question> 标签包装，降低用户问题与上下文混淆。
             messages.add(Map.of("role", "user", "content",
                 "<question>" + promptContext.getQuestion().trim() + "</question>"));
         }
@@ -412,7 +412,7 @@ public class RagPromptService {
     }
 
     private String buildMultiIntentUserQuery(String originalQuery, List<SubQueryRetrievalResult> subQueryResults) {
-        // 用 XML <questions> 块包装，对齐 context-format.st multi-questions section
+        // 用 XML <questions> 块包装，降低多问题边界混淆。
         StringBuilder questions = new StringBuilder();
         for (int i = 0; i < subQueryResults.size(); i++) {
             questions.append(i + 1).append(". ").append(subQueryResults.get(i).query()).append("\n");

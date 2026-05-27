@@ -6,6 +6,7 @@ import java.util.Map;
 
 import org.buaa.rag.core.model.ContentFragment;
 import org.buaa.rag.properties.MilvusProperties;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import io.milvus.v2.client.MilvusClientV2;
@@ -29,7 +30,7 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class MilvusCollectionManager {
 
-    private final MilvusClientV2 milvusClient;
+    private final ObjectProvider<MilvusClientV2> milvusClientProvider;
     private final MilvusProperties milvusProperties;
     private final EmbeddingService embeddingService;
 
@@ -58,7 +59,7 @@ public class MilvusCollectionManager {
             return;
         }
         try {
-            milvusClient.dropCollection(DropCollectionReq.builder()
+            milvusClient().dropCollection(DropCollectionReq.builder()
                 .collectionName(collectionName)
                 .build());
             log.info("Milvus collection 已删除: {}", collectionName);
@@ -70,7 +71,7 @@ public class MilvusCollectionManager {
 
     public boolean collectionExists(String collectionName) {
         return Boolean.TRUE.equals(
-            milvusClient.hasCollection(
+            milvusClient().hasCollection(
                 HasCollectionReq.builder()
                     .collectionName(collectionName)
                     .build()
@@ -145,7 +146,7 @@ public class MilvusCollectionManager {
             .build();
 
         try {
-            milvusClient.createCollection(request);
+            milvusClient().createCollection(request);
             log.info("创建 Milvus collection 成功: {}, dimension={}", collectionName, dimension);
         } catch (Exception e) {
             if (collectionExists(collectionName) || isAlreadyExists(e)) {
@@ -186,5 +187,9 @@ public class MilvusCollectionManager {
             current = current.getCause();
         }
         return false;
+    }
+
+    private MilvusClientV2 milvusClient() {
+        return milvusClientProvider.getObject();
     }
 }

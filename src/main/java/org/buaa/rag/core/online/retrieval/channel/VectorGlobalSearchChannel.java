@@ -14,10 +14,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 全局向量检索通道。
+ * 全局混合兜底检索通道。
  * <p>
  * 当意图置信度不足（或不存在有效意图）时承担兜底召回，
- * 先尝试纯向量检索，无结果则降级为混合检索。
+ * 在全部知识库范围内执行 Milvus 向量 + ES/BM25 混合检索。
  */
 @Slf4j
 @Component
@@ -34,7 +34,7 @@ public class VectorGlobalSearchChannel implements SearchChannel {
 
     @Override
     public String description() {
-        return "全局向量兜底检索通道（低置信或无意图时激活）";
+        return "全局混合兜底检索通道（低置信或无意图时激活）";
     }
 
     @Override
@@ -80,7 +80,9 @@ public class VectorGlobalSearchChannel implements SearchChannel {
             int multiplier = Math.max(1, properties.getChannels().getVectorGlobal().getTopKMultiplier());
             int effectiveTopK = Math.max(1, context.getTopK() * multiplier);
 
-            List<RetrievalMatch> hits = smartRetrieverService.retrieveVectorOnly(
+            // 全局兜底通道优先使用混合检索。这里保留“全局”语义，但不只依赖向量：
+            // 向量对语义泛化友好，BM25 对人名、数字、简称、发票抬头等精确字段更稳。
+            List<RetrievalMatch> hits = smartRetrieverService.retrieve(
                     context.resolvedQuery(), effectiveTopK, context.getUserId());
 
             // 标记来源通道
@@ -94,7 +96,7 @@ public class VectorGlobalSearchChannel implements SearchChannel {
                     SearchChannelType.VECTOR_GLOBAL, channelId(),
                     hits, topScore, nanosToMs(t0));
         } catch (Exception ex) {
-            log.warn("全局向量检索失败", ex);
+            log.warn("全局混合检索失败", ex);
             return SearchChannelResult.empty(SearchChannelType.VECTOR_GLOBAL, channelId());
         }
     }

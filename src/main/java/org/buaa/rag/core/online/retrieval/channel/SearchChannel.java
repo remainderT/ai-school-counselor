@@ -3,7 +3,7 @@ package org.buaa.rag.core.online.retrieval.channel;
 import org.buaa.rag.common.enums.SearchChannelType;
 
 /**
- * 可插拔的检索通道：每个实现封装一种独立的召回策略（意图定向、向量全局等）。
+ * 可插拔的检索通道：每个实现封装一种独立的召回策略（意图定向、全局兜底等）。
  *
  * <p>多通道引擎在运行时通过 {@link #isApplicable(SearchContext)} 判断哪些通道
  * 参与当前轮检索，再按 {@link #dispatchOrder()} 决定调度顺序。通道之间互不感知，

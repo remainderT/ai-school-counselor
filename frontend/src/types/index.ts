@@ -22,6 +22,18 @@ export interface RetrievalMatch {
   sourceUrl?: string;
 }
 
+export interface ChatResponsePayload {
+  response: string;
+  sources: RetrievalMatch[];
+}
+
+export interface FeedbackPayload {
+  messageId: number;
+  score: number;
+  comment?: string;
+  userId?: string;
+}
+
 export interface KnowledgeItem {
   id: number;
   userId?: string;
@@ -78,6 +90,20 @@ export interface StreamEvent {
   event: string;
   data: unknown;
 }
+
+export interface StreamStatusPayload {
+  stage: string;
+  label: string;
+}
+
+/** RAG 各阶段状态配置 */
+export const RAG_STATUS_STAGES: Record<string, { label: string; icon: string }> = {
+  rewrite:    { label: "子问题拆解中",   icon: "✂️" },
+  intent:     { label: "意图识别中",   icon: "🎯" },
+  retrieval:  { label: "混合检索中",   icon: "🔍" },
+  rerank:     { label: "重排中",       icon: "✨" },
+  generating: { label: "LLM 生成中",  icon: "💭" },
+};
 
 export interface ConversationSessionItem {
   sessionId: string;

@@ -18,7 +18,6 @@ import org.buaa.rag.core.online.intent.SubQueryIntent;
 import org.buaa.rag.core.online.retrieval.SubQueryRetrievalResult;
 import org.buaa.rag.core.online.retrieval.SubQueryRetrievalService;
 import org.buaa.rag.core.online.retrieval.postprocessor.RetrievalPostProcessorService;
-import org.buaa.rag.core.online.tool.ToolService;
 import org.buaa.rag.properties.RagProperties;
 import org.buaa.rag.core.online.trace.RagTraceContext;
 import org.buaa.rag.core.online.trace.RagTraceNode;
@@ -64,11 +63,25 @@ public class RouteExecutionCoordinator {
                                    long rewriteLatencyMs,
                                    Consumer<String> chunkHandler,
                                    StreamCancellationHandle cancelHandle) {
+        return execute(userId, userMessage, conversationHistory, rewrittenQuery, resolvedSubQueries,
+                rewriteLatencyMs, chunkHandler, cancelHandle, null);
+    }
+
+    @RagTraceNode(name = "route-execution-with-status", type = "ROUTE_EXECUTE")
+    public ExecutionResult execute(String userId,
+                                   String userMessage,
+                                   List<Map<String, String>> conversationHistory,
+                                   String rewrittenQuery,
+                                   List<SubQueryIntent> resolvedSubQueries,
+                                   long rewriteLatencyMs,
+                                   Consumer<String> chunkHandler,
+                                   StreamCancellationHandle cancelHandle,
+                                   StreamChatCallback statusCallback) {
 
         StreamResult executionResult;
         if (resolvedSubQueries.size() > 1) {
             executionResult = executeMultiIntentRoute(
-                userId, userMessage, resolvedSubQueries, conversationHistory, chunkHandler, cancelHandle);
+                userId, userMessage, resolvedSubQueries, conversationHistory, chunkHandler, cancelHandle, statusCallback);
         } else {
             IntentDecision primaryIntent = resolvedSubQueries.isEmpty()
                 ? subQueryRetrievalService.defaultHybridIntent()
@@ -81,7 +94,7 @@ public class RouteExecutionCoordinator {
                 ? userMessage
                 : rewrittenQuery;
             executionResult = executeSingleIntentRoute(
-                userId, singleRouteQuery, primaryIntent, candidates, conversationHistory, chunkHandler, cancelHandle);
+                userId, singleRouteQuery, primaryIntent, candidates, conversationHistory, chunkHandler, cancelHandle, statusCallback);
         }
 
         return new ExecutionResult(
@@ -99,7 +112,8 @@ public class RouteExecutionCoordinator {
                                                  List<SubQueryIntent> resolvedSubQueries,
                                                  List<Map<String, String>> conversationHistory,
                                                  Consumer<String> chunkHandler,
-                                                 StreamCancellationHandle cancelHandle) {
+                                                 StreamCancellationHandle cancelHandle,
+                                                 StreamChatCallback statusCallback) {
         long routeStart = System.nanoTime();
         List<SubQueryIntent> validSubQueries = resolvedSubQueries == null ? List.of()
             : resolvedSubQueries.stream()
@@ -109,7 +123,7 @@ public class RouteExecutionCoordinator {
         if (validSubQueries.isEmpty()) {
             return executeSingleIntentRoute(
                 userId, originalQuery, subQueryRetrievalService.defaultHybridIntent(),
-                List.of(), conversationHistory, chunkHandler, cancelHandle);
+                List.of(), conversationHistory, chunkHandler, cancelHandle, statusCallback);
         }
 
         // 捕获父线程 Trace 上下文，跨线程传播到子任务
@@ -166,11 +180,12 @@ public class RouteExecutionCoordinator {
         boolean hasUsableEvidence = results.stream().anyMatch(this::hasUsableEvidence);
         log.info("多意图子问题阶段完成 | query='{}' | 子问题数={} | 子任务耗时={}ms | 可用证据={} | 原始来源数={}",
             compact(originalQuery), results.size(), subQueryExecutionElapsed, hasUsableEvidence, mergedSources.size());
+        if (statusCallback != null) statusCallback.onStatus("rerank", "重排中");
 
         if (!hasUsableEvidence) {
             return executeSingleIntentRoute(
                 userId, originalQuery, subQueryRetrievalService.defaultHybridIntent(),
-                List.of(), conversationHistory, chunkHandler, cancelHandle);
+                List.of(), conversationHistory, chunkHandler, cancelHandle, statusCallback);
         }
 
         List<RetrievalMatch> deduplicated = ragPromptService.collectDisplayedMultiIntentSources(results);
@@ -188,6 +203,7 @@ public class RouteExecutionCoordinator {
             return new StreamResult(stitched, List.of(), clarifyTriggered, retrievedCount, retrievalTopK);
         }
 
+        if (statusCallback != null) statusCallback.onStatus("generating", "LLM 生成中");
         long synthesizeStart = System.nanoTime();
         String synthesized = ragPromptService.generateMultiIntentAnswer(
             originalQuery, conversationHistory, results, chunkHandler, cancelHandle);
@@ -202,7 +218,8 @@ public class RouteExecutionCoordinator {
                                                   List<IntentDecision> preResolvedCandidates,
                                                   List<Map<String, String>> conversationHistory,
                                                   Consumer<String> chunkHandler,
-                                                  StreamCancellationHandle cancelHandle) {
+                                                  StreamCancellationHandle cancelHandle,
+                                                  StreamChatCallback statusCallback) {
         long routeStart = System.nanoTime();
         IntentDecision resolved = (intent == null || intent.getAction() == null)
             ? subQueryRetrievalService.defaultHybridIntent()
@@ -278,6 +295,7 @@ public class RouteExecutionCoordinator {
         }
 
         List<RetrievalMatch> displayedSources = ragPromptService.limitSourcesForAnswer(retrievalResults);
+        if (statusCallback != null) statusCallback.onStatus("generating", "LLM 生成中");
 
         long answerStart = System.nanoTime();
         String finalResponse = ragPromptService.generateSingleIntentStructuredAnswer(

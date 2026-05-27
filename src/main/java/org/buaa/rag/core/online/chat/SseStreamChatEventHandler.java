@@ -58,6 +58,19 @@ public class SseStreamChatEventHandler implements StreamChatCallback {
     }
 
     @Override
+    public void onStatus(String stage, String label) {
+        if (cancelled.get()) {
+            return;
+        }
+        try {
+            String payload = objectMapper.writeValueAsString(new StatusPayload(stage, label));
+            emitter.send(SseEmitter.event().name("status").data(payload));
+        } catch (Exception e) {
+            log.debug("发送 status 事件失败: {}", e.getMessage());
+        }
+    }
+
+    @Override
     public void onMeta(Long messageId, String taskId) {
         if (cancelled.get()) {
             return;
@@ -193,4 +206,6 @@ public class SseStreamChatEventHandler implements StreamChatCallback {
     public record MessageDelta(String type, String delta) {}
 
     public record FinishPayload(String title, Long messageId) {}
+
+    public record StatusPayload(String stage, String label) {}
 }

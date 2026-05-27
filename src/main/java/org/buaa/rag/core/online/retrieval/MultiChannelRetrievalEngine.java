@@ -26,7 +26,7 @@ import lombok.extern.slf4j.Slf4j;
  * 多通道检索引擎。
  *
  * <p>根据当前请求上下文动态筛选可用通道，并行执行检索后将结果汇集，
- * 再依次流经后处理链（RRF 融合 → 精排 → 过滤 → 截断）得到最终结果。
+ * 再依次流经后处理链（去重 → 精排 → 截断）得到最终结果。
  *
  * <p>引擎本身不包含任何检索逻辑——检索策略全部由 {@link SearchChannel}
  * 实现承载，引擎仅负责调度、容错和编排。
@@ -164,7 +164,7 @@ public class MultiChannelRetrievalEngine {
                         log.warn("补充全局检索后处理异常: processor={} | error={}", proc.label(), ex.getMessage(), ex);
                     }
                 }
-                log.info("定向检索低分，已补充全局向量检索 | query='{}' | 原结果={} | 补充后={}",
+                log.info("定向检索低分，已补充全局混合检索 | query='{}' | 原结果={} | 补充后={}",
                     truncate(ctx.getOriginalQuery(), 60), result.size(), supplementedResult.size());
                 result = supplementedResult;
             }
@@ -243,8 +243,9 @@ public class MultiChannelRetrievalEngine {
         if (topScore == null) {
             return true;
         }
+        // 分数极低（< 0.05）说明定向检索完全没命中，更应该走全局 fallback
         if (topScore > 0.0 && topScore < 0.05) {
-            return false;
+            return true;
         }
         return topScore < config.getSupplementScoreThreshold();
     }

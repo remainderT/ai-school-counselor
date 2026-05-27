@@ -9,7 +9,6 @@ import org.buaa.rag.core.model.RetrievalMatch;
 import org.buaa.rag.core.online.retrieval.channel.SearchChannelResult;
 import org.buaa.rag.core.online.retrieval.channel.SearchContext;
 import org.buaa.rag.properties.RagProperties;
-import org.buaa.rag.properties.SearchChannelProperties;
 import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
@@ -24,7 +23,6 @@ import lombok.extern.slf4j.Slf4j;
 public class RrfFusionPostProcessor implements SearchResultPostProcessor {
 
     private final RagProperties ragProperties;
-    private final SearchChannelProperties searchChannelProperties;
 
     @Override
     public String label() {
@@ -33,27 +31,45 @@ public class RrfFusionPostProcessor implements SearchResultPostProcessor {
 
     @Override
     public int stage() {
-        return 10;
+        return 20;
     }
 
     @Override
     public boolean isActive(SearchContext ctx) {
-        return ragProperties.getFusion().isEnabled()
-            && searchChannelProperties.getPostProcessor().isRrfFusion();
+        return ragProperties.getFusion().isEnabled();
     }
 
     @Override
     public List<RetrievalMatch> process(List<RetrievalMatch> candidates,
                                         List<SearchChannelResult> channelOutputs,
                                         SearchContext ctx) {
-        if (channelOutputs == null || channelOutputs.isEmpty()) {
+        if (candidates == null || candidates.isEmpty()) {
             return candidates == null ? List.of() : candidates;
         }
 
         int rrfK = Math.max(1, ragProperties.getFusion().getRrfK());
-        Map<String, RetrievalMatch> bestMatch = new LinkedHashMap<>();
-        Map<String, Double> rrfScores = new LinkedHashMap<>();
+        Map<String, Double> rrfScores = buildRrfScores(channelOutputs, rrfK);
+        List<RetrievalMatch> fused = new ArrayList<>(candidates.size());
 
+        for (RetrievalMatch match : candidates) {
+            if (match == null) {
+                continue;
+            }
+            double score = rrfScores.getOrDefault(match.matchKey(), relevance(match));
+            match.setRelevanceScore(score);
+            fused.add(match);
+        }
+        fused.sort((left, right) -> Double.compare(relevance(right), relevance(left)));
+        log.debug("RRF融合完成: 输入={} | 输出={}",
+            candidates.size(), fused.size());
+        return fused;
+    }
+
+    private Map<String, Double> buildRrfScores(List<SearchChannelResult> channelOutputs, int rrfK) {
+        Map<String, Double> scores = new LinkedHashMap<>();
+        if (channelOutputs == null || channelOutputs.isEmpty()) {
+            return scores;
+        }
         for (SearchChannelResult output : channelOutputs) {
             if (output == null || output.hits() == null || output.hits().isEmpty()) {
                 continue;
@@ -64,22 +80,10 @@ public class RrfFusionPostProcessor implements SearchResultPostProcessor {
                 if (match == null) {
                     continue;
                 }
-                String key = match.matchKey();
-                rrfScores.merge(key, 1.0 / (rrfK + rank + 1), Double::sum);
-                bestMatch.merge(key, match, (left, right) -> relevance(left) >= relevance(right) ? left : right);
+                scores.merge(match.matchKey(), 1.0 / (rrfK + rank + 1), Double::sum);
             }
         }
-
-        List<RetrievalMatch> fused = new ArrayList<>();
-        for (Map.Entry<String, RetrievalMatch> entry : bestMatch.entrySet()) {
-            RetrievalMatch match = entry.getValue();
-            match.setRelevanceScore(rrfScores.getOrDefault(entry.getKey(), 0.0));
-            fused.add(match);
-        }
-        fused.sort((left, right) -> Double.compare(relevance(right), relevance(left)));
-        log.debug("RRF融合完成: 通道数={} | 输入={} | 输出={}",
-            channelOutputs.size(), candidates == null ? 0 : candidates.size(), fused.size());
-        return fused;
+        return scores;
     }
 
     private double relevance(RetrievalMatch match) {

@@ -116,32 +116,6 @@ public class SmartRetrieverService {
         }
     }
 
-    public List<RetrievalMatch> retrieveVectorScoped(String queryText,
-                                                     int topK,
-                                                     String userId,
-                                                     Set<Long> knowledgeIds) {
-        if (knowledgeIds == null || knowledgeIds.isEmpty()) {
-            return retrieveVectorOnly(queryText, topK, userId);
-        }
-        try {
-            List<Float> vector = generateQueryVector(queryText);
-            if (vector == null) {
-                return Collections.emptyList();
-            }
-            List<KnowledgeDO> knowledgeList = knowledgeMapper.selectList(
-                Wrappers.lambdaQuery(KnowledgeDO.class)
-                    .in(KnowledgeDO::getId, knowledgeIds)
-                    .eq(KnowledgeDO::getDelFlag, 0)
-            );
-            int recallSize = calculateRecallSize(queryText, topK);
-            List<RetrievalMatch> results = searchCollectionsParallel(knowledgeList, vector, recallSize);
-            return filterAndEnrichMatches(results, userId, topK);
-        } catch (Exception e) {
-            log.error("定向向量检索失败", e);
-            throw new RuntimeException("定向向量检索过程发生异常", e);
-        }
-    }
-
     public List<RetrievalMatch> retrieveTextOnly(String queryText,
                                                  int topK,
                                                  String userId) {
@@ -155,6 +129,72 @@ public class SmartRetrieverService {
             log.error("文本检索失败，降级返回空结果", e);
             return Collections.emptyList();
         }
+    }
+
+    /**
+     * 在指定知识库集合中检索（意图定向）。
+     * <p>
+     * 直接在对应知识库的 Milvus Collection 中做向量检索，并用 ES 文本检索结果做 RRF 融合后过滤，
+     * 避免全局检索后再过滤的额外开销和跨库噪声。
+     */
+    public List<RetrievalMatch> retrieveScoped(String queryText,
+                                               int topK,
+                                               String userId,
+                                               Set<Long> knowledgeIds) {
+        if (knowledgeIds == null || knowledgeIds.isEmpty()) {
+            return retrieve(queryText, topK, userId);
+        }
+
+        // 查出各知识库的 collectionName
+        List<KnowledgeDO> knowledgeList = knowledgeMapper.selectList(
+            Wrappers.lambdaQuery(KnowledgeDO.class)
+                .in(KnowledgeDO::getId, knowledgeIds)
+                .eq(KnowledgeDO::getDelFlag, 0)
+        );
+
+        List<Float> queryVector = generateQueryVector(queryText);
+        int recallSize = calculateRecallSize(queryText, topK);
+
+        // 并行：向量检索 + 文本检索同时执行
+        List<RetrievalMatch> vectorMatches = queryVector != null
+            ? searchCollectionsParallel(knowledgeList, queryVector, recallSize)
+            : Collections.emptyList();
+
+        List<RetrievalMatch> textMatches;
+        try {
+            textMatches = performTextOnlyRetrievalRaw(queryText, recallSize, knowledgeIds);
+        } catch (Exception e) {
+            textMatches = Collections.emptyList();
+        }
+
+        // RRF 融合
+        List<RetrievalMatch> fused = fuseRetrievalMatches(List.of(textMatches, vectorMatches), topK);
+
+        // 过滤只保留属于目标知识库的结果
+        Set<String> md5s = fused.stream()
+            .map(RetrievalMatch::getFileMd5)
+            .filter(md5 -> md5 != null && !md5.isBlank())
+            .collect(Collectors.toSet());
+
+        if (md5s.isEmpty()) {
+            return List.of();
+        }
+
+        List<DocumentDO> docs = documentMapper.selectList(
+            Wrappers.lambdaQuery(DocumentDO.class)
+                .in(DocumentDO::getMd5Hash, md5s)
+                .eq(DocumentDO::getDelFlag, 0)
+        );
+        Set<String> allowed = docs.stream()
+            .filter(doc -> doc.getKnowledgeId() != null && knowledgeIds.contains(doc.getKnowledgeId()))
+            .map(DocumentDO::getMd5Hash)
+            .collect(Collectors.toSet());
+
+        List<RetrievalMatch> scoped = fused.stream()
+            .filter(match -> allowed.contains(match.getFileMd5()))
+            .collect(Collectors.toList());
+
+        return filterAndEnrichMatches(scoped, userId, topK);
     }
 
     /**
@@ -245,13 +285,6 @@ public class SmartRetrieverService {
         return Math.min(Math.max(recall, requested), MAX_RECALL_SIZE);
     }
 
-    private boolean isShortQuery(String query) {
-        if (query == null) {
-            return true;
-        }
-        return query.trim().length() <= 6;
-    }
-
     /**
      * 纯文本检索（备用方案）
      */
@@ -261,6 +294,73 @@ public class SmartRetrieverService {
             throws Exception {
         List<RetrievalMatch> results = performTextOnlyRetrievalRaw(query, topK);
         return filterAndEnrichMatches(results, userId, topK);
+    }
+
+    /**
+     * 知识库范围内的文本检索（内部用）
+     */
+    private List<RetrievalMatch> performTextOnlyRetrievalRaw(String query,
+                                                             int topK,
+                                                             Set<Long> knowledgeIds)
+            throws Exception {
+        if (knowledgeIds == null || knowledgeIds.isEmpty()) {
+            return performTextOnlyRetrievalRaw(query, topK);
+        }
+        try {
+            SearchResponse<ESIndexDO> response = esClient.search(searchBuilder ->
+                            searchBuilder
+                                    .index(esProperties.getIndex())
+                                    .query(queryBuilder -> queryBuilder
+                                            .bool(boolBuilder -> boolBuilder
+                                                    .must(mustBuilder -> mustBuilder
+                                                            .match(matchBuilder -> matchBuilder
+                                                                    .field("text_data")
+                                                                    .query(query)
+                                                                    .operator(Operator.Or)
+                                                            )
+                                                    )
+                                                    .filter(filterBuilder -> filterBuilder
+                                                            .terms(termsBuilder -> termsBuilder
+                                                                    .field("knowledge_id")
+                                                                    .terms(t -> t.value(knowledgeIds.stream()
+                                                                            .map(co.elastic.clients.elasticsearch._types.FieldValue::of)
+                                                                            .toList()))
+                                                            )
+                                                    )
+                                            )
+                                    )
+                                    .size(topK),
+                    ESIndexDO.class
+            );
+
+            Set<Long> documentIds = response.hits().hits().stream()
+                    .filter(hit -> hit.source() != null && hit.source().getDocumentId() != null)
+                    .map(hit -> hit.source().getDocumentId())
+                    .collect(Collectors.toSet());
+            Map<Long, String> md5Map = loadMd5MapByDocumentIds(documentIds);
+
+            return response.hits().hits().stream()
+                    .filter(hit -> hit.source() != null)
+                    .map(hit -> {
+                        String md5 = md5Map.get(hit.source().getDocumentId());
+                        RetrievalMatch m = new RetrievalMatch(
+                                md5,
+                                hit.source().getFragmentIndex(),
+                                hit.source().getTextData(),
+                                hit.score()
+                        );
+                        m.setDocumentId(hit.source().getDocumentId());
+                        return m;
+                    })
+                    .filter(match -> match.getTextContent() != null && !match.getTextContent().isBlank())
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            if (isIndexMissing(e)) {
+                log.warn("索引 {} 不存在，文本检索返回空结果", esProperties.getIndex());
+                return Collections.emptyList();
+            }
+            throw e;
+        }
     }
 
     private List<RetrievalMatch> performTextOnlyRetrievalRaw(String query,
@@ -274,7 +374,7 @@ public class SmartRetrieverService {
                                             .match(matchBuilder -> matchBuilder
                                                     .field("text_data")
                                                     .query(query)
-                                                    .operator(isShortQuery(query) ? Operator.Or : Operator.And)
+                                                    .operator(Operator.Or)
                                             )
                                     )
                                     .size(topK),
@@ -289,13 +389,19 @@ public class SmartRetrieverService {
 
             List<RetrievalMatch> results = response.hits().hits().stream()
                     .filter(hit -> hit.source() != null)
-                    .map(hit -> new RetrievalMatch(
-                            md5Map.get(hit.source().getDocumentId()),
-                            hit.source().getFragmentIndex(),
-                            hit.source().getTextData(),
-                            hit.score()
-                    ))
-                    .filter(match -> match.getFileMd5() != null && !match.getFileMd5().isBlank())
+                    .map(hit -> {
+                        String md5 = md5Map.get(hit.source().getDocumentId());
+                        RetrievalMatch m = new RetrievalMatch(
+                                md5,
+                                hit.source().getFragmentIndex(),
+                                hit.source().getTextData(),
+                                hit.score()
+                        );
+                        // md5 为空时，用 documentId 直接写入，保证后续 enrich 能找到文档
+                        m.setDocumentId(hit.source().getDocumentId());
+                        return m;
+                    })
+                    .filter(match -> match.getTextContent() != null && !match.getTextContent().isBlank())
                     .collect(Collectors.toList());
             return results;
         } catch (Exception e) {
@@ -348,10 +454,21 @@ public class SmartRetrieverService {
         }
 
         String normalizedUserId = (userId == null || userId.isBlank()) ? "anonymous" : userId;
+
+        // admin 用户跳过访问过滤，可访问所有文档
+        try {
+            if (org.buaa.rag.common.user.UserContext.isAdmin()) {
+                if (matches.size() > topK) return new ArrayList<>(matches.subList(0, topK));
+                return matches;
+            }
+        } catch (Exception ignored) {}
+
         Set<String> allowedMd5 = new HashSet<>(loadMd5ByOwnerId(normalizedUserId));
 
         List<RetrievalMatch> filtered = matches.stream()
-                .filter(match -> allowedMd5.contains(match.getFileMd5()))
+                // md5 为空的 ES 结果（也就是文档 md5 字段为空）统一放行；否则按 md5 对比
+                .filter(match -> match.getFileMd5() == null || match.getFileMd5().isBlank()
+                        || allowedMd5.contains(match.getFileMd5()))
                 .collect(Collectors.toList());
 
         if (filtered.size() > topK) {
@@ -374,16 +491,32 @@ public class SmartRetrieverService {
         }
 
         Map<String, DocumentDO> recordMap = loadDocumentRecords(accessFiltered);
+        // 导入 documentId -> DocumentDO 的远程缓存，为 md5 为空时提供备用查询
+        Map<Long, DocumentDO> docIdMap = loadDocumentRecordsByIds(
+                accessFiltered.stream()
+                        .filter(m -> (m.getFileMd5() == null || m.getFileMd5().isBlank()) && m.getDocumentId() != null)
+                        .map(RetrievalMatch::getDocumentId)
+                        .collect(Collectors.toSet())
+        );
         List<RetrievalMatch> filtered = new ArrayList<>();
 
         for (RetrievalMatch match : accessFiltered) {
             DocumentDO record = recordMap.get(match.getFileMd5());
+            // md5 查不到时，尝试用 documentId 查
+            if (record == null && match.getDocumentId() != null) {
+                record = docIdMap.get(match.getDocumentId());
+            }
             if (record == null) {
+                // 如果还是找不到就直接用 documentId 作为备用，不过滤
+                if (match.getDocumentId() != null && match.getTextContent() != null) {
+                    filtered.add(match);
+                }
                 continue;
             }
             match.setDocumentId(record.getId());
             match.setSourceFileName(record.getOriginalFileName());
             match.setSourceUrl(record.getSourceUrl());
+            if (record.getMd5Hash() != null) match.setFileMd5(record.getMd5Hash());
             filtered.add(match);
         }
 
@@ -409,6 +542,16 @@ public class SmartRetrieverService {
         }
         return documentDOS.stream()
                 .collect(Collectors.toMap(DocumentDO::getMd5Hash, doc -> doc));
+    }
+
+    private Map<Long, DocumentDO> loadDocumentRecordsByIds(Set<Long> ids) {
+        if (ids == null || ids.isEmpty()) return Map.of();
+        List<DocumentDO> docs = documentMapper.selectList(
+                Wrappers.lambdaQuery(DocumentDO.class)
+                        .eq(DocumentDO::getDelFlag, 0)
+                        .in(DocumentDO::getId, ids));
+        if (docs == null || docs.isEmpty()) return Map.of();
+        return docs.stream().collect(Collectors.toMap(DocumentDO::getId, d -> d));
     }
 
     private Map<Long, String> loadMd5MapByDocumentIds(Set<Long> documentIds) {

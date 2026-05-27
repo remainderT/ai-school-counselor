@@ -3,7 +3,6 @@ package org.buaa.rag.core.online.retrieval.postprocessor;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.buaa.rag.common.enums.SearchChannelType;
@@ -23,13 +22,11 @@ import lombok.extern.slf4j.Slf4j;
  * 本处理器的合并策略：
  * <ol>
  *   <li>按 {@link RetrievalMatch#matchKey()} 对所有命中做分组</li>
- *   <li>每组内按「通道可信度权重 × 匹配分数」的综合评分降序排列</li>
- *   <li>保留每组评分最高的一条记录作为最终代表</li>
+ *   <li>优先保留高可信通道结果；同通道重复时再比较原始分数</li>
+ *   <li>保留每组最优记录作为后续 RRF 融合的代表项</li>
  * </ol>
  *
- * <p>与简单的 "保留最高分" 策略不同，本实现引入了通道可信度权重因子，
- * 使得高优先级通道（如意图定向）在分数接近时天然胜出，
- * 避免低优先级通道的噪声结果意外替换精准结果。
+ * <p>该阶段不强行比较不同检索通道的异构分数，跨通道排序交给 RRF 与 Rerank 完成。
  */
 @Slf4j
 @Component
@@ -45,13 +42,12 @@ public class DeduplicationPostProcessor implements SearchResultPostProcessor {
 
     @Override
     public int stage() {
-        return 30;
+        return 10;
     }
 
     @Override
     public boolean isActive(SearchContext ctx) {
-        return properties.getPostProcessor().isDeduplicate()
-            && !properties.getPostProcessor().isRrfFusion();
+        return properties.getPostProcessor().isDeduplicate();
     }
 
     @Override
@@ -62,26 +58,22 @@ public class DeduplicationPostProcessor implements SearchResultPostProcessor {
             return candidates == null ? List.of() : candidates;
         }
 
-        // 构建通道来源 → 权重映射，用于加权评分
-        Map<SearchChannelType, Double> channelWeights = buildChannelWeightMap(channelOutputs);
-
-        // 按 matchKey 分组，每组选综合评分最高的
+        // 按 matchKey 分组，每组选通道优先级最高的代表项
         int beforeCount = candidates.size();
         Collection<RetrievalMatch> deduplicated = candidates.stream()
                 .collect(Collectors.toMap(
                         RetrievalMatch::matchKey,
                         match -> match,
                         (existing, incoming) ->
-                                weightedScore(incoming, channelWeights) > weightedScore(existing, channelWeights)
+                                compareRepresentative(incoming, existing) > 0
                                         ? incoming : existing,
                         java.util.LinkedHashMap::new
                 ))
                 .values();
 
-        // 按综合评分降序排列以保持最优顺序
+        // 按通道优先级与同通道原始分数排序，给后续 RRF 一个稳定输入
         List<RetrievalMatch> result = deduplicated.stream()
-                .sorted(Comparator.comparingDouble(
-                        (RetrievalMatch m) -> weightedScore(m, channelWeights)).reversed())
+                .sorted(this::compareRepresentativeDescending)
                 .toList();
 
         if (result.size() < beforeCount) {
@@ -91,27 +83,32 @@ public class DeduplicationPostProcessor implements SearchResultPostProcessor {
         return result;
     }
 
-    /**
-     * 综合评分 = 匹配原始分数 × 通道可信度权重。
-     * <p>权重值越大表示通道越可信，定向通道 > 全局通道。
-     */
-    private double weightedScore(RetrievalMatch match, Map<SearchChannelType, Double> weights) {
-        double rawScore = match.getRelevanceScore() != null ? match.getRelevanceScore() : 0.0;
-        SearchChannelType source = match.getChannelType();
-        double weight = (source != null && weights.containsKey(source))
-                ? weights.get(source) : 1.0;
-        return rawScore * weight;
+    private int compareRepresentative(RetrievalMatch left, RetrievalMatch right) {
+        int priorityCompare = Integer.compare(
+            channelPriority(right == null ? null : right.getChannelType()),
+            channelPriority(left == null ? null : left.getChannelType())
+        );
+        if (priorityCompare != 0) {
+            return priorityCompare;
+        }
+        return Double.compare(relevance(left), relevance(right));
     }
 
-    /**
-     * 从通道输出中构建权重表。意图定向通道获得更高的可信度因子。
-     */
-    private Map<SearchChannelType, Double> buildChannelWeightMap(List<SearchChannelResult> outputs) {
-        // 意图定向通道可信度最高，全局检索次之
-        return Map.of(
-                SearchChannelType.INTENT_DIRECTED, 1.2,
-                SearchChannelType.SPARSE_TEXT, 1.1,
-                SearchChannelType.VECTOR_GLOBAL, 1.0
-        );
+    private int compareRepresentativeDescending(RetrievalMatch left, RetrievalMatch right) {
+        return -compareRepresentative(left, right);
+    }
+
+    private int channelPriority(SearchChannelType type) {
+        if (type == null) {
+            return 99;
+        }
+        return switch (type) {
+            case INTENT_DIRECTED -> 1;
+            case VECTOR_GLOBAL -> 2;
+        };
+    }
+
+    private double relevance(RetrievalMatch match) {
+        return match == null || match.getRelevanceScore() == null ? 0.0 : match.getRelevanceScore();
     }
 }

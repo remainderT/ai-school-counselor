@@ -1,4 +1,4 @@
-package org.buaa.rag.core.online.tool.mcp;
+package org.buaa.rag.core.online.mcp;
 
 import java.time.LocalDate;
 import java.time.ZoneId;

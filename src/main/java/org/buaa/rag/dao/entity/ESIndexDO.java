@@ -1,5 +1,6 @@
 package org.buaa.rag.dao.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import lombok.AllArgsConstructor;
@@ -14,6 +15,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class ESIndexDO {
 
     private String id;
@@ -29,4 +31,7 @@ public class ESIndexDO {
 
     @JsonProperty("encoding_model")
     private String encodingModel;
+
+    @JsonProperty("knowledge_id")
+    private Long knowledgeId;
 }

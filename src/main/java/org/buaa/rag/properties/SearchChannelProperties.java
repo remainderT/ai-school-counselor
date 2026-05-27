@@ -19,7 +19,6 @@ public class SearchChannelProperties {
     @Data
     public static class Channels {
         private IntentDirected intentDirected = new IntentDirected();
-        private SparseText sparseText = new SparseText();
         private VectorGlobal vectorGlobal = new VectorGlobal();
     }
 
@@ -40,30 +39,18 @@ public class SearchChannelProperties {
     }
 
     @Data
-    public static class SparseText {
-        /**
-         * 是否启用 ES/BM25 稀疏文本检索通道
-         */
-        private boolean enabled = true;
-        /**
-         * 稀疏召回倍数
-         */
-        private int topKMultiplier = 3;
-    }
-
-    @Data
     public static class VectorGlobal {
         /**
-         * 是否启用全局向量兜底通道
+         * 是否启用全局混合兜底通道
          */
         private boolean enabled = true;
         /**
-         * 当意图通道已激活时，是否仍补充执行全局向量检索。
+         * 当意图通道已激活时，是否仍补充执行全局混合检索。
          * 打开后可缓解高置信意图误路由导致的漏召回。
          */
         private boolean supplementHighConfidenceIntent = false;
         /**
-         * 当定向检索最终得分低于该阈值时，补充执行一次全局向量检索。
+         * 当定向检索最终得分低于该阈值时，补充执行一次全局混合检索。
          * 仅在原本不会激活 vector-global 通道时生效。
          */
         private double supplementScoreThreshold = 0.3;
@@ -72,7 +59,7 @@ public class SearchChannelProperties {
          */
         private double singleIntentSupplementThreshold = 0.8;
         /**
-         * 当意图置信度低于该值，启用向量全局检索
+         * 当意图置信度低于该值，启用全局混合检索
          */
         private double confidenceThreshold = 0.65;
         /**
@@ -91,10 +78,6 @@ public class SearchChannelProperties {
          * 是否启用去重处理
          */
         private boolean deduplicate = true;
-        /**
-         * 是否启用 RRF 倒数排名融合
-         */
-        private boolean rrfFusion = true;
         /**
          * 是否启用重排处理
          */

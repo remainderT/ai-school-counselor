@@ -18,7 +18,8 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * 意图定向检索通道。
  * <p>
- * 当存在高置信意图时执行精准召回，支持多意图并行检索后合并去重。
+ * 当存在高置信意图时，在目标知识库内执行混合召回（Milvus 向量 + ES/BM25），
+ * 支持多意图并行检索后合并去重。
  */
 @Slf4j
 @Component
@@ -39,7 +40,7 @@ public class IntentDirectedSearchChannel implements SearchChannel {
 
     @Override
     public String description() {
-        return "基于意图判定的精准定向检索通道";
+        return "基于意图判定的目标知识库内混合检索通道";
     }
 
     @Override
@@ -171,9 +172,10 @@ public class IntentDirectedSearchChannel implements SearchChannel {
             ? Set.of(decision.getKnowledgeBaseId())
             : Set.of();
         if (!kbIds.isEmpty()) {
-            return smartRetrieverService.retrieveVectorScoped(query, topK, context.getUserId(), kbIds);
+            // 高置信意图命中具体知识库时，向量检索和 BM25 都限制在该知识库范围内。
+            return smartRetrieverService.retrieveScoped(query, topK, context.getUserId(), kbIds);
         }
-        return smartRetrieverService.retrieveVectorOnly(query, topK, context.getUserId());
+        return smartRetrieverService.retrieve(query, topK, context.getUserId());
     }
 
 

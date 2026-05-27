@@ -77,7 +77,8 @@ public class ConversationController {
 
     @GetMapping("/search")
     public Result<List<RetrievalMatch>> handleSearchRequest(@RequestParam String query,
-                                                            @RequestParam(defaultValue = "10") int topK) {
-        return Results.success(chatService.handleSearchRequest(query, topK, UserContext.resolvedUserId()));
+                                                            @RequestParam(defaultValue = "10") int topK,
+                                                            @RequestParam(defaultValue = "full") String mode) {
+        return Results.success(chatService.handleSearchRequest(query, topK, UserContext.resolvedUserId(), mode));
     }
 }

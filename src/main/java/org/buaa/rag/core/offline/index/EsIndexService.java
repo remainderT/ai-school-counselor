@@ -143,6 +143,7 @@ public class EsIndexService {
                     .documentId(document.getId())
                     .fragmentIndex(fragment.getFragmentId())
                     .textData(fragment.getTextContent())
+                    .knowledgeId(document.getKnowledgeId())
                     .build();
             })
             .toList();

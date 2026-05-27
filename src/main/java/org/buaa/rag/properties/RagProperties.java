@@ -29,12 +29,6 @@ public class RagProperties {
         private boolean enabled = true;
         /** 最多拆分的子问题数 */
         private int maxSubQuestions = 4;
-        /**
-         * 词项归一化映射：key 为同义词/别名，value 为标准词。
-         * 例如：毕设 → 毕业设计，辅导员 → 导师
-         * 按最长 key 优先替换，避免短词吞并长词。
-         */
-        private java.util.Map<String, String> termMapping = new java.util.LinkedHashMap<>();
     }
 
     @Data

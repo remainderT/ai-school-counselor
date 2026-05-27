@@ -33,16 +33,13 @@ public class QueryRewriteAndSplitService {
     private final LlmChat llmChat;
     private final RagProperties ragProperties;
     private final ObjectMapper objectMapper;
-    private final QueryTermMappingService queryTermMappingService;
 
     public QueryRewriteAndSplitService(LlmChat llmChat,
                                        RagProperties ragProperties,
-                                       ObjectMapper objectMapper,
-                                       QueryTermMappingService queryTermMappingService) {
+                                       ObjectMapper objectMapper) {
         this.llmChat = llmChat;
         this.ragProperties = ragProperties;
         this.objectMapper = objectMapper;
-        this.queryTermMappingService = queryTermMappingService;
     }
 
     /**
@@ -76,8 +73,7 @@ public class QueryRewriteAndSplitService {
             return fastPathFallback(userQuery, 0L);
         }
 
-        // 词项归一化：在 LLM 改写前先做同义词映射
-        String normalizedQuery = queryTermMappingService.normalize(normalizeQuery(userQuery));
+        String normalizedQuery = normalizeQuery(userQuery);
         if (shouldUseFastPath(normalizedQuery, conversationHistory)) {
             long start = System.nanoTime();
             List<String> subQuestions = ruleBasedSplit(normalizedQuery, Math.max(1, cfg.getMaxSubQuestions()));

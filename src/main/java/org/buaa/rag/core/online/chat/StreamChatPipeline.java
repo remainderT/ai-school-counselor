@@ -103,6 +103,7 @@ public class StreamChatPipeline {
         // ── 正常路由执行 ──
         StreamCancellationHandle cancelHandle = new StreamCancellationHandle();
         ctx.setCancelHandle(cancelHandle);
+        ctx.getCallback().onStatus("retrieval", "混合检索中");
 
         result = ExecutionResult.from(routeExecutionCoordinator.execute(
             String.valueOf(ctx.getUserId()),
@@ -118,7 +119,8 @@ public class StreamChatPipeline {
                 }
                 ctx.getCallback().onContent(chunk);
             },
-            cancelHandle
+            cancelHandle,
+            ctx.getCallback()
         ));
 
         completeSession(ctx, result);
@@ -158,6 +160,7 @@ public class StreamChatPipeline {
     }
 
     private void rewriteQuery(Context ctx) {
+        ctx.getCallback().onStatus("rewrite", "子问题拆解中");
         QueryRewriteResult rewriteResult = queryRewriteAndSplitService.rewriteWithSplit(
             ctx.getMessage(),
             ctx.getConversationHistory()
@@ -166,13 +169,14 @@ public class StreamChatPipeline {
     }
 
     private void resolveIntents(Context ctx) {
+        ctx.getCallback().onStatus("intent", "意图识别中");
         QueryRewriteResult rewriteResult = ctx.getRewriteResult();
         List<SubQueryIntent> subQueryIntents = rewriteResult == null
             ? List.of()
             : intentResolutionService.resolve(
-            String.valueOf(ctx.getUserId()),
-            rewriteResult.effectiveSubQuestions()
-        );
+                String.valueOf(ctx.getUserId()),
+                rewriteResult.effectiveSubQuestions()
+            );
         ctx.setSubQueryIntents(subQueryIntents);
     }
 

@@ -16,7 +16,7 @@ import org.buaa.rag.core.online.retrieval.channel.SearchContext;
  * <p>设计约定：
  * <ul>
  *   <li>处理器应为无副作用的纯函数——不修改传入列表，而是返回新列表</li>
- *   <li>stage 值建议分段：1–9 去重 / 10–49 精排 / 50–99 增强 / 100+ 截断</li>
+ *   <li>stage 值建议分段：1–19 归并去重 / 20–29 融合 / 30–49 精排 / 50–99 增强 / 100+ 截断</li>
  * </ul>
  */
 public interface SearchResultPostProcessor {
@@ -26,7 +26,7 @@ public interface SearchResultPostProcessor {
 
     /**
      * 处理阶段序号，决定在链中的执行顺序。值越小越先执行。
-     * <p>推荐分段：去重(1–9)、精排(10–49)、增强(50–99)、截断(100+)。
+     * <p>推荐分段：归并去重(1–19)、融合(20–29)、精排(30–49)、增强(50–99)、截断(100+)。
      */
     int stage();
 

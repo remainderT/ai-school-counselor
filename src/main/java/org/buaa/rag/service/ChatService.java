@@ -20,6 +20,9 @@ public interface ChatService {
 
     /**
      * 处理搜索请求，返回检索结果列表。
+     * mode: es(纯BM25) / vector(纯向量) / hybrid(混合无重排) / full(完整流程含意图路由+重排)
      */
     List<RetrievalMatch> handleSearchRequest(String query, int topK, Long userId);
+
+    List<RetrievalMatch> handleSearchRequest(String query, int topK, Long userId, String mode);
 }
