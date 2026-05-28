@@ -58,17 +58,17 @@ public class RetrievalPostProcessorService {
         long start = System.nanoTime();
         RagProperties.Crag config = ragProperties.getCrag();
         if (config == null || !config.isEnabled()) {
-            return new CragDecision(CragDecision.Action.ANSWER, null);
+            return new CragDecision(CragDecision.Action.CORRECT, null);
         }
 
         if (matches == null || matches.isEmpty()) {
             if (isLikelyAmbiguous(query)) {
-                CragDecision decision = new CragDecision(CragDecision.Action.CLARIFY, buildClarifyQuestion(query, config));
+                CragDecision decision = new CragDecision(CragDecision.Action.AMBIGUOUS, buildClarifyQuestion(query, config));
                 log.info("CRAG评估完成 | query='{}' | matches=0 | action={} | 耗时={}ms",
                     compact(query), decision.getAction(), elapsedMs(start));
                 return decision;
             }
-            CragDecision decision = new CragDecision(CragDecision.Action.NO_ANSWER, noResultMessage());
+            CragDecision decision = new CragDecision(CragDecision.Action.INCORRECT, noResultMessage());
             log.info("CRAG评估完成 | query='{}' | matches=0 | action={} | 耗时={}ms",
                 compact(query), decision.getAction(), elapsedMs(start));
             return decision;
@@ -84,13 +84,13 @@ public class RetrievalPostProcessorService {
         }
 
         if (isLowQuality(matches, config.getMinScore())) {
-            CragDecision decision = new CragDecision(CragDecision.Action.REFINE, null);
+            CragDecision decision = new CragDecision(CragDecision.Action.INCORRECT, noResultMessage());
             log.info("CRAG评估完成 | query='{}' | matches={} | action={} | llmReview=false | 耗时={}ms",
                 compact(query), matches.size(), decision.getAction(), elapsedMs(start));
             return decision;
         }
 
-        CragDecision decision = new CragDecision(CragDecision.Action.ANSWER, null);
+        CragDecision decision = new CragDecision(CragDecision.Action.CORRECT, null);
         log.info("CRAG评估完成 | query='{}' | matches={} | action={} | llmReview=false | 耗时={}ms",
             compact(query), matches.size(), decision.getAction(), elapsedMs(start));
         return decision;
@@ -176,13 +176,13 @@ public class RetrievalPostProcessorService {
                 return null;
             }
             String clarifyQuestion = node.path("clarifyQuestion").asText(null);
-            if (action == CragDecision.Action.CLARIFY) {
+            if (action == CragDecision.Action.AMBIGUOUS) {
                 if (clarifyQuestion == null || clarifyQuestion.isBlank()) {
                     clarifyQuestion = buildClarifyQuestion(query, config);
                 }
                 return new CragDecision(action, clarifyQuestion);
             }
-            if (action == CragDecision.Action.NO_ANSWER) {
+            if (action == CragDecision.Action.INCORRECT) {
                 return new CragDecision(action, noResultMessage());
             }
             return new CragDecision(action, null);
@@ -197,9 +197,9 @@ public class RetrievalPostProcessorService {
             return null;
         }
         return switch (actionText) {
-            case "CORRECT" -> CragDecision.Action.ANSWER;
-            case "AMBIGUOUS" -> CragDecision.Action.CLARIFY;
-            case "INCORRECT" -> CragDecision.Action.NO_ANSWER;
+            case "CORRECT" -> CragDecision.Action.CORRECT;
+            case "AMBIGUOUS" -> CragDecision.Action.AMBIGUOUS;
+            case "INCORRECT" -> CragDecision.Action.INCORRECT;
             default -> parseLegacyAction(actionText);
         };
     }

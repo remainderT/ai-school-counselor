@@ -61,15 +61,10 @@ public class SubQueryRetrievalService {
 
         boolean clarifyTriggered = false;
         String clarifyMessage = null;
-        if (decision.getAction() == CragDecision.Action.CLARIFY) {
+        if (decision.getAction() == CragDecision.Action.AMBIGUOUS) {
             clarifyTriggered = true;
             clarifyMessage = decision.getMessage();
-        } else if (decision.getAction() == CragDecision.Action.REFINE) {
-            List<RetrievalMatch> fallback = fallbackRetrieval(userId, query, topK);
-            if (!fallback.isEmpty()) {
-                results = fallback;
-            }
-        } else if (decision.getAction() == CragDecision.Action.NO_ANSWER) {
+        } else if (decision.getAction() == CragDecision.Action.INCORRECT) {
             results = List.of();
         }
 

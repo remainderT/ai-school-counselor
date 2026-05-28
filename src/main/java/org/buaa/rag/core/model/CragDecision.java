@@ -16,9 +16,11 @@ public class CragDecision {
     private String message;
 
     public enum Action {
-        ANSWER,
-        REFINE,
-        CLARIFY,
-        NO_ANSWER
+        /** 检索文档质量足够，放行进入 Prompt 生成（对应 LLM verdict: CORRECT） */
+        CORRECT,
+        /** 检索文档与问题不相关，直接拒答（对应 LLM verdict: INCORRECT） */
+        INCORRECT,
+        /** 问题意图模糊，向用户发起澄清引导（对应 LLM verdict: AMBIGUOUS） */
+        AMBIGUOUS
     }
 }

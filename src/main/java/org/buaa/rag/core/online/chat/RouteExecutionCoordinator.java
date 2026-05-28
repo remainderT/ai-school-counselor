@@ -269,29 +269,15 @@ public class RouteExecutionCoordinator {
         long cragStart = System.nanoTime();
         CragDecision decision = postProcessorService.evaluate(query, retrievalResults);
         long cragElapsed = elapsedMs(cragStart);
-        if (decision.getAction() == CragDecision.Action.CLARIFY
-            || decision.getAction() == CragDecision.Action.NO_ANSWER) {
+        if (decision.getAction() == CragDecision.Action.AMBIGUOUS
+            || decision.getAction() == CragDecision.Action.INCORRECT) {
             String response = decision.getMessage();
             emit(chunkHandler, response);
-            boolean triggered = decision.getAction() == CragDecision.Action.CLARIFY;
+            boolean triggered = decision.getAction() == CragDecision.Action.AMBIGUOUS;
             log.info("单问题检索结束 | query='{}' | action={} | topK={} | results={} | retrieval={}ms | crag={}ms | 总耗时={}ms",
                 compact(query), decision.getAction(), topK, retrievalResults == null ? 0 : retrievalResults.size(),
                 retrievalElapsed, cragElapsed, elapsedMs(routeStart));
             return new StreamResult(response, ragPromptService.limitSourcesForAnswer(retrievalResults), triggered, retrievalResults.size(), topK);
-        }
-
-        if (decision.getAction() == CragDecision.Action.REFINE) {
-            long fallbackStart = System.nanoTime();
-            List<RetrievalMatch> fallback = subQueryRetrievalService.fallbackRetrieval(userId, query, topK);
-            if (!fallback.isEmpty()) {
-                retrievalResults = fallback;
-                log.info("单问题检索触发兜底 | query='{}' | fallbackResults={} | fallback耗时={}ms",
-                    compact(query), fallback.size(), elapsedMs(fallbackStart));
-            } else {
-                String response = postProcessorService.noResultMessage();
-                emit(chunkHandler, response);
-                return new StreamResult(response, ragPromptService.limitSourcesForAnswer(retrievalResults), false, retrievalResults.size(), topK);
-            }
         }
 
         List<RetrievalMatch> displayedSources = ragPromptService.limitSourcesForAnswer(retrievalResults);
